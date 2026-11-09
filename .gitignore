@@ -1,0 +1,7 @@
+.xmake/
+build/
+.vs/
+*.vcxproj*
+*.sln
+*.user
+dist/
