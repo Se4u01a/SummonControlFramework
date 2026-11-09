@@ -50,3 +50,27 @@ Implementation of tactical target evaluation and friendly-fire protection.
   * *Refinement:* Adjusted the test harness to maintain a full history vector `std::vector<std::string> logHistory`, confirming that both the rejection event and the subsequent fallback selection are accurately recorded.
 * **Test suite status:**
   * Total test count expanded to 15 cases across both suites (8 FSM + 7 TargetSelector). All 15 pass cleanly in ~1 ms.
+
+---
+
+## 2026-11-10 — SquadCoordinator & Attack Slot Arbitration
+
+Implementation of Stage 6: multi-summon coordination, formation management, and attack slots.
+
+* **Anti-Dogpiling with Attack Slots:**
+  * Vanilla Skyrim NPC AI assigns combat targets independently, causing multiple summons to charge into the exact same point against a single enemy, resulting in pushing, physics jitter, and clipping.
+  * `SquadCoordinator` implements attack slot arbitration: each candidate target has a limited number of melee engagement slots (`maxMeleeSlotsPerTarget`, default 2) and ranged slots (`maxRangedSlotsPerTarget`, default 3).
+  * If Target A's melee slots are full, additional melee summons automatically distribute to alternative eligible targets (Target B), or hold in formation / flanking stance instead of crowding.
+* **Symmetrical Formation Offsets:**
+  * Implemented `CalculateFormationOffsets` based on squad count (1-4) and owner yaw angle.
+  * Summons are arrayed across the rear-to-flank arc:
+    * 1 summon: left-rear (-140°)
+    * 2 summons: left-rear (-130°) and right-rear (+130°)
+    * 3 summons: flanks (-120°, +120°) and straight behind (+180°)
+    * 4 summons: flank horns (-70°, +70°) and rear anchors (-145°, +145°)
+  * Offsets use standard Skyrim coordinate conversion (yaw rotation with sin = X, cos = Y), verified with non-overlapping distance assertions.
+* **Independent Role Handling:**
+  * `CombatRole` (`Melee`, `Ranged`, `Support`): ranged summons (e.g. Flame Atronachs) evaluate ranged slots independently from melee summons (e.g. Dremora Lords), enabling combined-arms behavior.
+* **Verification & Tests:**
+  * 5 new test cases added in `tests/test_squad_coordinator.cpp`, bringing total automated coverage to 20 tests.
+  * All 20 tests pass cleanly with 0 failures.

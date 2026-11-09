@@ -23,12 +23,18 @@
     * Threats attacking summon (+500)
     * **Sticky target hysteresis (+400):** current target retains a strong bonus, completely eliminating target-flicker between adjacent enemies.
     * Low-HP finishing bonus (+200 * (1 - HP%)).
+* **Squad Coordinator (`SquadCoordinator`):**
+  * **Support for squads of 2-4 summons** acting as a coordinated unit.
+  * **Combat roles:** `Melee`, `Ranged`, `Support`.
+  * **Attack slot arbitration (Anti-dogpiling):** targets have capped engagement slots (default 2 melee, 3 ranged). If an enemy's melee slots are full, additional summons distribute to secondary targets or hold in formation.
+  * **Target distribution:** automatically distributes multiple targets across squad members instead of all summons dogpiling on a single enemy.
+  * **Formation offsets:** calculates symmetrical, non-overlapping follow/guard offsets around the owner based on squad size and owner yaw.
 * **Observability & Diagnostics:**
-  * Pluggable functional `LogCallback` capturing state changes and targeting decisions with structured reasons (`Reason: ...`).
+  * Pluggable functional callbacks capturing state changes, target scoring, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * 15/15 test cases passing (0 failures, execution time < 2 ms).
+  * **20/20 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Steam AE 1.6.1170 (primary) and SE 1.5.97 via Address Library (`commonlibsse-ng.plugin`).
