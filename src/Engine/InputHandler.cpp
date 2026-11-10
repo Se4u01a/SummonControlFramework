@@ -14,6 +14,7 @@
 #include <RE/S/SendHUDMessage.h>
 #include <RE/T/TESObjectREFR.h>
 #include <RE/U/UI.h>
+#include <SKSE/InputMap.h>
 
 namespace scf::engine
 {
@@ -244,11 +245,17 @@ namespace scf::engine
 				continue;
 			}
 
-			if (button->device != RE::INPUT_DEVICE::kKeyboard) {
+			// Keyboard settings hold DirectX scan codes; mouse settings hold the same
+			// offset codes FLICK binds (SKSE's macro mouse offset), so the FLICK menu can
+			// bind either device and the comparison stays in one number space.
+			std::uint32_t key = 0;
+			if (button->device == RE::INPUT_DEVICE::kKeyboard) {
+				key = button->GetIDCode();
+			} else if (button->device == RE::INPUT_DEVICE::kMouse) {
+				key = button->GetIDCode() + SKSE::InputMap::kMacro_MouseButtonOffset;
+			} else {
 				continue;
 			}
-
-			const auto key = button->GetIDCode();
 
 			if (key == settings.hotkeys.focusTargetKey) {
 				HandleFocusTarget();

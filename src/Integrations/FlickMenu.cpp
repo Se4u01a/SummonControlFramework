@@ -68,7 +68,9 @@ namespace scf::integrations
 				// Process bound key from input thread
 				if (const auto slot = _boundSlot.exchange(HotkeySlot::None); slot != HotkeySlot::None) {
 					const auto key = _boundKey.exchange(0);
-					if (key != 0 && key < FUCK::Keys::kMBBase) {
+					// Keyboard scan codes and FLICK's mouse codes (>= kMBBase) are both valid:
+					// InputHandler compares the same number space for each device.
+					if (key != 0) {
 						switch (slot) {
 						case HotkeySlot::FocusTarget:      data.hotkeys.focusTargetKey = key; break;
 						case HotkeySlot::Return:           data.hotkeys.commandReturnKey = key; break;

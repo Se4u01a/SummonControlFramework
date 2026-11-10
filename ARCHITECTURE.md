@@ -444,6 +444,7 @@ struct StealthContext {
 Для надежного перехвата клавиш без задержек и конфликтов с Papyrus реализован InputHandler ([src/Engine/InputHandler.h](file:///D:/projects/Summon_Control_Framework/src/Engine/InputHandler.h)), зарегистрированный как sink интерфейса `RE::BSTEventSink<RE::InputEvent*>`:
 - Перехватывает `RE::ButtonEvent` устройств `kKeyboard` и `kMouse`.
 - Реагирует только на фазу нажатия (`event->IsDown()`).
+- Клавиши клавиатуры сравниваются по DirectX scan-коду, кнопки мыши — по коду кнопки со смещением `SKSE::InputMap::kMacro_MouseButtonOffset` (256), то есть в том же пространстве номеров, в котором их выдаёт FLICK при переназначении. Один и тот же номер хоткея работает для обоих устройств.
 - Не блокирует ввод других модов (возвращает `BSEventNotifyControl::kContinue`).
 
 ### 18.2. Захват цели прицелом (CrosshairPickData)
