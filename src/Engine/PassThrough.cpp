@@ -36,6 +36,9 @@ namespace scf::engine::passthrough
 
 		std::atomic<std::uint64_t> s_avoidSkipped{ 0 };
 		std::atomic<std::uint64_t> s_collisionSkipped{ 0 };
+		std::atomic<std::uint64_t> s_bonesSkipped{ 0 };
+		std::atomic<bool> s_bonesObserved{ false };
+		std::uint64_t s_lastBonesReported{ 0 };
 		std::atomic<bool> s_avoidObserved{ false };
 		std::atomic<bool> s_filterObserved{ false };
 		std::uint64_t s_lastAvoidReported{ 0 };
@@ -103,9 +106,15 @@ namespace scf::engine::passthrough
 
 				const auto infoL = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(a_lhs) + kCollidableFilterInfo);
 				const auto infoR = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(a_rhs) + kCollidableFilterInfo);
-				if ((infoL & 0x7F) != kCharControllerLayer || (infoR & 0x7F) != kCharControllerLayer) {
+				const auto layerL = infoL & 0x7F;
+				const auto layerR = infoR & 0x7F;
+				if (!core::IsPassThroughLayerPair(layerL, layerR)) {
 					return result;
 				}
+				// Controller vs controller, or controller vs the other actor's body bones
+				// (the bones share the actor's system group with its controller; standing
+				// on another wolf is a controller landing on those bones).
+				const bool bonesPair = layerL != kCharControllerLayer || layerR != kCharControllerLayer;
 				if (!s_filterObserved.exchange(true, std::memory_order_relaxed)) {
 					logger::info("[PassThrough] collision filter seat OBSERVED a CharController pair.");
 				}
@@ -119,7 +128,15 @@ namespace scf::engine::passthrough
 				}
 				if (pass) {
 					*result = 0;
-					s_collisionSkipped.fetch_add(1, std::memory_order_relaxed);
+					if (bonesPair) {
+						s_bonesSkipped.fetch_add(1, std::memory_order_relaxed);
+						if (!s_bonesObserved.exchange(true, std::memory_order_relaxed)) {
+							logger::info("[PassThrough] first controller<->body-bones pair disabled (layers {} / {}): a summon can no longer stand on another.",
+								layerL, layerR);
+						}
+					} else {
+						s_collisionSkipped.fetch_add(1, std::memory_order_relaxed);
+					}
 				}
 				return result;
 			}
@@ -203,11 +220,13 @@ namespace scf::engine::passthrough
 		if (now - s_lastReport >= std::chrono::seconds(10)) {
 			const auto avoid = s_avoidSkipped.load(std::memory_order_relaxed);
 			const auto collision = s_collisionSkipped.load(std::memory_order_relaxed);
-			if (avoid != s_lastAvoidReported || collision != s_lastCollisionReported) {
-				logger::info("[PassThrough] last 10 s: {} avoidance checks and {} body collisions skipped between own summons/owner (totals {} / {}).",
-					avoid - s_lastAvoidReported, collision - s_lastCollisionReported, avoid, collision);
+			const auto bones = s_bonesSkipped.load(std::memory_order_relaxed);
+			if (avoid != s_lastAvoidReported || collision != s_lastCollisionReported || bones != s_lastBonesReported) {
+				logger::info("[PassThrough] last 10 s: {} avoidance checks, {} controller collisions and {} controller<->bones collisions skipped between own summons/owner (totals {} / {} / {}).",
+					avoid - s_lastAvoidReported, collision - s_lastCollisionReported, bones - s_lastBonesReported, avoid, collision, bones);
 				s_lastAvoidReported = avoid;
 				s_lastCollisionReported = collision;
+				s_lastBonesReported = bones;
 			}
 			s_lastReport = now;
 		}

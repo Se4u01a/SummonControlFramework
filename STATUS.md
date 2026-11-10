@@ -122,6 +122,10 @@
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
   * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **Pass-through: summons no longer stand on each other — 2026-11-11:**
+  * Field: summons passed through each other but could land on top of one another (their controller stood on the other's body bones, layer Biped 8 / BipedNoCC 33, which the seat did not cover).
+  * The body seat now also disables controller (30) ↔ the other actor's Biped/BipedNoCC bones for the same pass-through pairs (`core::IsPassThroughLayerPair`, 1 test — **122/122 passing**); separate counter in the 10 s summary.
+  * **Field status:** built and deployed, NOT tested in game (TEST-PASS-4).
 * **PoE2 stage M2: attack what I attack + aggression radius — 2026-11-11:**
   * `TESHitEvent` sink: when the player hits an enemy, summons in `Follow` (or `Attack` on another target) get a FocusTarget on it; never in `Passive`, never over `Return`/`MoveTo`/`Guard` (`core::ShouldAssistPlayerHit`). INI `[Combat] bAssistPlayerAttacks`.
   * StartCombat seat: engine-chosen fights in `Follow`/`Guard` only against actors within `[Combat] fAggressionRadius` (1500, 0 = off) of the player (`core::IsWithinAggressionRadius`). Both in FLICK.
@@ -184,7 +188,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **121/121 test cases passing** (0 failures, execution time < 2 ms).
+  * **122/122 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

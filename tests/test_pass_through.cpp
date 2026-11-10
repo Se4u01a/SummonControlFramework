@@ -59,3 +59,20 @@ TEST(TestPassThroughSettingsGates)
 	CHECK(!ShouldPassThrough(Summon(0xFF000001), Summon(0xFF000002), noSummonPairs));
 	CHECK(ShouldPassThrough(Summon(0xFF000001), Owner(), noSummonPairs));
 }
+
+// Given a wolf that jumps onto another wolf, its controller (30) meets the other's body
+// bones (Biped 8 / BipedNoCC 33): that pair is disabled too, controller vs controller
+// as before; hits (weapon 5, projectile 6, spell 7), the world and dead bodies (32) never.
+TEST(TestPassThroughLayerPairs)
+{
+	CHECK(IsPassThroughLayerPair(30, 30));
+	CHECK(IsPassThroughLayerPair(30, 8));
+	CHECK(IsPassThroughLayerPair(8, 30));
+	CHECK(IsPassThroughLayerPair(30, 33));
+	CHECK(!IsPassThroughLayerPair(8, 8));
+	CHECK(!IsPassThroughLayerPair(30, 32));
+	CHECK(!IsPassThroughLayerPair(30, 5));
+	CHECK(!IsPassThroughLayerPair(6, 8));
+	CHECK(!IsPassThroughLayerPair(30, 1));
+	CHECK(!IsPassThroughLayerPair(30, 13));
+}

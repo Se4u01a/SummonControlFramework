@@ -28,4 +28,12 @@ namespace scf::core
 	//   * summon <-> its own owner                  -> passes.
 	//   * everything else (other owners' summons, enemies, NPCs, self) -> vanilla.
 	bool ShouldPassThrough(const PassThroughParty& a_lhs, const PassThroughParty& a_rhs, const CollisionSettings& a_settings) noexcept;
+
+	// Which collision-layer pairs the body seat may disable (Havok COL_LAYER numbers):
+	// an actor's character controller (30) against the other actor's controller (30) or
+	// its living body bones - Biped (8) and BipedNoCC (33). The bones are what a wolf
+	// lands on when it jumps onto another one (field report 2026-11-11). Anything without
+	// a character controller on one side (weapons, projectiles, spells, the world, dead
+	// bodies) is never touched, so hits and ragdolls stay vanilla.
+	bool IsPassThroughLayerPair(std::uint32_t a_layerA, std::uint32_t a_layerB) noexcept;
 }
