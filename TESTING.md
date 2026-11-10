@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **126/126 тестов успешно пройдено (0 failures)**.
+Текущий результат: **131/131 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -143,6 +143,14 @@ xmake run scf_tests
 * `TestFollowLeashReleasedOnlyForAwayOrders`: поводок ванильного `FollowTo` отпускается только для `MoveTo` с точкой, `Attack` и `WaitGuard`; `Follow`/`Return`/`MoveTo` без точки его сохраняют.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
+### Suite Q: PoE2 command actions (`CommandActions`) — 5 tests
+Файл `tests/test_command_actions.cpp`, этап M3.
+* `TestCommandCatalogDefaultsParse`: файл по умолчанию разбирается без предупреждений (6 атронахов, `Default = Rush`, 8 с, рывок +60 на 3 с).
+* `TestCommandCatalogRejectsBadLines`: каст без заклинания, неизвестное действие, плохая форма, кулдаун вне 1..600, строка без `=`, `[General]` вне диапазона — пропускаются с предупреждением, остальное грузится.
+* `TestCommandCatalogLastLineWins`: повтор призыва — побеждает последняя строка; имя плагина без учёта регистра.
+* `TestFormKeyParse`: `Plugin|0xID`, пробелы, без `0x`; пустой плагин, id 0 и не-hex отвергаются.
+* `TestCommandCooldowns`: кулдаун у каждого призыва свой и истекает по часам тика.
+
 ### Suite P: PoE2 targeting (`Assist`) — 4 tests
 Файл `tests/test_assist.cpp`, правила этапа M2.
 * `TestAssistFollowJoinsPlayersFight`: следующий за игроком призыв переключается на цель удара игрока.
@@ -199,7 +207,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 126/126 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 131/131 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -324,6 +332,10 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
 * **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
 * **[ ] TEST-M2-1 (Attack what I attack):** призывы в `Follow`; ударить врага (меч/лук/заклинание) — в логе `[Assist] Player hit 0x... : N summon(s) switch focus to it`, призывы атакуют именно его. Ударить другого врага — переключаются. В `Passive` и при `Guard`/`MoveTo`/`Return` — не переключаются.
+* **[ ] TEST-M3-1 (Command: catalog):** после первого запуска появился `SummonControlFramework_Commands.ini`; в логе `[Command] catalog: 6 summon types, default Rush`.
+* **[ ] TEST-M3-2 (Command: rush):** волки, враг под прицелом, `Numpad 7`: HUD `SCF: Command | N rush`, волки заметно быстрее бегут к врагу и атакуют его; через 3 с в логе `rush over`; повторное нажатие до 8 с — `on cooldown`.
+* **[ ] TEST-M3-3 (Command: cast):** огненный атронах, `Numpad 7` по врагу — атронах сразу бросает огненный шар в цель (`casts 'Fireball'`); другие призывы рядом не получают урона от взрыва.
+* **[ ] TEST-M3-4 (Command: no target / passive):** без врага под прицелом и в конусе — `skipped`; в `Passive` волки не бегут (`rush refused: Passive`), атронах кастует.
 * **[ ] TEST-M2-2 (Aggression radius):** стоять вдали (> 1500) от группы врагов: призывы не бегут к ним сами (`StartCombat refused ... outside aggression radius`); подойти ближе — вступают в бой. `fAggressionRadius = 0` (FLICK) — ограничение снято.
 * **[ ] TEST-FF-AOE-1 (Fireball splash):** выстрелить фаерболом в землю рядом с призывами: призывы не получают урона и не загораются; в логе `[MagicHook] Refused friendly AreaEffect effect ...`. Враг рядом получает урон как обычно. Лечение/баффы игрока на призыве продолжают работать.
 * **[ ] TEST-PASS-1 (Seats installed and running):** при загрузке — две строки `[PassThrough] ... hooked`; при движении отряда — `movement avoidance seat OBSERVED running` и `collision filter seat OBSERVED a CharController pair`; во время движения раз в 10 с — `last 10 s: N avoidance checks and M body collisions skipped`. Нули при плотном строе означают, что seat не срабатывает — пришлите лог.

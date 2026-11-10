@@ -26,7 +26,8 @@ namespace scf::integrations
 			ToggleAggression,
 			MoveTo,
 			WaitGuard,
-			Follow
+			Follow,
+			CommandAction
 		};
 
 		class SCFMenuTool final : public FUCK::ITool
@@ -78,6 +79,7 @@ namespace scf::integrations
 						case HotkeySlot::MoveTo:           data.hotkeys.moveToKey = key; break;
 						case HotkeySlot::WaitGuard:        data.hotkeys.waitGuardKey = key; break;
 						case HotkeySlot::Follow:           data.hotkeys.followKey = key; break;
+						case HotkeySlot::CommandAction:    data.hotkeys.commandActionKey = key; break;
 						default: break;
 						}
 						settingsObj.ValidateAndSanitize();
@@ -101,6 +103,7 @@ namespace scf::integrations
 				DrawHotkeyRow("Move To Point", "Order squad to move to position under crosshair and hold guard (Default: Numpad 4)", HotkeySlot::MoveTo, data.hotkeys.moveToKey);
 				DrawHotkeyRow("Guard / Hold Position", "Hold current position and defend against nearby threats (Default: Numpad 5)", HotkeySlot::WaitGuard, data.hotkeys.waitGuardKey);
 				DrawHotkeyRow("Follow in Formation", "Resume following player in tactical formation (Default: Numpad 6)", HotkeySlot::Follow, data.hotkeys.followKey);
+				DrawHotkeyRow("Command Action", "Each summon performs its type's command at the aimed enemy: rush, cast, detonate (SummonControlFramework_Commands.ini; Default: Numpad 7)", HotkeySlot::CommandAction, data.hotkeys.commandActionKey);
 
 				FUCK::Spacing();
 

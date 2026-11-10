@@ -38,7 +38,8 @@ namespace scf::core
 		SetOrder,
 		SetAggression,
 		SetFocusTarget,
-		Dispel
+		Dispel,
+		CommandAction  // PoE2 M3: each summon's type action at focusTargetId (engine resolves the action)
 	};
 
 	constexpr const char* ToString(CommandType a_type) noexcept
@@ -48,6 +49,7 @@ namespace scf::core
 		case CommandType::SetAggression:  return "SetAggression";
 		case CommandType::SetFocusTarget: return "SetFocusTarget";
 		case CommandType::Dispel:         return "Dispel";
+		case CommandType::CommandAction:  return "CommandAction";
 		default:                          return "Unknown";
 		}
 	}

@@ -27,6 +27,7 @@ namespace scf::engine
 		void HandleMoveTo();
 		void HandleWaitGuard();
 		void HandleFollow();
+		void HandleCommandAction();
 
 	private:
 		InputHandler() = default;

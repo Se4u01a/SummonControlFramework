@@ -412,6 +412,8 @@ namespace scf::core
 					_data.hotkeys.waitGuardKey = ParseUInt32(val, _data.hotkeys.waitGuardKey);
 				} else if (key == "followkey" || key == "ufollowkey") {
 					_data.hotkeys.followKey = ParseUInt32(val, _data.hotkeys.followKey);
+				} else if (key == "commandactionkey" || key == "ucommandactionkey") {
+					_data.hotkeys.commandActionKey = ParseUInt32(val, _data.hotkeys.commandActionKey);
 				}
 			} else if (currentSection == "friendlyfire") {
 				if (key == "enablesummonprotection" || key == "benablesummonprotection" || key == "enabled" || key == "benabled") {
@@ -583,7 +585,8 @@ namespace scf::core
 		out << "uToggleAggressionKey = " << _data.hotkeys.toggleAggressionKey << "\n";
 		out << "uMoveToKey = " << _data.hotkeys.moveToKey << "\n";
 		out << "uWaitGuardKey = " << _data.hotkeys.waitGuardKey << "\n";
-		out << "uFollowKey = " << _data.hotkeys.followKey << "\n\n";
+		out << "uFollowKey = " << _data.hotkeys.followKey << "\n";
+		out << "uCommandActionKey = " << _data.hotkeys.commandActionKey << "\n\n";
 
 		out << "[FriendlyFire]\n";
 		out << "bEnableSummonProtection = " << (_data.friendlyFire.enabled ? "true" : "false") << "\n";

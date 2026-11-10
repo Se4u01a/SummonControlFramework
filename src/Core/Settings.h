@@ -76,6 +76,7 @@ namespace scf::core
 		std::uint32_t moveToKey{ 0x4B };             // Numpad 4 (75)
 		std::uint32_t waitGuardKey{ 0x4C };          // Numpad 5 (76)
 		std::uint32_t followKey{ 0x4D };             // Numpad 6 (77)
+		std::uint32_t commandActionKey{ 0x47 };      // Numpad 7 (71): PoE2 "Command" action by summon type
 	};
 
 	struct SettingsData

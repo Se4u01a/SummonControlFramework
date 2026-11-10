@@ -6,6 +6,7 @@
 #include "Core/SummonRegistry.h"
 #include "Engine/ActorSpace.h"
 #include "Engine/CombatGate.h"
+#include "Engine/CommandActions.h"
 #include "Engine/PassThrough.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
@@ -34,10 +35,52 @@ namespace scf::engine::update
 	{
 		float s_totalElapsed = 0.0f;
 
+		// Engage one explicit target (Focus order, or a Command Rush): the model must already
+		// carry it (CommandQueue::ApplyToModel of a SetFocusTarget).
+		void EngageFocus(RE::PlayerCharacter* a_player, RE::Actor* a_summon, core::SummonModel* a_model, RE::Actor* a_target)
+		{
+			auto* target = a_target;
+			if (!target || target->IsDead() || target == a_summon || target == a_player) {
+				return;
+			}
+
+			logger::info("[Execution] Summon 0x{:08X} switching focus to 0x{:08X} ({})",
+				a_summon->GetFormID(), target->GetFormID(), target->GetName());
+
+			// Publish the new policy first: the StartCombat seat must already know
+			// that this one target is permitted (a previous Attack order may have
+			// restricted combat to a different actor).
+			if (a_model) {
+				combat::UpdateForSummon(a_summon, core::BuildCombatPolicy(*a_model, true));
+			}
+
+			// Fresh engagement: StartCombat (through the seat, which now permits
+			// exactly this actor) builds a new CombatController/CombatGroup whose
+			// first combat target is the focus. From then on the target pin makes
+			// the controller's own selectors keep choosing it every combat update;
+			// no CombatController member is written from here (the combat workers
+			// own them and used to overwrite such writes on the next update).
+			combat::BreakCombat(a_summon);
+			const bool started = a_summon->StartCombat(target, nullptr);
+
+			const float distance = a_summon->GetPosition().GetDistance(target->GetPosition());
+			logger::info("[Execution] Summon 0x{:08X} StartCombat(0x{:08X}) -> {} (dist {:.0f}, hostile {}, inCombat {})",
+				a_summon->GetFormID(),
+				target->GetFormID(),
+				started ? "true" : "false",
+				distance,
+				target->IsHostileToActor(a_summon) ? "yes" : "no",
+				a_summon->IsInCombat() ? "yes" : "no");
+			if (!started) {
+				logger::warn("[Execution] Summon 0x{:08X} could not start combat with 0x{:08X} (combat policy or engine refusal)",
+					a_summon->GetFormID(), target->GetFormID());
+			}
+		}
+
 		void ExecuteCommandOnActor(
 			RE::PlayerCharacter* a_player,
 			RE::Actor* a_summon,
-			[[maybe_unused]] core::SummonModel* a_model,
+			core::SummonModel* a_model,
 			const core::Command& a_cmd)
 		{
 			if (!a_summon || a_summon->IsDead()) {
@@ -46,40 +89,19 @@ namespace scf::engine::update
 
 			switch (a_cmd.type) {
 			case core::CommandType::SetFocusTarget:
+				EngageFocus(a_player, a_summon, a_model, RE::TESForm::LookupByID<RE::Actor>(a_cmd.focusTargetId));
+				break;
+
+			case core::CommandType::CommandAction:
 				{
 					auto* target = RE::TESForm::LookupByID<RE::Actor>(a_cmd.focusTargetId);
-					if (target && !target->IsDead() && target != a_summon && target != a_player) {
-						logger::info("[Execution] Summon 0x{:08X} switching focus to 0x{:08X} ({})",
-							a_summon->GetFormID(), target->GetFormID(), target->GetName());
-
-						// Publish the new policy first: the StartCombat seat must already know
-						// that this one target is permitted (a previous Attack order may have
-						// restricted combat to a different actor).
-						if (a_model) {
-							combat::UpdateForSummon(a_summon, core::BuildCombatPolicy(*a_model, true));
-						}
-
-						// Fresh engagement: StartCombat (through the seat, which now permits
-						// exactly this actor) builds a new CombatController/CombatGroup whose
-						// first combat target is the focus. From then on the target pin makes
-						// the controller's own selectors keep choosing it every combat update;
-						// no CombatController member is written from here (the combat workers
-						// own them and used to overwrite such writes on the next update).
-						combat::BreakCombat(a_summon);
-						const bool started = a_summon->StartCombat(target, nullptr);
-
-						const float distance = a_summon->GetPosition().GetDistance(target->GetPosition());
-						logger::info("[Execution] Summon 0x{:08X} StartCombat(0x{:08X}) -> {} (dist {:.0f}, hostile {}, inCombat {})",
-							a_summon->GetFormID(),
-							target->GetFormID(),
-							started ? "true" : "false",
-							distance,
-							target->IsHostileToActor(a_summon) ? "yes" : "no",
-							a_summon->IsInCombat() ? "yes" : "no");
-						if (!started) {
-							logger::warn("[Execution] Summon 0x{:08X} could not start combat with 0x{:08X} (combat policy or engine refusal)",
-								a_summon->GetFormID(), target->GetFormID());
-						}
+					auto& ctx = core::FrameworkContext::GetSingleton();
+					const auto outcome = actions::Execute(a_summon, a_model, target, s_totalElapsed);
+					if (outcome == actions::Outcome::Rush && a_model) {
+						core::Command focus = a_cmd;
+						focus.type = core::CommandType::SetFocusTarget;
+						ctx.GetCommandQueue().ApplyToModel(focus, *a_model, &ctx.GetStateMachine());
+						EngageFocus(a_player, a_summon, a_model, target);
 					}
 				}
 				break;
@@ -243,7 +265,11 @@ namespace scf::engine::update
 
 					ExecuteCommandOnActor(a_player, summonActor, model, cmd);
 				}
+				if (cmd.type == core::CommandType::CommandAction) {
+					actions::ReportBatch();
+				}
 			}
+			actions::Tick(a_timestamp);
 
 			// 5. Per-tick order execution and continuous AI enforcement
 			const auto& settings = ctx.GetSettings().Get();
@@ -382,6 +408,7 @@ namespace scf::engine::update
 		movement::ResetAll();
 		combat::ResetAll();
 		passthrough::ResetAll();
+		actions::Reset();
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

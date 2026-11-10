@@ -405,6 +405,39 @@ namespace scf::engine
 		Notify("SCF: Order -> Follow Owner");
 	}
 
+	void InputHandler::HandleCommandAction()
+	{
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		// The aimed enemy, never the owner or one of the owner's own summons (the
+		// crosshair often rests on a summon in front of the player).
+		auto& registry = core::FrameworkContext::GetSingleton().GetRegistry();
+		auto* target = ResolveCrosshairActor();
+		if (target && (target == player || target->IsDead() || registry.IsRegistered(target->GetFormID()))) {
+			target = nullptr;
+		}
+		if (!target) {
+			target = FindAimConeTarget(player);
+		}
+
+		core::Command cmd{};
+		cmd.type = core::CommandType::CommandAction;
+		cmd.priority = core::CommandPriority::PlayerDirect;
+		cmd.summonId = core::InvalidEntityID;
+		cmd.focusTargetId = target ? target->GetFormID() : core::InvalidEntityID;
+		cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
+
+		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
+		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
+
+		// The per-summon result (rush / cast / cooldown) is shown by the tick that executes it.
+		logger::info("[InputHandler] Command action requested at 0x{:08X} ({})",
+			target ? target->GetFormID() : 0u, target ? target->GetName() : "no target");
+	}
+
 	RE::BSEventNotifyControl InputHandler::ProcessEvent(
 		RE::InputEvent* const* a_event,
 		RE::BSTEventSource<RE::InputEvent*>*)
@@ -457,6 +490,8 @@ namespace scf::engine
 				HandleWaitGuard();
 			} else if (key == settings.hotkeys.followKey) {
 				HandleFollow();
+			} else if (key == settings.hotkeys.commandActionKey) {
+				HandleCommandAction();
 			}
 		}
 

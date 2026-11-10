@@ -163,6 +163,11 @@ namespace scf::core
 				a_fsm->TransitionTo(a_model, SummonState::Despawn, "Command: Dispel executed");
 			}
 			break;
+
+		case CommandType::CommandAction:
+			// The action depends on the summon's type, which only the engine adapter can
+			// read; a Rush then applies a SetFocusTarget of its own.
+			break;
 		}
 	}
 

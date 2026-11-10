@@ -128,6 +128,11 @@
   * Follow-up: pairs Havok accepted before the table knew both actors keep colliding while they overlap. Every publish now re-filters the existing pairs of new / regrouped / removed actors through `bhkWorld::UpdateCollisionFilter` (id 76091) (`core::RowsToRefilter`, 3 tests — **125/125 passing**).
   * Field (screenshot): wolves still pile into a column; re-filter ran (26 bodies). Same rule added on the shape-collection (id 76677) and ray-collidable (id 76679) filter slots (controller ray vs partner controller only), plus `diag:` log lines naming what our controllers still touch (1 test — **126/126 passing**).
   * **Field status:** built and deployed, NOT tested in game (TEST-PASS-4).
+* **PoE2 stage M3: command actions by summon type — 2026-11-11:**
+  * `Numpad 7` (FLICK-bindable): every own summon performs the action of its type at the aimed enemy — `Rush` (Focus + temporary SpeedMult bonus), `CastAtTarget` (the summon casts a spell), `Detonate` (cast, then dispelled); per-summon cooldown, HUD summary.
+  * Catalog `Data/SKSE/Plugins/SummonControlFramework_Commands.ini` (written with vanilla atronach defaults when missing; `Default = Rush` for everything else, e.g. the wolves). Core parser + cooldowns: 5 tests — **131/131 passing**.
+  * Not done: power attack in Rush, Taunt, per-summon selection (waits for the M6 panel).
+  * **Field status:** built and deployed, NOT tested in game (TEST-M3-1..4).
 * **PoE2 stage M2: attack what I attack + aggression radius — 2026-11-11:**
   * `TESHitEvent` sink: when the player hits an enemy, summons in `Follow` (or `Attack` on another target) get a FocusTarget on it; never in `Passive`, never over `Return`/`MoveTo`/`Guard` (`core::ShouldAssistPlayerHit`). INI `[Combat] bAssistPlayerAttacks`.
   * StartCombat seat: engine-chosen fights in `Follow`/`Guard` only against actors within `[Combat] fAggressionRadius` (1500, 0 = off) of the player (`core::IsWithinAggressionRadius`). Both in FLICK.
@@ -174,6 +179,7 @@
     * `Numpad 4` (`0x4B`): **Move To Point** orders squad to navigate to crosshair position and hold guard.
     * `Numpad 5` (`0x4C`): **Wait / Guard** orders squad to hold ground.
     * `Numpad 6` (`0x4D`): **Follow** orders squad to resume follow formation.
+    * `Numpad 7` (`0x47`): **Command Action** (PoE2 M3): each summon performs its type's action at the aimed enemy.
   * **In-Game HUD Notifications:** top-left alerts via `RE::SendHUDMessage::ShowHUDMessage` for immediate player feedback.
   * **Console Command Processor:**
     * Fixed multi-token parsing: `g_scfParams` now supports 4 parameters with full `StringChunk` iteration.
@@ -190,7 +196,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **125/125 test cases passing** (0 failures, execution time < 2 ms).
+  * **131/131 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

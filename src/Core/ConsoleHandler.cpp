@@ -113,13 +113,14 @@ namespace scf::core
 				s.combat.maxTargetRadius);
 			a_output(buf);
 
-			std::snprintf(buf, sizeof(buf), "  Hotkeys (Numpad): Focus=0x%X | Return=0x%X | Aggression=0x%X | MoveTo=0x%X | Guard=0x%X | Follow=0x%X",
+			std::snprintf(buf, sizeof(buf), "  Hotkeys (Numpad): Focus=0x%X | Return=0x%X | Aggression=0x%X | MoveTo=0x%X | Guard=0x%X | Follow=0x%X | Command=0x%X",
 				s.hotkeys.focusTargetKey,
 				s.hotkeys.commandReturnKey,
 				s.hotkeys.toggleAggressionKey,
 				s.hotkeys.moveToKey,
 				s.hotkeys.waitGuardKey,
-				s.hotkeys.followKey);
+				s.hotkeys.followKey,
+				s.hotkeys.commandActionKey);
 			a_output(buf);
 
 			return;

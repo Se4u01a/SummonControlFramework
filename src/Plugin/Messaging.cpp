@@ -2,6 +2,7 @@
 #include "Plugin/ConsoleCommands.h"
 #include "Core/FrameworkContext.h"
 #include "Engine/CombatGate.h"
+#include "Engine/CommandActions.h"
 #include "Engine/FollowLeash.h"
 #include "Engine/PassThrough.h"
 #include "Engine/EventAdapter.h"
@@ -77,6 +78,7 @@ namespace scf::plugin
 			ConsoleCommands::Register();
 			engine::EventAdapter::RegisterEventSinks();
 			engine::InputHandler::Register();
+			engine::actions::Load();
 			engine::combat::Install();
 			engine::leash::Install();
 			engine::passthrough::Install();

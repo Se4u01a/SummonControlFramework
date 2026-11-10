@@ -48,6 +48,7 @@ TEST(settings_default_values)
 	CHECK(data.hotkeys.moveToKey == 0x4B);
 	CHECK(data.hotkeys.waitGuardKey == 0x4C);
 	CHECK(data.hotkeys.followKey == 0x4D);
+	CHECK(data.hotkeys.commandActionKey == 0x47);
 }
 
 TEST(settings_load_from_string_prefixed)
