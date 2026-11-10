@@ -116,6 +116,12 @@ namespace scf::core
 		}
 	}
 
+	bool IsSummonFollowPackageShape(std::uint8_t a_packageType, std::uint32_t a_formId, std::uint32_t a_floatInputs) noexcept
+	{
+		constexpr std::uint8_t kPackageTypePackage = 18;
+		return a_packageType == kPackageTypePackage && (a_formId >> 24) == 0xFF && a_floatInputs == 2;
+	}
+
 	bool IsWithinArrivalRadius(const Vec3& a_actorPosition, const Vec3& a_destination, float a_radius) noexcept
 	{
 		const float dx = a_actorPosition.x - a_destination.x;

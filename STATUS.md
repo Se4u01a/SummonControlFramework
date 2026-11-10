@@ -122,6 +122,10 @@
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
   * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **M0: follow package recognition without `templateParent` — 2026-11-11:**
+  * The 00:08 session proved the follow-leash release never fired: the summon's runtime package (type 18) has `templateParent = 0`.
+  * New creation seat (SE 1.5.97 only, byte-checked): call site `id 36410 + 0x84` → id 36422 is patched with `write_call<5>`; it records the package built for each summon and builds it already released under an away order. Fallback (AE, packages restored from a save): shape — runtime FormID `0xFF…`, type 18, exactly two float inputs (`core::IsSummonFollowPackageShape`, 1 test, **111/111 passing**).
+  * **Field status:** built and deployed to both MO2 instances, NOT tested in game (TEST-ORDER-15/16). Open question: whether the FollowTo procedure re-reads the radii live.
 * **Follow leash release + focus-anchored approach — 2026-11-11 (field log 23:44–23:53):**
   * Field report: Numpad 1 — summons do not attack; Numpad 4 — summons keep stopping and turning to the player instead of running to the point.
   * Log evidence: no MoveTo in the session ever logged `arrived at MoveTo point` (points 358–1719 units away, 10–30 s each); the first Focus at 2142 units got `StartCombat -> false` and was dropped after 5 s; the second Focus entered combat (`answered with focus (engine already agreed)`, so the target pin works) but the wolf never closed the 1300–1600 units.
@@ -165,7 +169,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **110/110 test cases passing** (0 failures, execution time < 2 ms).
+  * **111/111 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

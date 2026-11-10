@@ -350,6 +350,19 @@ TEST(TestFollowLeashReleasedOnlyForAwayOrders)
 	CHECK(!ReleasesFollowLeash(OrderModel(SummonOrder::Return)));
 }
 
+// Given the summon's running package as the field showed it (runtime FormID 0xFF......,
+// type 18, FollowTo's two radius floats, no templateParent)
+// Then it is recognised as the follow package; a plugin package, another type or a
+// different input count is not.
+TEST(TestSummonFollowPackageShape)
+{
+	CHECK(IsSummonFollowPackageShape(18, 0xFF0019FAu, 2));
+	CHECK(!IsSummonFollowPackageShape(18, 0x00025E6Du, 2));
+	CHECK(!IsSummonFollowPackageShape(1, 0xFF0019FAu, 2));
+	CHECK(!IsSummonFollowPackageShape(18, 0xFF0019FAu, 3));
+	CHECK(!IsSummonFollowPackageShape(18, 0xFF0019FAu, 0));
+}
+
 // ---------------------------------------------------------------------------
 // CombatPolicy: the "no second behaviour pattern" contract.
 // ---------------------------------------------------------------------------

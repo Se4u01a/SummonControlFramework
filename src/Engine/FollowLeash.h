@@ -36,6 +36,16 @@ namespace scf::engine::leash
 	// current GMST values back. Only an actor whose running package is a FollowTo
 	// instance is touched, and only managed summons are passed in. Main thread only.
 
+	//
+	// Recognition (field log 2026-11-11 00:08: the instance has templateParent = 0):
+	// the creation seat (SE 1.5.97: call site id 36410 + 0x84 -> id 36422) records the
+	// package built for each summon and builds it already released when the summon is
+	// under an away order; otherwise the package is recognised by its shape
+	// (core::IsSummonFollowPackageShape).
+
+	// kDataLoaded. Installs the creation seat on SE 1.5.97; false elsewhere (shape only).
+	bool Install();
+
 	void UpdateForSummon(RE::Actor* a_summon, bool a_released);
 
 	void RetainOnly(const std::unordered_set<core::EntityID>& a_liveSummons);

@@ -106,4 +106,9 @@ namespace scf::core
 	// (src/Engine/FollowLeash.cpp): MoveTo with a destination, Attack, WaitGuard.
 	// Follow and Return keep the vanilla follow (it agrees with them).
 	bool ReleasesFollowLeash(const SummonModel& a_model) noexcept;
+
+	// Shape of the engine's summon follow package when its creation was not observed:
+	// a runtime-created form (FormID 0xFF......) of package type kPackage (18) whose data
+	// carries exactly two float inputs (FollowTo's Min/Max Radius).
+	bool IsSummonFollowPackageShape(std::uint8_t a_packageType, std::uint32_t a_formId, std::uint32_t a_floatInputs) noexcept;
 }

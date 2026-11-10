@@ -2,6 +2,7 @@
 #include "Plugin/ConsoleCommands.h"
 #include "Core/FrameworkContext.h"
 #include "Engine/CombatGate.h"
+#include "Engine/FollowLeash.h"
 #include "Engine/EventAdapter.h"
 #include "Engine/InputHandler.h"
 #include "Engine/UpdateHook.h"
@@ -75,6 +76,7 @@ namespace scf::plugin
 			engine::EventAdapter::RegisterEventSinks();
 			engine::InputHandler::Register();
 			engine::combat::Install();
+			engine::leash::Install();
 			engine::update::Install();
 			friendly_fire::HitHook::Install();
 			friendly_fire::ProjectileHook::Install();
