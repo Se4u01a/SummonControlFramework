@@ -149,9 +149,8 @@ Implementation of core configuration parsing, validation, and serialization.
   * Strips comments delimited by `;` or `#` and trims whitespace seamlessly.
 * **Defensive Clamping & Sanitization:**
   * User-edited INI files are prone to typos, negative numbers, or extreme values.
-  * `ValidateAndSanitize()` runs automatically after loading:
-    * Clamps `maxSummonsPerOwner` to [1, 32].
-    * Validates `logLevel` against known strings ("trace", "debug", "info", "warn", "error", "critical"), falling back safely to "info".
+  * `ValidateAndSanitize()` runs automatically after loading:\n    * Clamps `maxSummonsPerOwner` to [1, 32].
+    * Validates `logLevel` against known strings (\"trace\", \"debug\", \"info\", \"warn\", \"error\", \"critical\"), falling back safely to \"info\".
     * Enforces `updateFrequencyHz` in [1.0, 60.0] and `commandTTL` in [0.1, 60.0].
     * Enforces leash integrity: ensures `returnDistanceThreshold > followDistanceThreshold` to prevent instant leash-break loops.
     * Clamps attack slots and formation spread radii.
@@ -189,8 +188,7 @@ Implementation of Stage 1: Wiring Skyrim's `BSTEventSink` into `SummonRegistry`.
 
 * **Separation of Engine Sinks and Dispatch Logic:**
   * To preserve the pure decoupled core, `EventDispatcher` resides in `src/Core/` with zero `#include <RE/Skyrim.h>`, processing lightweight `ActiveEffectEvent`, `DeathEvent`, and `CellAttachDetachEvent`.
-  * `EventAdapter` in `src/Engine/` implements `RE::BSTEventSink<T>` for the three target events, safely resolving `FormID` from `NiPointer<TESObjectREFR>` and forwarding to `EventDispatcher`.
-* **Displacement Callback Integration:**
+  * `EventAdapter` in `src/Engine/` implements `RE::BSTEventSink<T>` for the three target events, safely resolving `FormID` from `NiPointer<TESObjectREFR>` and forwarding to `EventDispatcher`.\n* **Displacement Callback Integration:**
   * When a recast event exceeds the owner's limit, `EventDispatcher` fires a `DisplaceCallback` with the oldest summon ID, enabling the engine adapter to initiate in-game dispel.
 * **Self-Buff & Non-Fatal Event Filtering:**
   * Self-buffs where `caster == target` are rejected immediately.
@@ -198,3 +196,26 @@ Implementation of Stage 1: Wiring Skyrim's `BSTEventSink` into `SummonRegistry`.
 * **Verification & Tests:**
   * 4 new test cases added in `tests/test_event_dispatcher.cpp`: effect apply & remove, recast limit displacement, death events, and cell attach/detach lifecycle transitions.
   * Total automated test count expanded to **54 test cases**, all passing with 0 failures.
+
+---
+
+## 2026-11-10 — CollisionPairClassifier & Collision Bypass Subsystem
+
+Implementation of Stage 2 (Collision PoC): decoupled collision pair matrix arbitration and runtime safety gates.
+
+* **Decoupled Classification Matrix (PLAN.md Section 5):**
+  * Built `CollisionPairClassifier` in `src/Collision/` to evaluate pair interaction without coupling to Havok headers or raw pointers.
+  * Matrix rules:
+    * `Player <-> Own Summon`: `Passthrough` (eliminates door blocking and narrow-corridor congestion).
+    * `Player <-> Other Owner's Summon`: `Default` (maintains standard collision against enemy summons).
+    * `Summon A <-> Summon B (Same Owner)`: `Passthrough` if `bEnableSummonToSummonBypass` is true; otherwise `Default`.
+    * `Summon A <-> Summon B (Different Owners)`: `Default` (maintains combat collision).
+    * `Summon <-> Enemy`: `Default` (weapon hit detection and projectile collision preserved).
+    * `Non-Summons / Environment`: `Default` (actors will never fall through floors or walk through walls).
+* **Runtime Safety Gates & INI Integration:**
+  * Added `CollisionSettings` to `Settings.h` with `bEnableCollisionBypass` and `bEnableSummonToSummonBypass`.
+  * If `bEnableCollisionBypass` is false, `CollisionPairClassifier::ClassifyPair` instantly returns `Default` with zero overhead.
+  * Integrated with `scf status` console command to display active collision bypass status.
+* **Verification & Tests:**
+  * Added 7 unit tests in `tests/test_collision_pair_classifier.cpp` covering all collision combinations, toggles, and logging.
+  * Total automated test count expanded to **61 test cases**, all passing cleanly with 0 failures in ~2 ms.

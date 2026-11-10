@@ -78,6 +78,11 @@ namespace scf::core
 				s.general.maxSummonsPerOwner);
 			a_output(buf);
 
+			std::snprintf(buf, sizeof(buf), "  Collision: Player bypass: %s, Squad bypass: %s",
+				s.collision.enableCollisionBypass ? "Enabled" : "Disabled",
+				s.collision.enableSummonToSummonBypass ? "Enabled" : "Disabled");
+			a_output(buf);
+
 			std::snprintf(buf, sizeof(buf), "  Scheduler: %.1f Hz (Time-slicing: %s, Command TTL: %.1fs)",
 				s.timing.updateFrequencyHz,
 				s.timing.enableTimeSlicing ? "Enabled" : "Disabled",

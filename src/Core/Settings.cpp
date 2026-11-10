@@ -285,6 +285,12 @@ namespace scf::core
 				} else if (key == "maxsummonsperowner" || key == "umaxsummonsperowner") {
 					_data.general.maxSummonsPerOwner = ParseSizeT(val, _data.general.maxSummonsPerOwner);
 				}
+			} else if (currentSection == "collision") {
+				if (key == "enablecollisionbypass" || key == "benablecollisionbypass") {
+					_data.collision.enableCollisionBypass = ParseBool(val, _data.collision.enableCollisionBypass);
+				} else if (key == "enablesummontosummonbypass" || key == "benablesummontosummonbypass") {
+					_data.collision.enableSummonToSummonBypass = ParseBool(val, _data.collision.enableSummonToSummonBypass);
+				}
 			} else if (currentSection == "timing") {
 				if (key == "updatefrequencyhz" || key == "fupdatefrequencyhz") {
 					_data.timing.updateFrequencyHz = ParseFloat(val, _data.timing.updateFrequencyHz);
@@ -399,6 +405,10 @@ namespace scf::core
 		out << "bEnabled = " << (_data.general.enabled ? "true" : "false") << "\n";
 		out << "sLogLevel = " << _data.general.logLevel << "\n";
 		out << "uMaxSummonsPerOwner = " << _data.general.maxSummonsPerOwner << "\n\n";
+
+		out << "[Collision]\n";
+		out << "bEnableCollisionBypass = " << (_data.collision.enableCollisionBypass ? "true" : "false") << "\n";
+		out << "bEnableSummonToSummonBypass = " << (_data.collision.enableSummonToSummonBypass ? "true" : "false") << "\n\n";
 
 		out << "[Timing]\n";
 		out << "fUpdateFrequencyHz = " << _data.timing.updateFrequencyHz << "\n";

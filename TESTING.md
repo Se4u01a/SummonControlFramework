@@ -1,99 +1,116 @@
-# Verification report (2026-11-10)
+# Testing Guide: Summon Control Framework (SCF)
 
-Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE/AE.
+Этот документ фиксирует статус проверок, тестовые наборы и инструкции для валидации как офлайн (Unit-тесты без Skyrim), так и в игре.
 
 ---
 
-## 1. Automated (passing)
+## 1. Automated Unit Tests (`scf_tests.exe`)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **54 cases, 0 failures, 0 failed checks**.  
-Execution time: ~1-2 ms.
+Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
+Текущий результат: **61/61 тестов успешно пройдено (0 failures)**.
 
-### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
-* `TestInitialStateAndFollow`: Newly spawned summon in `Idle` with order `Follow` immediately transitions to `FollowOwner`.
-* `TestWaitGuardOrder`: Explicit `WaitGuard` order transitions the entity from `FollowOwner` into `Guard`.
-* `TestPassiveModeIgnoresEnemies`: Under `AggressionMode::Passive`, even when a valid hostile target is detected 200u away, the entity strictly remains in `FollowOwner` and clears target ID.
-* `TestAggressiveModeEngagesTarget`: Progression under `Aggressive` mode: Target detected (800u) -> `AcquireTarget` -> `Approach` -> melee range (<= 300u) -> `Engage`.
-* `TestTargetLostDebounce`: Anti-flicker hysteresis: at `dt = 0.4s` and `0.8s` entity stays in `Engage`; at `1.1s` (> 1.0s limit) cleanly disengages to `FollowOwner`.
-* `TestLeashBreakForcesReturn`: When fighting at 100u, if owner runs to 3000u (> 2500u threshold), summon drops combat and enters `Return`. Restores `FollowOwner` when back within 400u.
-* `TestExplicitReturnOrder`: Player's direct `Return` order immediately interrupts combat and restores `Follow` once within follow range.
-* `TestLogCallbackRecordsTransitions`: Transition callbacks fire with correct `EntityID`, `from`, `to`, and string reason.
+### Запуск тестов
+```powershell
+xmake run scf_tests
+```
 
-### Suite B: Tactical Target Selection (`TargetSelector`) — 7 tests
-* `TestTargetSelectorPassive`: Zero target output when summon is set to `Passive`.
-* `TestTargetSelectorFriendlyFireGuard`: Automatic selection skips owner and fellow summons. Explicit `FocusTarget` commanded on the owner is rejected with log `"Explicit FocusTarget rejected: cannot target owner/ally"` and safely falls back to hostile candidates.
-* `TestTargetSelectorAttackingOwnerPriority`: Candidate actively attacking owner (800u) is prioritized over a passive enemy closer (200u).
-* `TestTargetSelectorStickyTargetBonus`: Fighting Candidate A (500u); Candidate B appears at 400u. Due to `currentTargetStickyBonus` (+400), summon continues attacking A, preventing target oscillation.
-* `TestTargetSelectorFocusTargetOverride`: Player-designated target overrides closer automatic target.
-* `TestTargetSelectorDeadOrDisabledIgnored`: Dead and disabled candidates are filtered out.
-* `TestTargetSelectorDefensiveRequiresThreat`: Neutral/non-threatening NPCs are ignored under `Defensive` mode.
+### Suite A: FSM State Machine (`StateMachine`) — 8 tests
+* `TestInitialStateAndFollow`: Проверяет инициализацию FSM в состоянии `Idle` и переход в `FollowOwner` при наличии владельца.
+* `TestWaitGuardOrder`: Проверяет выполнение прямого приказа игрока `WaitGuard` и переход в состояние `Guard`.
+* `TestPassiveModeIgnoresEnemies`: Проверяет, что в режиме `Passive` появление врага не приводит к выходу из следования (`FollowOwner`).
+* `TestAggressiveModeEngagesTarget`: Проверяет обнаружение врага в режиме `Aggressive` и корректный цикл `AcquireTarget` -> `Approach` -> `Engage`.
+* `TestTargetLostDebounce`: Проверяет гистерезис потери цели: FSM не бросает цель мгновенно при потере прямой видимости, удерживая бой до истечения таймаута 1.5 сек.
+* `TestLeashBreakForcesReturn`: Проверяет «разрыв поводка»: удаление игрока дальше 2500 единиц принудительно прерывает бой и переводит существо в `Return`.
+* `TestExplicitReturnOrder`: Проверяет, что прямой приказ `Return` прерывает любую фазу боя.
+* `TestLogCallbackRecordsTransitions`: Проверяет наблюдаемость: все переходы состояний корректно фиксируются через `LogCallback`.
+
+### Suite B: Target Selection (`TargetSelector`) — 7 tests
+* `TestTargetSelectorPassive`: Проверяет полный отказ от выбора целей в режиме `Passive`.
+* `TestTargetSelectorFriendlyFireGuard`: Гарантирует абсолютную защиту от дружественного огня: призыв никогда не выбирает владельца, себя или союзников отряда.
+* `TestTargetSelectorAttackingOwnerPriority`: Проверяет приоритет угрозы: враг, бьющий игрока (+1000 очков), выбирается приоритетнее более близкого нейтрального врага.
+* `TestTargetSelectorStickyTargetBonus`: Проверяет гистерезис цели (+400 очков): призыв не скачет между двумя одинаково близкими врагами.
+* `TestTargetSelectorFocusTargetOverride`: Проверяет приказ `FocusTarget`: явно указанная игроком цель выбирается мгновенно в обход скоринга.
+* `TestTargetSelectorDeadOrDisabledIgnored`: Проверяет отсечение недопустимых кандидатов: мертвые и отключенные акторы отфильтровываются.
+* `TestTargetSelectorDefensiveRequiresThreat`: Проверяет режим `Defensive`: бой инициируется только при наличии доказанной угрозы игроку или призыву.
 
 ### Suite C: Squad Coordination (`SquadCoordinator`) — 5 tests
-* `TestFormationOffsetsDistinct`: Verifies that a squad of 2 summons receives distinct, non-overlapping formation offsets around the owner (left-rear and right-rear).
-* `TestTargetDistributionAcrossMultipleEnemies`: With 2 melee summons and 2 enemies, when `maxMeleeSlotsPerTarget = 1`, Summon 1 claims Enemy 1, and Summon 2 automatically distributes to Enemy 2 without dogpiling.
-* `TestMeleeSlotLimitPreventsDogpiling`: With 3 melee summons and only 1 enemy (`maxMeleeSlotsPerTarget = 2`), first 2 summons claim the 2 slots, while the 3rd summon holds in formation rather than crowding the same point.
-* `TestRangedAndMeleeIndependentSlots`: Verifies that melee and ranged attack slots are tracked independently on the same target.
-* `TestSquadCoordinatorLogging`: Verifies that slot assignments are logged with summon ID, combat role, target ID, and current slot claim counts.
+* `TestFormationOffsetsDistinct`: Проверяет генерацию непересекающихся веерных смещений отряда позади владельца с учетом его угла поворота (Yaw).
+* `TestTargetDistributionAcrossMultipleEnemies`: Проверяет распределение целей: при наличии нескольких врагов существа отряда не сбиваются в кучу, а атакуют разных противников.
+* `TestMeleeSlotLimitPreventsDogpiling`: Проверяет квотирование слотов ближнего боя (Anti-dogpiling): при исчерпании лимита (2) третий боец ближнего боя удерживает позицию.
+* `TestRangedAndMeleeIndependentSlots`: Проверяет независимость лимитов: стрелки занимают дальние слоты (до 3), не блокируя бойцов ближнего боя.
+* `TestSquadCoordinatorLogging`: Проверяет диагностическое логирование захвата и освобождения боевых слотов.
 
-### Suite D: Summon Registry (`SummonRegistry`) — 6 tests
-* `TestIdempotentRegistration`: Re-registering the same summon ID updates remaining duration and un-suspends without creating duplicate registry records.
-* `TestCellDetachSuspendsWithoutDeleting`: Verifies that `NotifyCellDetach` switches lifecycle to `Suspended` without removing the record. Suspended summons are excluded from active squad queries. `NotifyCellAttach` cleanly restores `Active` status.
-* `TestReCastExceedingLimitDisplacesOldest`: With owner limit set to 2, summoning a 3rd entity automatically detects the oldest registered entity, marks it `Displaced`, and outputs its ID for engine-level dispel, leaving the 2 newer summons active.
-* `TestDeathAndDispelLifecycle`: Verifies `NotifyDeath` marks record `Dead`, `NotifyEffectRemoved` marks record `Dispatched`, and `ClearStaleRecords` purges all dead/dispatched entities.
-* `TestResetClearsAll`: Verifies that `Reset()` purges all records for safe save-load reloading.
-* `TestRegistryLogging`: Verifies that registration, cell detach/attach, and death events produce formatted diagnostic log lines.
+### Suite D: Registry & Lifecycle (`SummonRegistry`) — 6 tests
+* `TestIdempotentRegistration`: Проверяет устойчивость к дублирующим событиям движка: повторная регистрация обновляет метаданные, не создавая клонов.
+* `TestCellDetachSuspendsWithoutDeleting`: Проверяет двухфазный жизненный цикл: выгрузка ячейки (`Cell Detach`) переводит существо в `Suspended`, а повторная загрузка возвращает в `Active`.
+* `TestReCastExceedingLimitDisplacesOldest`: Проверяет вытеснение при превышении лимита призывов владельца (вытесняется самый старый активный призыв с выдачей команды на dispel).
+* `TestDeathAndDispelLifecycle`: Проверяет события смерти (`Dead`) и снятия эффекта (`Dispatched`), а также сборку мусора `ClearStaleRecords()`.
+* `TestResetClearsAll`: Проверяет очистку реестра при перезагрузке сохранения или начале новой игры.
+* `TestRegistryLogging`: Проверяет логирование всех операций жизненного цикла.
 
-### Suite E: Command Priority & Queue (`CommandQueue`) — 6 tests
-* `TestPriorityArbitrationOrder`: Enqueuing commands in reverse order (`Tactical` -> `PlayerDirect` -> `Lifecycle`) pops them strictly in order of importance: `Lifecycle` first, `PlayerDirect` second, `Tactical` third.
-* `TestCommandCoalescing`: Rapid successive player commands (`Follow` followed by `WaitGuard`) coalesce into a single pending command with the latest order, preventing redundant oscillations.
-* `TestTTLExpiration`: Verifies that commands older than their time-to-live are automatically purged on pump rather than executing stale actions.
-* `TestDrainForSummonIncludesBroadcast`: Verifies that targeted draining extracts both summon-specific commands and squad broadcast commands (`InvalidEntityID`) while preserving commands for unrelated summons.
-* `TestApplyToModelWithFSM`: Verifies that `ApplyToModel` coordinates with `StateMachine`, applying orders, switching aggression, and executing `Dispel` -> `Despawn`.
-* `TestThreadSafeConcurrentEnqueue`: Stress test with 4 concurrent worker threads pushing 50 commands each, verifying zero data race and correct final queue count (200).
+### Suite E: Command Queue & Priority (`CommandQueue`) — 6 tests
+* `TestPriorityArbitrationOrder`: Проверяет строгую иерархию обработки: `Lifecycle` (0) -> `PlayerDirect` (1) -> `ModeChange` (2) -> `Tactical` (3).
+* `TestCommandCoalescing`: Проверяет слияние команд: быстрый спам хоткеев игрока перезаписывает аргументы in-place, защищая от переполнения очереди.
+* `TestTTLExpiration`: Проверяет автоматическое аннулирование устаревших команд по истечении Time-to-Live (5.0 сек).
+* `TestDrainForSummonIncludesBroadcast`: Проверяет выборку команд: получение приказов конкретным существом включает как персональные, так и широковещательные приказы отряду.
+* `TestApplyToModelWithFSM`: Проверяет интеграцию: применение приказов из очереди непосредственно к `SummonModel` и `StateMachine`.
+* `TestThreadSafeConcurrentEnqueue`: Стресс-тест многопоточности: 8 параллельных потоков по 100 команд без состояния гонки и повреждения памяти.
 
-### Suite F: Update Scheduling & Cadence (`UpdateScheduler`) — 6 tests
-* `TestIntervalCalculationAndClamping`: Verifies interval calculation (15 Hz -> ~0.0667s) and boundaries clamping (floor at 5 Hz / 0.2000s, cap at 30 Hz / 0.0333s).
-* `TestPeriodicTickAccurate`: Simulates 60 FPS frames (`dt = 0.01667s`), verifying that 12 frames at 10 Hz produce exactly 2 ticks with zero timing drift.
-* `TestImmediateTickOverride`: Verifies that urgent commands flag `RequestImmediateTick()`, forcing the scheduler to evaluate on the next frame (even at dt = 1 ms) and then cleanly returning to periodic cadence.
-* `TestTimeSlicingInterleavedCadence`: Verifies round-robin load distribution for squads, alternating updates between Member 0 and Member 1 on consecutive ticks.
-* `TestResetZeroesState`: Verifies that `Reset()` zeroes accumulated time, total elapsed time, and tick counts.
-* `TestSchedulerLogging`: Verifies diagnostic logs for frequency adjustments, immediate tick execution, and reset events.
+### Suite F: Update Scheduler & Time-Slicing (`UpdateScheduler`) — 6 tests
+* `TestIntervalCalculationAndClamping`: Проверяет корректность расчета тика (15 Гц = 66.7 мс) и клампинг частоты в безопасные границы [1, 60] Гц.
+* `TestPeriodicTickAccurate`: Проверяет защиту от дрейфа времени: сохранение остатка дельты между кадрами.
+* `TestImmediateTickOverride`: Проверяет немедленное пробуждение планировщика при получении экстренных команд игрока.
+* `TestTimeSlicingInterleavedCadence`: Проверяет алгоритм чередования (Round-robin): расчеты для существ отряда распределяются по разным тикам.
+* `TestResetZeroesState`: Проверяет сброс состояния планировщика при смене игровых сессий.
+* `TestSchedulerLogging`: Проверяет диагностические логи изменения частоты, внеочередных тиков и сброса.
 
 ### Suite G: Configuration & Settings (`Settings`) — 6 tests
-* `settings_default_values`: Verifies all default configuration parameters match framework specifications across all five sections.
-* `settings_load_from_string_prefixed`: Tests parsing of standard Skyrim-prefixed INI keys (`bEnabled`, `sLogLevel`, `uMaxSummonsPerOwner`, etc.).
-* `settings_load_from_string_unprefixed_and_comments`: Tests parsing of lowercase unprefixed keys and stripping of inline comments (`;` and `#`).
-* `settings_validation_and_clamping`: Confirms boundary enforcement and automatic correction for invalid values (summons clamping [1, 32], update frequency [1, 60], return leash adjustment).
-* `settings_serialization_roundtrip`: Verifies serialize-to-string followed by parse roundtrip preserves all values without data loss.
-* `settings_file_save_and_load`: Tests filesystem write, read, and non-existent file handling with clean temporary file teardown.
+* `settings_default_values`: Проверяет соответствие всех параметров конфигурации спецификации мода по умолчанию.
+* `settings_load_from_string_prefixed`: Проверяет парсинг стандартных INI-ключей Skyrim (`bEnabled`, `sLogLevel`, `uMaxSummonsPerOwner`, `bEnableCollisionBypass` и др.).
+* `settings_load_from_string_unprefixed_and_comments`: Проверяет парсинг строчных ключей без префиксов и корректное удаление комментариев (`;` и `#`).
+* `settings_validation_and_clamping`: Проверяет защиту от некорректных значений в INI (клампинг лимитов [1, 32], частоты [1, 60], дистанций поводка).
+* `settings_serialization_roundtrip`: Проверяет сериализацию в INI-строку и обратный парсинг без потери данных.
+* `settings_file_save_and_load`: Проверяет сохранение, загрузку с диска и обработку отсутствующих файлов.
 
 ### Suite H: Console Diagnostics & Context (`ConsoleHandler` & `FrameworkContext`) — 6 tests
-* `console_command_help`: Tests `help`, empty line, and `scf help` input dispatching command documentation.
-* `console_command_status`: Verifies `status` outputs enabled flags, log levels, owner limits, scheduler frequency, and pending command counts.
-* `console_command_registry_empty_and_populated`: Verifies empty registry output and formatted dumps of active summons with ID, owner, lifecycle state, and duration.
-* `console_command_reload`: Verifies live INI reloading from disk and graceful failure reporting when the target file does not exist.
-* `console_command_unknown`: Verifies unknown subcommands report guidance to type `scf help`.
-* `framework_context_reset`: Tests `FrameworkContext::ResetRuntimeState()`, verifying simultaneous cleanup of `SummonRegistry`, `CommandQueue`, and `UpdateScheduler`.
+* `console_command_help`: Проверяет справочные подсказки команды `scf help`.
+* `console_command_status`: Проверяет отчет `scf status` (состояние рантайма, частота планировщика, режим time-slicing, флаги коллизий, число команд в очереди).
+* `console_command_registry_empty_and_populated`: Проверяет форматированный вывод реестра `scf registry` с выводом ID, владельца, состояния и времени жизни.
+* `console_command_reload`: Проверяет горячую перезагрузку INI через консоль `scf reload`.
+* `console_command_unknown`: Проверяет вывод подсказок при неверных подкомандах.
+* `framework_context_reset`: Проверяет `FrameworkContext::ResetRuntimeState()` с одновременным сбросом всех подсистем.
 
 ### Suite I: Engine Event Dispatching (`EventDispatcher`) — 4 tests
-* `event_dispatcher_active_effect_apply_and_remove`: Tests active effect apply (registration into `Active`), self-buff rejection (`caster == target`), and effect removal (transition to `Dispatched`).
-* `event_dispatcher_recast_displacement`: Verifies that recast exceeding owner limit triggers `_displaceCallback` with the oldest summon ID.
-* `event_dispatcher_death_event`: Confirms actor death event marks registered entity `Dead`, while safely ignoring unregistered or non-fatal events.
-* `event_dispatcher_cell_attach_detach_lifecycle`: Validates cell detach transition into `Suspended` and attach restoration into `Active`.
+* `event_dispatcher_active_effect_apply_and_remove`: Проверяет регистрацию в `Active` при наложении эффекта призыва, отсечение селф-баффов (`caster == target`) и снятие эффекта (`Dispatched`).
+* `event_dispatcher_recast_displacement`: Проверяет вызов коллбэка вытеснения старейшего призыва при превышении лимита владельца.
+* `event_dispatcher_death_event`: Проверяет фиксацию смерти актора (`Dead`) и игнорирование нелетальных событий.
+* `event_dispatcher_cell_attach_detach_lifecycle`: Проверяет переход `Active <-> Suspended` при смене ячеек.
+
+### Suite J: Collision Pair Classification (`CollisionPairClassifier`) — 7 tests
+* `collision_player_own_summon_passthrough`: Проверяет свободное прохождение игрока сквозь собственного призванного актора (`Passthrough`), устраняя блокировку проходов.
+* `collision_player_other_owner_summon_collide`: Проверяет стандартное столкновение игрока с призывами других персонажей (`Default`).
+* `collision_allied_summons_passthrough`: Проверяет сквозное прохождение двух призывов одного владельца при включенном `bEnableSummonToSummonBypass`.
+* `collision_summon_and_enemy_collide`: Гарантирует сохранение физических столкновений и хитбоксов в бою против врагов (`Default`).
+* `collision_non_summons_default`: Гарантирует, что сущности без флага призыва никогда не модифицируются классификатором (защита статиков, стен и полов).
+* `collision_global_bypass_disabled`: Проверяет мгновенный возврат к ванильному поведению при выключении `bEnableCollisionBypass = false` (Safety Gate).
+* `collision_classifier_logging`: Проверяет корректность вызовов диагностического логгера при оценке пар коллизий.
 
 ---
 
 ## 2. Static / offline (passing)
 
-* **Compiler:** MSVC 14.44 (Visual Studio 2022 Build Tools) with standard `/std:c++latest` (C++23).
-* **Warning level:** `/W4` (`allextra`), `/permissive-`, `/Zc:preprocessor`. Clean compilation with zero warnings in project code.
-* **Precompiled Header (PCH):** [src/PCH.h](file:///D:/projects/Summon_Control_Framework/src/PCH.h) precompiles `RE/Skyrim.h`, `SKSE/SKSE.h`, and `spdlog`.
+* **Compiler:** MSVC 14.44 (Visual Studio 2022 Build Tools) с `/std:c++latest` (C++23).
+* **Warning level:** `/W4` (`allextra`), `/permissive-`, `/Zc:preprocessor`. Чистая сборка с нулевым количеством ворнингов в коде мода.
+* **Precompiled Header (PCH):** [src/PCH.h](file:///D:/projects/Summon_Control_Framework/src/PCH.h) с предкомпиляцией `RE/Skyrim.h`, `SKSE/SKSE.h` и `spdlog`.
 * **Multi-runtime Configuration:**
-  * CommonLibSSE-NG compiled with `ENABLE_SKYRIM_SE=1` and `ENABLE_SKYRIM_AE=1`.
-  * Target platform `windows|x64`.
-  * Address Library runtime compatibility mode enabled (`SKSE::VersionIndependence::AddressLibrary`).
-  * `SKSEPluginInfo` resource generated automatically via `commonlibsse-ng.plugin` rule.
-* **Header Independence:** Core and AI modules compile in pure isolation without linking `commonlibsse-ng.lib` in the test target.
+  * CommonLibSSE-NG собрана с `ENABLE_SKYRIM_SE=1` и `ENABLE_SKYRIM_AE=1`.
+  * Архитектура `windows|x64`.
+  * Address Library режим (`SKSE::VersionIndependence::AddressLibrary`).
+* **Развертывание бинарников:**
+  * DLL: `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\SummonControlFramework.dll` (~600 KB).
+  * PDB: `SummonControlFramework.pdb` (полные отладочные символы).
+  * INI: `SummonControlFramework.ini` (конфигурация мода со всеми секциями).
+  * Профиль MO2: активирован в `D:\Games\stb\[STB] Mod Organizer\profiles\SBORKA\modlist.txt` как `+Summon Control Framework`.
 
 ---
 
@@ -102,20 +119,18 @@ Execution time: ~1-2 ms.
 ### Verified
 | Component | Evidence |
 |---|---|
-| Plugin build output | `SummonControlFramework.dll` generated (504 KB, with `.pdb`) |
-| Core unit tests | 54/54 passing via `scf_tests.exe` |
+| Plugin build output | `SummonControlFramework.dll` generated (~600 KB, with `.pdb`) |
+| Core unit tests | 61/61 passing via `scf_tests.exe` |
+| MO2 deployment | Deployed to `mods\Summon Control Framework` and enabled in `SBORKA` |
 
-### Waiting for live Skyrim run
+### Ready for live Skyrim check (SE 1.5.97.0 via MO2)
 | Feature | Target verification |
 |---|---|
 | Plugin load | `SummonControlFramework v0.1.0 is loading...` in SKSE log |
-| `RuntimeGate` check | Log lines verifying `Detected game version: 1.6.1170.0` |
+| `RuntimeGate` check | Log lines verifying `Detected game version: 1.5.97.0` |
 | `kDataLoaded` receipt | Log line `Data loaded: SKSE message received, SCF FSM ready` |
-| Console command `scf` | Executing `scf status` and `scf registry` prints diagnostic output in console |
-| Event sinks registration | Log line verifying registration of `TESActiveEffectApplyRemoveEvent`, `TESDeathEvent`, `TESCellAttachDetachEvent` |
-| Summon registration | Log lines on casting `Conjure Familiar` / `Flame Atronach` |
-| Friendly fire guard in game | Player weapon/spell hitting summon without hostility loop |
-| Collision non-blocking | Player walking through summoned creature |
-| Squad formation | Multiple summons moving in fan/flank formation behind player |
-| Hotkey command execution | Hotkey press dequeuing and executing `Return` / `FocusTarget` |
-| FPS overhead | No frame drops during 60/144 fps gameplay with 15 Hz scheduler tick |
+| Console command `scf` | Executing `scf status`, `scf registry`, `scf reload` prints output in console |
+| Event sinks registration | Log line verifying registration of `ActiveEffect`, `Death`, `CellAttachDetach` |
+| Summon registration | Log lines on casting `Conjure Familiar` (`player.addspell 00021143`) |
+| Twin Souls limit displacement | Recasting Familiar exceeding limit displaces oldest active summon |
+| Collision bypass | In-game non-blocking pass-through between player and summoned familiar |

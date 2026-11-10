@@ -15,6 +15,12 @@ namespace scf::core
 		std::size_t maxSummonsPerOwner{ 1 };
 	};
 
+	struct CollisionSettings
+	{
+		bool enableCollisionBypass{ true };     // Player <-> own summon non-blocking
+		bool enableSummonToSummonBypass{ true }; // Summon <-> summon (same owner) non-blocking
+	};
+
 	struct TimingSettings
 	{
 		float updateFrequencyHz{ 15.0f };
@@ -48,6 +54,7 @@ namespace scf::core
 	struct SettingsData
 	{
 		GeneralSettings general{};
+		CollisionSettings collision{};
 		TimingSettings timing{};
 		CombatSettings combat{};
 		SquadSettings squad{};

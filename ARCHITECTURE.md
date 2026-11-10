@@ -136,7 +136,7 @@
 
 ---
 
-## 8. Реестр призывов и управление жизненным циклом (`SummonRegistry`)
+## 8. Реестр призывов и управление жизненным циклом (`SummonRegistry`)\
 
 * **Файл:** [src/Core/SummonRegistry.h](file:///D:/projects/Summon_Control_Framework/src/Core/SummonRegistry.h), [src/Core/SummonRegistry.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/SummonRegistry.cpp)
 
@@ -184,7 +184,7 @@
 
 ## 12. Центральный контекст рантайма и интеграция движка
 
-* **Файлы:**
+* **Файл:**
   * [src/Core/FrameworkContext.h](file:///D:/projects/Summon_Control_Framework/src/Core/FrameworkContext.h) / [FrameworkContext.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/FrameworkContext.cpp)
   * [src/Core/ConsoleHandler.h](file:///D:/projects/Summon_Control_Framework/src/Core/ConsoleHandler.h) / [ConsoleHandler.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/ConsoleHandler.cpp)
   * [src/Plugin/ConsoleCommands.h](file:///D:/projects/Summon_Control_Framework/src/Plugin/ConsoleCommands.h) / [ConsoleCommands.cpp](file:///D:/projects/Summon_Control_Framework/src/Plugin/ConsoleCommands.cpp)
@@ -199,7 +199,7 @@
 
 ## 13. Адаптация событий Creation Engine (`EventDispatcher` и `EventAdapter`)
 
-* **Файлы:**
+* **Файл:**
   * [src/Core/EventDispatcher.h](file:///D:/projects/Summon_Control_Framework/src/Core/EventDispatcher.h) / [EventDispatcher.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/EventDispatcher.cpp)
   * [src/Engine/EventAdapter.h](file:///D:/projects/Summon_Control_Framework/src/Engine/EventAdapter.h) / [EventAdapter.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/EventAdapter.cpp)
 
@@ -212,3 +212,31 @@
    * Реализует `BSTEventSink<RE::TESActiveEffectApplyRemoveEvent>`, `BSTEventSink<RE::TESDeathEvent>` и `BSTEventSink<RE::TESCellAttachDetachEvent>`.
    * Извлекает `FormID` из `NiPointer<TESObjectREFR>` с проверкой на `nullptr`.
    * Регистрирует приемники событий через `RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<T>()` в момент `kDataLoaded`.
+
+---
+
+## 14. Классификация и фильтрация коллизий (`CollisionPairClassifier`)
+
+* **Файл:**
+  * [src/Collision/CollisionPairClassifier.h](file:///D:/projects/Summon_Control_Framework/src/Collision/CollisionPairClassifier.h)
+  * [src/Collision/CollisionPairClassifier.cpp](file:///D:/projects/Summon_Control_Framework/src/Collision/CollisionPairClassifier.cpp)
+
+### Проблема блокировки движения и «застревания в дверях»:
+В стандартном Skyrim коллизии персонажей (`bhkCharacterController` / Havok) жестко сталкивают игрока и его собственных призванных существ. В узких проходах, подземельях и дверных проемах крупный призыв (например, Огненный атронах или Грозовой атронах) полностью блокирует движение игрока, вызывая физический клинч (jitter и push).
+
+### Архитектура и матрица решений классификатора:
+`CollisionPairClassifier` реализует изолированную логику оценки пары сущностей:
+
+| Пара сущностей | Режим обхода включен | Результат | Обоснование |
+|---|---|---|---|
+| **Игрок ↔ Собственный призыв** | Да | `Passthrough` (игнорировать коллизию) | Игрок свободно проходит сквозь призыва в дверных проемах |
+| **Игрок ↔ Чужой призыв** | Да | `Default` (стандартное столкновение) | Сохраняется физическое взаимодействие с призванными врагами |
+| **Призыв A ↔ Призыв B (один владелец)** | `bEnableSummonToSummonBypass=true` | `Passthrough` | Призывы отряда не расталкивают друг друга в узких коридорах |
+| **Призыв A ↔ Призыв B (разные владельцы)** | Любое | `Default` | Боевой контакт между существами разных магов |
+| **Призыв ↔ Враг** | Любое | `Default` | Сохраняется расчет попаданий оружия и физических коллизий в бою |
+| **Не-призыв ↔ Любая сущность** | Любое | `Default` | Мир, окружение, статическая геометрия и NPC не модифицируются |
+
+### Защитные механизмы (Safety Gates):
+1. **Глобальный выключатель (`bEnableCollisionBypass = false`):** мгновенно возвращает движок к 100% ванильной физике без накладных расходов.
+2. **Селективный выключатель `bEnableSummonToSummonBypass`:** позволяет раздельно настраивать прохождение игрока сквозь призывов и призывов сквозь друг друга.
+3. **Безопасность геометрии:** классификатор принимает решение об отключении коллизии **только** для пар живых сущностей с зарегистрированным владением. Коллизия со стенами, полами и препятствиями мира никогда не затрагивается.

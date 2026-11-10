@@ -8,6 +8,16 @@
   * Enums for summon lifecycle and orders: `SummonState`, `SummonOrder`, `AggressionMode`.
   * `SummonModel`: state time tracking, target lost debounce timer, owner and target IDs.
   * `DecisionContext`: snapshot structure capturing distances to owner and target, combat flags, and configurable thresholds.
+* **Collision Classification Subsystem (`CollisionPairClassifier`):**
+  * **Matrix arbitration (Stage 2 PoC):** pure C++ classification of collision pairs with zero game-engine header coupling:
+    * `Player <-> Own Summon`: `Passthrough` (prevents doorway blocking and physical body clinches).
+    * `Player <-> Other Owner's Summon`: `Default` (maintains standard collision against enemy summons).
+    * `Summon A <-> Summon B (Same Owner)`: `Passthrough` when `bEnableSummonToSummonBypass` is true.
+    * `Summon A <-> Summon B (Different Owners)`: `Default` (opposing summons collide in combat).
+    * `Summon <-> Enemy`: `Default` (preserves weapon hits, projectile blocking, and combat interactions).
+    * `Non-Summons`: `Default` (environment, static geometry, walls, and floors remain completely unaffected).
+  * **Configurable Safety Gates:** global bypass toggle (`bEnableCollisionBypass`) and summon-to-summon toggle (`bEnableSummonToSummonBypass`). When disabled, instantly reverts to vanilla collision evaluation.
+  * **Integrated Observability:** diagnostic log callback support and reporting in `scf status`.
 * **Engine Event Adapters & Dispatcher (`EventAdapter` & `EventDispatcher`):**
   * **Creation Engine event sinks:** registered through `RE::ScriptEventSourceHolder` on `kDataLoaded`:
     * `TESActiveEffectApplyRemoveEvent`: catches magic effect applications and removals, correlating caster (owner) and target (summon) FormIDs, and registering/unregistering them in `SummonRegistry`. Filters out self-buffs (`caster == target`) and triggers displacement callbacks.
@@ -20,7 +30,7 @@
   * Thread-safe `ResetRuntimeState()` for clean save-load and new game transitions.
 * **Console Command Processor & In-Game Diagnostics (`ConsoleHandler` & `ConsoleCommands`):**
   * Pure C++ command parsing supporting:
-    * `scf status`: detailed report of framework status, update frequency, time-slicing mode, and pending command counts.
+    * `scf status`: detailed report of framework status, update frequency, time-slicing mode, collision bypass status, and pending command counts.
     * `scf registry`: dumps all tracked summons with IDs, owners, lifecycle states (`Active`, `Suspended`, `Displaced`), and remaining duration.
     * `scf reload`: reloads INI configuration on-the-fly.
     * `scf help`: command reference.
@@ -30,8 +40,8 @@
   * Handles `kPreLoadGame` & `kNewGame`: clears transient registries to avoid cross-save state leakage.
   * Handles `kPostLoadGame` & `kPostLoad`.
 * **Configuration & Settings Manager (`Settings`):**
-  * **Categorized configuration:** `GeneralSettings`, `TimingSettings`, `CombatSettings`, `SquadSettings`, and `HotkeySettings`.
-  * **Resilient INI parser:** parses standard INI format with support for both Skyrim prefixes (`bEnabled`, `sLogLevel`, `fUpdateFrequencyHz`, `uMaxSummonsPerOwner`) and unprefixed keys.
+  * **Categorized configuration:** `GeneralSettings`, `CollisionSettings`, `TimingSettings`, `CombatSettings`, `SquadSettings`, and `HotkeySettings`.
+  * **Resilient INI parser:** parses standard INI format with support for both Skyrim prefixes (`bEnabled`, `sLogLevel`, `fUpdateFrequencyHz`, `uMaxSummonsPerOwner`, `bEnableCollisionBypass`) and unprefixed keys.
   * **Comment handling:** strips full-line and inline comments delimited by `;` or `#`.
   * **Sanitization & Clamping:** enforces safety boundaries across all tactical parameters (e.g. summon limits [1, 32], update frequency [1, 60] Hz, return leash threshold strictly greater than follow distance) with diagnostic warning logs.
   * **Round-trip serialization & file persistence:** full formatting to readable INI file format with clean error handling for missing or unwriteable files.
@@ -78,32 +88,36 @@
   * **Target distribution:** automatically distributes multiple targets across squad members instead of all summons dogpiling on a single enemy.
   * **Formation offsets:** calculates symmetrical, non-overlapping follow/guard offsets around the owner based on squad size and owner yaw.
 * **Observability & Diagnostics:**
-  * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, scheduler updates, and squad slot claims with structured reasons.
+  * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, scheduler updates, collision classifications, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **54/54 test cases passing** (0 failures, execution time < 2 ms).
+  * **61/61 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
-  * Multi-runtime support: Steam AE 1.6.1170 (primary) and SE 1.5.97 via Address Library (`commonlibsse-ng.plugin`).
+  * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
   * `RuntimeGate` module logging runtime environment and validating executable version.
-  * Xbyak trampoline support enabled (`skse_xbyak = true`).
-  * Optional automatic deployment to MO2/Vortex mods folder via `--deploy_dir`.
+  * Deployed to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
+  * Mod active in `D:\Games\stb\[STB] Mod Organizer\profiles\SBORKA\modlist.txt`.
 
 ## Built and deployed, waiting for an in-game check
 
-* `SummonControlFramework.dll` loading under SKSE on Steam AE 1.6.1170.
+* `SummonControlFramework.dll` loading under SKSE on Skyrim SE 1.5.97.0 (MO2 profile SBORKA).
 * Log file generation at `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
-* `RuntimeGate` log output verifying detected game version.
+* `RuntimeGate` log output verifying detected game version (1.5.97.0).
 * SKSE messaging listener receiving `kDataLoaded`, `kPreLoadGame`, `kPostLoadGame`, `kNewGame`.
 * Console command `scf` (with `status`, `registry`, `reload`, `help`) executing from the in-game tilde console.
 * Engine event sinks observing active effects, death, and cell attach/detach in live gameplay.
+* Collision bypass settings active in `SummonControlFramework.ini`.
 
 ## Up next (Plan Roadmap)
 
-* **Stage 2 (Collision PoC - Key Technical Risk):**
-  * Passive observation hook for Havok collision filter callbacks (`bhkCollisionFilter`).
-  * Filter pair classification (`Player <-> Own Summon` non-blocking).
+* **Stage 2 (Havok Filter Integration & Verification):**
+  * Precision API callback or `bhkCollisionFilter` hook registration in runtime.
+  * In-game doorway pass-through testing.
+* **Stage 3 (Targeting & Player Controls):**
+  * `CrosshairPickData` hook for instant `FocusTarget` targeting.
+  * Input event sink for hotkeys (`FocusTarget`, `Return`, `ToggleAggression`).
 
 ## Known limitations
 
