@@ -261,3 +261,129 @@
    * Выполняет регистрацию в `SummonRegistry`.
    * Автоматически очищает исчезнувших или рассеянных движком существ через `NotifyEffectRemoved`.
 4. **Мгновенный триггер при событиях:** при поступлении `TESActiveEffectApplyRemoveEvent` адаптер немедленно инициирует `update::SyncPlayerSummons()`, исключая задержку отображения при касте.
+
+---
+
+## 16. Защита от дружественного огня и фильтрация атак (Friendly Fire & Attack Filtering)
+
+* **Дополнение к спецификации:** [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md) (Workstream FF-01)
+* **Директории подсистемы:** src/FriendlyFire/, src/Integrations/
+
+### 16.1. Разделение ответственности: Физика тел vs Боевые хитбоксы
+
+Фундаментальный архитектурный принцип SCF: **не смешивать CollisionPairClassifier и AttackFilterManager**.
+
+| Критерий | CollisionPairClassifier (Физика тел) | AttackFilterManager (Боевая фильтрация) |
+|---|---|---|
+| **Уровень движка** | Havok Character Controller (hkCharacterController) | Хитбоксы оружия, Havok Raycast, Precision, Projectiles, Magic |
+| **Цель** | Устранить блокировку проходов («застревание в дверях») | Защитить призывы от ударов игрока и союзников, пропустить атаку во врага |
+| **Область действия** | Прогулки, бег, навигация в тесных коридорах | Удары мечом, размашистые атаки, стрелы, болты, магия, крики |
+| **Опасность ошибки** | Проваливание сквозь геометрию мира | Игнорирование ударов врагами, отключение боевой реакции |
+
+### 16.2. Двухуровневая модель: Damage Protection vs Attack Pass-Through
+
+В архитектуре FF-01 зафиксировано жесткое разграничение понятий:
+
+1. **Damage Protection (MVP-уровень):**
+   * Перехватывает этап применения урона (Actor::AdjustDamage, ProcessHit, ApplyDamage).
+   * Обнуляет урон (damage = 0) и подавляет агрессию/враждебность (HostilityFilter).
+   * При этом снаряд или меч могут визуально коснуться хитбокса призыва (отмена урона **не означает** продолжение движения).
+2. **Attack Pass-Through (Целевой уровень):**
+   * Призыв полностью исключается из кандидатов на столкновение до завершения удара/снаряда.
+   * Меч (через Precision IgnoreHit) физически пролетает сквозь призыва и поражает врага позади него.
+   * Стрелы и физические снаряды (через Havok collision filter) не вызывают impact на призыве и продолжают баллистическую траекторию.
+
+### 16.3. Модель отношений: RelationshipClassifier и AttackSourceKind
+
+Классификатор не полагается на примитивный IsHostileToActor(), а вычисляет строгий статус источника атаки:
+
+`cpp
+enum class AttackSourceKind : std::uint8_t
+{
+    Player,             // Игрок (0x14)
+    PlayerAlly,         // Союзный NPC (компаньон, спутник, член фракции игрока)
+    PlayerOwnedSummon,  // Призыв игрока (зарегистрирован в SummonRegistry)
+    AlliedSummon,       // Призыв спутника/союзника
+    Neutral,            // Нейтральный актор
+    Hostile,            // Враг
+    Unknown             // Не удалось разрешить (Safety Gate: не блокировать по умолчанию!)
+};
+`
+
+#### Защитные барьеры классификатора:
+* **Защита от циклов:** При обходе цепочки владельцев (GetCommandingActor()) глубина ограничена константой (макс. 4 уровня) с детекцией зацикливаний.
+* **Принцип безопасного отказа (Fail-Safe):** Источник статуса Unknown **никогда** не фильтруется как союзник. Лучше допустить один случайный удар по призыву, чем сделать настоящего врага неуязвимым для атак.
+
+### 16.4. Структура подсистемы и адаптеры
+
+`	ext
+src/FriendlyFire/
+├── RelationshipClassifier.h/.cpp  // Чистая классификация AttackSourceKind и проверка целей
+├── ProtectionPolicy.h/.cpp        // Матрица решений (ShouldFilterFriendlyAttack)
+├── FriendlyFireSettings.h/.cpp    // Структуры конфигурации INI
+├── AttackFilterManager.h/.cpp     // Маршрутизатор проверок
+├── MeleeFilter.h/.cpp             // Ванильный melee и sweeping attacks
+├── ProjectileFilter.h/.cpp        // Фильтрация стрел/болтов и физических снарядов
+├── MagicFilter.h/.cpp             // Прямые заклинания, concentration, staves, shouts
+├── ExplosionFilter.h/.cpp         // Исключение призыва из списков поражения AoE
+├── HostilityFilter.h/.cpp         // Подавление дружественных петель враждебности
+└── HitReactionFilter.h/.cpp       // Контроль stagger, recoil и killmoves
+
+src/Integrations/
+└── PrecisionBackend.h/.cpp        // Интеграция с PrecisionAPI (PreHitCallback)
+`
+
+### 16.5. Интеграция с Precision (PrecisionAPI.h)
+
+Для сборок с установленным плагином Precision.dll (например, STB):
+* В фазе SKSE Messaging (kPostLoad / kDataLoaded) плагин запрашивает интерфейс Precision:
+  `cpp
+  auto* precisionAPI = reinterpret_cast<PrecisionAPI::IVPrecision1*>(
+      a_msg->Dispatch(PrecisionAPI::RequestPluginAPI));
+  `
+* Регистрируется легковесный PreHitCallback:
+  `cpp
+  precisionAPI->AddPreHitCallback(SKSE::GetPluginHandle(), [](const PrecisionAPI::HitInfo& a_hitInfo) {
+      if (ShouldFilterFriendlyMelee(a_hitInfo.attacker, a_hitInfo.target)) {
+          PrecisionAPI::PreHitCallbackReturn ret{};
+          ret.bIgnoreHit = true; // Оружие физически летит дальше сквозь хитбокс!
+          return ret;
+      }
+      return PrecisionAPI::PreHitCallbackReturn{};
+  });
+  `
+
+### 16.6. Конфигурация INI ([FriendlyFire])
+
+`ini
+[FriendlyFire]
+bEnableSummonProtection=true          ; Главный выключатель подсистемы
+bProtectPlayerOwnedSummons=true       ; Защищать призывы игрока
+bProtectAllyOwnedSummons=false        ; Защищать призывы спутников
+
+bFilterPlayerAttacks=true             ; Фильтровать атаки игрока
+bFilterPlayerAllies=true              ; Фильтровать атаки спутников
+bFilterPlayerOwnedSummons=true        ; Фильтровать атаки других призывов игрока
+bFilterAlliedSummons=true             ; Фильтровать атаки призывов спутников
+
+; Защита от урона (Damage Protection)
+bBlockMeleeDamage=true
+bBlockArrowDamage=true
+bBlockPhysicalProjectileDamage=true
+bBlockMagicProjectileDamage=true
+bBlockConcentrationDamage=true
+bBlockAreaMagicDamage=true
+bBlockShoutDamage=true
+bBlockEnchantmentDamage=true
+
+; Прохождение насквозь (Attack Pass-Through, экспериментально)
+bMeleePassThrough=true
+bArrowPassThrough=true
+bPhysicalProjectilePassThrough=false
+bMagicProjectilePassThrough=false
+
+; Подавление побочных эффектов
+bSuppressFriendlyAggression=true      ; Защита от combat-петли агро
+bSuppressFriendlyKillmoves=true       ; Запрет добиваний союзных призывов
+bSuppressFriendlyHitReactions=false   ; Stagger/recoil (выключено до тестов стабильности)
+`

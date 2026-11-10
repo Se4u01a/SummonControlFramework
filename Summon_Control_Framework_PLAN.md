@@ -728,6 +728,23 @@ NativeBackend может предоставлять только те опера
 
 ---
 
+### 8.4. Подсистема Friendly Fire Protection & Attack Filtering (Дополнение FF-01)
+
+В соответствии с технической спецификацией Friendly_Fire_Protection_Addendum.md (FF-01) подсистема защиты от дружественного огня строится на строгом разделении двух режимов:
+
+1. **Damage Protection:** Атака игрока или союзников не наносит урона защищённому призыву и не вызывает враждебности. При этом визуальный импакт, хитстоп или остановка стрелы могут временно сохраняться.
+2. **Attack Pass-Through:** Защищённый призыв прозрачен для дружественной атаки. Меч, стрела или магический снаряд физически пролетают сквозь союзного призыва и поражают врага позади него.
+
+#### Ключевые компоненты архитектуры:
+- **RelationshipClassifier:** Изолированный чистый классификатор (Core), определяющий тип источника (AttackSourceKind: Player, PlayerAlly, PlayerOwnedSummon, AlliedSummon, Neutral, Hostile, Unknown) и защищённость цели на основе SummonRegistry, MiddleHighProcessData и связей фракций с защитой от циклических ссылок.
+- **ProtectionPolicy:** Функция ShouldFilterFriendlyAttack(attacker, target, attackKind) маршрутизирует решение в соответствии с матрицей поведения.
+- **Раздельные настройки INI/MCM ([FriendlyFire]):** Независимые флаги для Block*Damage и *PassThrough.
+- **Интеграция с Precision (PrecisionAPI.h):** Регистрация PreHitCallback с возвратом IgnoreHit = true для физического пролета оружия через призыв без хитстопа.
+- **Фильтрация снарядов:** Фильтрация коллизий Havok (hkCollisionFilter) для стрел и снарядов (Projectile::HandleCollisions).
+- **Защита магии и эффектов:** Отдельная обработка прямых заклинаний, концентрации, взрывов (AoE exclusion), криков и зачарований (по аналогии с архитектурой NOFF).
+
+---
+
 ## 9. Stealth Coordination
 
 Скрытность игрока и факт обнаружения игрока врагом — разные состояния.
@@ -1066,17 +1083,58 @@ JSON-профили по race, actor base, keyword и типу призыва:
 
 **Результат:** управляемый одиночный призыв с предсказуемым Follow/Guard/Engage/Return.
 
-### Этап 5 — Friendly Fire и Stealth
+### Этап 5 — Friendly Fire и Stealth (Расширен дополнением FF-01)
 
-- [ ] Логировать `TESHitEvent` для попаданий по призывам.
-- [ ] Воспроизвести melee, projectile, area magic и chain spell сценарии.
-- [ ] Выяснить фактический механизм hostility после friendly fire.
-- [x] Защитить TargetSelector от выбора владельца/союзников.
-- [ ] Реализовать `StealthContext` с отдельными `playerSneaking` и `playerDetected`.
+#### FF-Stage A — Baseline и классификация
+- [ ] Установить No Follower Attack Collision Plus 3.3 в отдельном профиле тестирования как baseline.
+- [ ] Составить матрицу тестов: player → summon, ally → summon, summon → summon, enemy → summon.
+- [ ] Проверить vanilla melee, sweeping attacks, arrows, Precision melee, magic, AoE, concentration, shouts и enchantments.
+- [ ] Зафиксировать, какие воздействия только не наносят урон, а какие физически проходят через цель.
+- [ ] Изучить source code NFAC Plus и его механизм определения союзников/владельцев.
+- [ ] Реализовать RelationshipClassifier в src/Core/ и покрыть его чистыми unit-тестами.
+
+#### FF-Stage B — Damage Protection MVP
+- [ ] Добавить главный переключатель EnableSummonProtection в INI/Settings.
+- [ ] Реализовать защиту player-owned summons от атак игрока (BlockMeleeDamage, BlockArrowDamage, etc.).
+- [ ] Добавить отдельную настройку для атак player allies (FilterPlayerAllies).
+- [ ] Реализовать фильтрацию ванильных melee и стрел на подтвержденных hit-processing paths (Actor::AdjustDamage / ProcessHit).
+- [ ] Добавить интеграцию с Precision PreHitCallback, если Precision.dll загружен в runtime.
+- [ ] Исследовать и реализовать защиту от player-cast hostile magic по архитектуре NOFF (MagicTarget::AddTarget, ValueModifierEffect).
+- [ ] Отдельно протестировать concentration, explosion/AoE, shouts, staves и enchantments.
+- [ ] Не блокировать non-hostile magic effects (healing, buffs) без явной настройки.
+- [ ] Предотвратить нежелательную hostility/агрессию без глобального подавления всех TESHitEvent.
+
+#### FF-Stage C — True Melee Pass-Through
+- [ ] Проверить, продолжает ли vanilla melee/sweep обработку следующих целей после пропуска дружественного актора.
+- [ ] Проверить Precision: продолжает ли hit detection после IgnoreHit.
+- [ ] Если нет — исследовать фильтрацию attack collision candidates до hit processing.
+- [ ] Убедиться, что один удар может поразить врага за призывом без двойного урона и повторных hit events.
+- [ ] Проверить одноручное, двуручное оружие, dual wield, power attacks и sweeping attacks.
+
+#### FF-Stage D — True Projectile Pass-Through
+- [ ] Исследовать collision filtering для arrows/bolts и разных projectile forms.
+- [ ] Проверить возможность исключения защищенного актора до impact, не уничтожая projectile.
+- [ ] Проверить прохождение снаряда через summon и последующее попадание во врага.
+- [ ] Отдельно проверить физические и магические projectile.
+- [ ] Проверить Accurate Projectile Collision как дополнительный reference.
+- [ ] Не менять глобальные collision layers без доказательства безопасности для врагов, окружения и других модов.
+
+#### FF-Stage E — Reactions, Compatibility и Settings
+- [ ] Решить отдельно, нужно ли подавлять hit reactions и stagger (SuppressFriendlyHitReactions).
+- [ ] Предотвратить killmove по защищенным призывам (SuppressFriendlyKillmoves).
+- [ ] Проверить friendly-fire цепочки между summons/followers союзников.
+- [ ] Добавить полную сериализацию и валидацию секции [FriendlyFire] в Settings.
+- [ ] При наличии MCM-инфраструктуры вывести основные настройки в меню.
+- [ ] Проверить конфликты с Precision, NFAC Plus, NOFF, combat mods и projectile mods.
+- [ ] Обеспечить безопасное отключение hooks/подсистемы при неподдерживаемом runtime.
+
+#### Stealth Sub-Stage
+- [x] Защитить TargetSelector от выбора владельца/союзников как цели.
+- [ ] Реализовать StealthContext с отдельными playerSneaking и playerDetected.
 - [ ] Проверить режимы stealth в реальной игровой сцене.
-- [ ] Только при необходимости внедрять дополнительные hooks для hostility.
+- [ ] Покрыть переходы и поведение при скрытности Unit-тестами.
 
-**Результат:** случайные попадания не вызывают friendly-fire combat loop; призывы не портят скрытность без явного приказа.
+**Результат этапа:** защищенные призывы не получают урон от игрока/союзников, атаки и снаряды проходят сквозь них во врагов при включенном pass-through, случайные удары не вызывают combat-петлю hostility, скрытность игрока надежно поддерживается отрядом призывов.
 
 ### Этап 6 — SquadCoordinator
 
@@ -1166,13 +1224,39 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [ ] Catch-Up не выполняется в нормальном бою.
 - [ ] Warp выбирает безопасную точку и не помещает актора в геометрию.
 
-### Friendly Fire / Stealth
+### Friendly Fire / Stealth (FF-01)
 
-- [ ] Melee hit от игрока логируется.
-- [ ] Area spell hit от игрока логируется.
-- [ ] Дружественный урон не вызывает бесконечный combat loop.
-- [ ] В Sneak призыв не инициирует бой автоматически, пока политика этого не разрешает.
-- [x] Явный FocusTarget имеет ожидаемый приоритет.
+#### Защита от урона (Damage Protection)
+- [ ] Обычный melee игрока не наносит урон player-owned summon при включенной защите.
+- [ ] Sweeping/power attacks игрока не наносят урон защищённым призывам.
+- [ ] Стрелы и болты игрока не наносят урон защищённым призывам.
+- [ ] Разрешённые атаки союзных NPC не наносят урон защищённым призывам.
+- [ ] Другие summons в разрешённой command chain не наносят урон защищённым призывам.
+- [ ] Hostile NPC и hostile summons продолжают наносить обычный урон.
+- [ ] Healing и non-hostile buffs продолжают работать, если отдельная настройка не запрещает их.
+- [ ] Защита от direct magic, concentration, AoE, shouts, staves и enchantments проверена отдельными сценариями.
+
+#### Реальное прохождение насквозь (Attack Pass-Through)
+- [ ] Melee hit проходит сквозь защищённый призыв и попадает во врага позади него.
+- [ ] Sweeping attack корректно поражает несколько врагов, не останавливаясь на защищённом призыве.
+- [ ] Стрела проходит через защищённый призыв и попадает во врага позади него.
+- [ ] Болт арбалета проходит через защищённый призыв и попадает во врага позади него.
+- [ ] Физический projectile продолжает полёт после контакта с защищённым призывом.
+- [ ] Магический projectile не детонирует на защищённом призыве при включенном pass-through.
+- [ ] Взрыв AoE не наносит урон защищённому призыву, но поражает врагов в радиусе.
+
+#### Регрессия и совместимость
+- [ ] Вражеские атаки по призыву работают стандартно.
+- [ ] Удары игрока по hostile NPC не фильтруются.
+- [ ] EnableSummonProtection=false полностью возвращает ванильное поведение.
+- [ ] При выключенном *PassThrough защита от урона (Block*Damage) работает независимо.
+- [ ] Нет бесконечных hit events, двойного урона, повторного impact или застрявших projectile.
+- [ ] Не ломаются ragdoll, смерть, killmove и переходы между cell.
+- [ ] Нет конфликтов с Precision или другими установленными боевыми плагинами.
+
+#### Stealth
+- [ ] Призыв в режиме скрытности переходит в пониженную заметность и уменьшает радиус обнаружения.
+- [ ] Внезапная атака из скрытности передает корректный агро-приказ.
 
 ### Стабильность
 

@@ -123,14 +123,44 @@ xmake run scf_tests
 | Core unit tests | 61/61 passing via `scf_tests.exe` |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` and enabled in `SBORKA` |
 
-### Ready for live Skyrim check (SE 1.5.97.0 via MO2)
-| Feature | Target verification |
-|---|---|
-| Plugin load | `SummonControlFramework v0.1.0 is loading...` in SKSE log |
-| `RuntimeGate` check | Log lines verifying `Detected game version: 1.5.97.0` |
-| `kDataLoaded` receipt | Log line `Data loaded: SKSE message received, SCF FSM ready` |
-| Console command `scf` | Executing `scf status`, `scf registry`, `scf reload` prints output in console |
-| Event sinks registration | Log line verifying registration of `ActiveEffect`, `Death`, `CellAttachDetach` |
-| Summon registration | Log lines on casting `Conjure Familiar` (`player.addspell 00021143`) |
-| Twin Souls limit displacement | Recasting Familiar exceeding limit displaces oldest active summon |
-| Collision bypass | In-game non-blocking pass-through between player and summoned familiar |
+### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
+| Feature | In-Game Observation & Evidence | Status |
+|---|---|:---:|
+| Plugin load & Gate | SKSE loads `SummonControlFramework.dll` cleanly, `RuntimeGate` validates SE 1.5.97.0 | PASS |
+| Console command `scf` | Executing `scf status` and `scf registry` prints tracked summons and FSM data | PASS |
+| Summon Registration | `UpdateHook` on `PlayerCharacter::Update` automatically synchronizes `commandedActors` | PASS |
+| Body Passthrough | Player character walks through summoned familiar without doorway clipping or pushback | PASS |
+| Cell Transitions | Summons transition between locations without memory corruption (`Active <-> Suspended`) | PASS |
+| Auto Garbage Collection | Dead / dispelled summons cleaned up with 3s grace period for ash-pile/death fadeout | PASS |
+| Multi-Summon Limit | Engine requires Twin Souls perk (`player.addperk 000581DE`) for >1 active summon | IDENTIFIED |
+
+---
+
+## 4. Acceptance Criteria: Friendly Fire Protection & Attack Filtering (FF-01)
+
+Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md).
+
+### Suite FF-1: Защита от урона (Damage Protection)
+* [ ] **FF-1.1 (Player Melee):** Обычные и силовые атаки игрока оружием ближнего боя не наносят урон зарегистрированным призывам игрока.
+* [ ] **FF-1.2 (Player Sweep):** Размашистые атаки (двуручное оружие, перк Sweep) не повреждают призыва при попадании в зону поражения.
+* [ ] **FF-1.3 (Player Projectiles):** Стрелы и болты арбалета игрока не наносят урон при попадании в защищенного призыва.
+* [ ] **FF-1.4 (Player Allies):** Атаки спутников и союзных NPC не наносят урон призывам игрока при `bFilterPlayerAllies = true`.
+* [ ] **FF-1.5 (Summon-to-Summon):** Призывы одного владельца или союзной цепочки не наносят взаимный урон в бою.
+* [ ] **FF-1.6 (Hostile Integrity):** Враждебные NPC и вражеские призывы продолжают наносить полный стандартный урон.
+* [ ] **FF-1.7 (Beneficial Magic):** Заклинания лечения, благословения и баффы не блокируются защитным фильтром.
+* [ ] **FF-1.8 (Magic Protection):** Прямые враждебные заклинания игрока, концентрация (Flames/Sparks), взрывы AoE, крики и зачарования оружия не наносят урон при включенных флагах `bBlock*Damage`.
+
+### Suite FF-2: Физическое прохождение атак насквозь (Attack Pass-Through)
+* [ ] **FF-2.1 (Precision Melee Pass-Through):** При установленном моде Precision атака оружием сквозь призыва игрока возвращает `bIgnoreHit = true`: оружие без задержки и хитстопа пролетает сквозь призыва и разрубает врага позади него.
+* [ ] **FF-2.2 (Sweeping Multi-Target):** Размашистый удар проходит сквозь призыва и успешно поражает нескольких врагов в радиусе замаха.
+* [ ] **FF-2.3 (Arrow Pass-Through):** Стрела игрока пролетает сквозь призыва игрока, не застревая в его теле, и поражает противника за ним.
+* [ ] **FF-2.4 (Bolt Pass-Through):** Болт арбалета пролетает сквозь тело союзного призыва во врага.
+* [ ] **FF-2.5 (Magic Projectile Pass-Through):** Магические снаряды (Огненная стрела, Ледяной шип) не детонируют на союзном призыве при включенном режиме сквозного полета.
+* [ ] **FF-2.6 (AoE Exclusion):** Взрыв шара огня или огненной ловушки не повреждает союзных призывов в эпицентре, но наносит полный урон всем врагам в радиусе.
+
+### Suite FF-3: Регрессия, стабильность и совместимость
+* [ ] **FF-3.1 (Global Killswitch):** При `bEnableSummonProtection = false` игра на 100% возвращается к стандартному ванильному расчету урона и попаданий.
+* [ ] **FF-3.2 (Independent Pass-Through):** Отключение `bMeleePassThrough` оставляет `Damage Protection` активным (урон блокируется, но меч останавливается).
+* [ ] **FF-3.3 (Enemy Combat Loop):** Атаки игрока по истинным врагам (`Hostile`) никогда ошибочно не фильтруются.
+* [ ] **FF-3.4 (No Infinite Event Recursion):** Подавление попаданий не вызывает каскадных циклов `TESHitEvent` или утечек памяти.
+* [ ] **FF-3.5 (Precision Compatibility):** Отсутствие конфликтов и взаимных блокировок с `Precision.dll` и сопутствующими боевыми модами (MCO/True Directional Movement).

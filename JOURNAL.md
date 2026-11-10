@@ -264,3 +264,23 @@ Resolution of stale summon retention in scf registry after death or dispelling.
   * Added TestGracePeriodGarbageCollection in 	ests/test_summon_registry.cpp.
   * Test suite expanded to **62/62 unit tests passing**.
   * Deployed fresh DLL and PDB to D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\.
+
+---
+
+## 2026-11-10 — In-Game Verification, Multi-Summon Mechanics, and Workstream FF-01 Integration
+
+Comprehensive milestone following user playtesting in `[STB] Mod Organizer` and integration of Addendum FF-01.
+
+* **In-Game Playtesting Results:**
+  * **Body Passthrough Confirmed:** User confirmed that the player character moves freely through summoned creatures. Physical body collision blocking, doorway bottlenecks, and camera pushing are successfully eliminated.
+  * **Cell Transitions Confirmed:** Entering and exiting interior/exterior cells correctly transfers summoned creatures without CTDs, broken references, or registry corruption (`Active <-> Suspended` transition logic validated in live engine).
+  * **1-Summon Limit Resolution:** User noted that recasting displaces the first summon immediately. Analysis confirmed this is Skyrim engine's hardcoded default limit (`commandedActors limit = 1`). To test 2 simultaneous summons, the character requires the vanilla *Twin Souls* perk (`player.addperk 000581DE`).
+* **Feasibility Analysis: Friendly Fire Protection & Attack Filtering:**
+  * **Damage Protection (100% Viable):** Hooking the damage calculation pipeline (`Actor::AdjustDamage` / `ProcessHit`) allows clamping damage to 0 and suppressing hostility reaction loops when aggressor is player or ally.
+  * **True Melee Pass-Through (High Viability):** Mod environment audit identified `Precision.dll` (v2.0.4) active in `D:\Games\stb\[STB] Mod Organizer\mods\Precision\`. Integrating `PrecisionAPI.h` and returning `bIgnoreHit = true` in `PreHitCallback` allows weapon swings to physically pass through friendly summons without hitstop and strike enemies behind them.
+  * **True Projectile Pass-Through (Viable):** Filtering projectile collidables (`COL_LAYER_ARROW`, `COL_LAYER_MAGIC`) in Havok (`bhkCollisionFilter`) prevents collision generation between player/ally projectiles and registered summons.
+* **Full Documentation & Roadmap Synchronization:**
+  * **`Summon_Control_Framework_PLAN.md`:** Expanded Stage 5 into 5 detailed sub-stages (`FF-Stage A` through `FF-Stage E`) based on `Friendly_Fire_Protection_Addendum.md`. Updated DoD with damage protection, attack pass-through, and regression criteria.
+  * **`ARCHITECTURE.md`:** Added Section 16 detailing the architectural separation between Actor body collision (`CollisionPairClassifier`) and combat hit filtering (`AttackFilterManager`), the `RelationshipClassifier` model (`AttackSourceKind`), Precision backend mechanics, and INI configuration schemas.
+  * **`STATUS.md`:** Formally recorded in-game verified milestones and activated Workstream FF-01 roadmap tasks.
+  * **`TESTING.md`:** Added Section 4 with comprehensive acceptance test suites FF-1 (Damage Protection), FF-2 (Attack Pass-Through), and FF-3 (Compatibility & Regression).

@@ -106,25 +106,32 @@
   * Deployed to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
   * Mod active in `D:\Games\stb\[STB] Mod Organizer\profiles\SBORKA\modlist.txt`.
 
-## Built and deployed, waiting for an in-game check
+## In-Game Verified Functionality (Player Tested in MO2 / Skyrim SE 1.5.97)
 
-* `SummonControlFramework.dll` loading under SKSE on Skyrim SE 1.5.97.0 (MO2 profile SBORKA).
-* Log file generation at `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
-* `RuntimeGate` log output verifying detected game version (1.5.97.0).
-* SKSE messaging listener receiving `kDataLoaded`, `kPreLoadGame`, `kPostLoadGame`, `kNewGame`.
-* Console command `scf` (with `status`, `registry`, `reload`, `help`) executing from the in-game tilde console.
-* `UpdateHook` active on `PlayerCharacter::Update`, synchronizing player summons from `commandedActors`.
-* Engine event sinks observing active effects, death, and cell attach/detach in live gameplay.
-* Collision bypass settings active in `SummonControlFramework.ini`.
+* **Physical Body Passthrough Verified:** Player character freely passes through summoned creatures without physical body collision or doorway blocking.
+* **Cell Transition Resilience Verified:** Transitioning across load doors correctly preserves summons without crashes or broken registry state (`Active <-> Suspended` transition).
+* **Live Summon Registration & Synchronization:** `UpdateHook` on `PlayerCharacter::Update` correctly polls `commandedActors` at 15 Hz and tracks active summons.
+* **Automatic Garbage Collection Active:** Dispelled or killed summons cleanly transition with 3-second grace period for death/ash-pile fadeout before record purging.
+* **Multi-Summon Engine Limitation Identified:** In vanilla Skyrim engine, `commandedActors` default limit is 1 unless the player has the *Twin Souls* perk (FormID `000581DE`) or a multi-summon mod. Command `player.addperk 000581DE` enables summoning 2 creatures simultaneously.
 
-## Up next (Plan Roadmap)
+## Active Workstream: FF-01 (Friendly Fire Protection & Attack Filtering)
 
-* **Stage 2 (Havok Filter Integration & Verification):**
-  * Precision API callback or `bhkCollisionFilter` hook registration in runtime.
-  * In-game doorway pass-through testing.
-* **Stage 3 (Targeting & Player Controls):**
-  * `CrosshairPickData` hook for instant `FocusTarget` targeting.
-  * Input event sink for hotkeys (`FocusTarget`, `Return`, `ToggleAggression`).
+Based on [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md):
+
+* **FF-Stage A — Baseline & Classification:**
+  * Define `AttackSourceKind` enum (`Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, `Unknown`).
+  * Implement `RelationshipClassifier` in `src/Core/` with loop-guarded command chain traversal and 100% unit test coverage.
+* **FF-Stage B — Damage Protection MVP:**
+  * Add `[FriendlyFire]` INI settings section (`bEnableSummonProtection`, `bBlock*Damage`, etc.).
+  * Hook hit/damage pipeline (`Actor::AdjustDamage` / `ProcessHit`) to nullify damage and suppress hostility reaction from friendly sources.
+  * Integrate Precision API (`PrecisionAPI.h`) `PreHitCallback` returning `bIgnoreHit = true`.
+  * Protect against player hostile magic (`MagicTarget::AddTarget`, `ValueModifierEffect`).
+* **FF-Stage C — True Melee Pass-Through:**
+  * Verify weapon swing continuation past ignored friendly summons to strike enemies behind them.
+* **FF-Stage D — True Projectile Pass-Through:**
+  * Implement projectile collision filter (`bhkCollisionFilter`) allowing friendly arrows, bolts, and spells to fly through summons.
+* **FF-Stage E — Reactions, Compatibility & Diagnostics:**
+  * Stagger/recoil suppression, killmove prevention, and combat diagnostics.
 
 ## Known limitations
 
