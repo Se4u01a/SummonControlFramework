@@ -62,6 +62,7 @@ namespace scf::core
 		SummonOrder order{ SummonOrder::Follow };
 		AggressionMode aggression{ AggressionMode::Defensive };
 		EntityID focusTargetId{ InvalidEntityID };
+		Vec3 targetPosition{};
 
 		float timestamp{ 0.0f };
 		float ttl{ 5.0f }; // Time-to-live in seconds

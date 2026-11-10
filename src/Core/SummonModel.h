@@ -16,6 +16,9 @@ namespace scf::core
 		SummonOrder order{ SummonOrder::Follow };
 
 		Vec3 lastPosition{};
+		Vec3 moveTargetPosition{};
+		bool hasMoveTarget{ false };
+
 		float stateTime{ 0.0f };
 		float targetLostTime{ 0.0f };
 

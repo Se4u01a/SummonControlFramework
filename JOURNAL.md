@@ -374,3 +374,37 @@ Implementation of tactical stealth behavior and live player input controls (Hotk
 * **Verification & Build:**
   * All 75 automated unit tests pass in < 2 ms (`scf_tests.exe`).
   * `SummonControlFramework.dll` compiled and deployed cleanly to both `[STB] Mod Organizer` and `[RE2CE TEST] Mod Organizer`.
+
+
+---
+
+## 2026-11-10 — FLICK Menu Interactive Binding, Numpad Controls, MoveTo Point Order & Console Overhaul
+
+Address user feedback regarding hotkey accessibility, in-game menu binding via FLICK (`FUCK.dll`), new point navigation order, and console argument parsing.
+
+* **Console Commands Multi-token Fix & Resilience:**
+  * Fixed Skyrim console compilation issue where `scf order return` was rejected due to single `SCRIPT_PARAMETER`. Expanded `g_scfParams` to 4 parameters (`kChar`) and updated `ExecuteSCFCommand` to iterate through all `StringChunk` objects via `chunk->AsString()->GetNext()`.
+  * Added resilient console alias `sfc` (bound via `BetaComment`) so common typos (`sfc order return` or `sfc status`) work identically.
+  * Overhauled command reference: typing `scf help` or `scf order` (without arguments) now outputs a complete, clear instruction set of all available squad orders.
+* **Squad Orders — "Move To Point" (`SummonOrder::MoveTo`):**
+  * Extended `SummonOrder::MoveTo` and added `Vec3 targetPosition` to `Command` and `SummonModel`.
+  * Integrated 3D crosshair raycast collision hit (`CrosshairPickData::collisionPoint[0]`) to resolve the exact ground/surface coordinates where the player aims.
+  * In `StateMachine::Update()`, `MoveTo` directs summons into `Approach` toward destination coordinates, transitioning smoothly to `Guard` upon arrival (within 150 units).
+  * Added console support: `scf order moveto [x y z]` and `scf order moveto` (uses crosshair raycast).
+* **Hotkeys Migrated to Numpad:**
+  * Replaced letter hotkeys with standard DirectX scan codes on the numeric keypad:
+    * `Numpad 1` (`0x4F`): Focus Target under crosshair
+    * `Numpad 2` (`0x50`): Return to owner
+    * `Numpad 3` (`0x51`): Toggle aggression mode (`Passive` -> `Defensive` -> `Aggressive`)
+    * `Numpad 4` (`0x4B`): Move To Point under crosshair
+    * `Numpad 5` (`0x4C`): Wait / Guard position
+    * `Numpad 6` (`0x4D`): Follow owner in formation
+* **FLICK Menu Integration (`FUCK.dll`):**
+  * Copied `FUCK_API.h` (v7) and ImGui type headers to `src/third_party/fuck` and `src/third_party/imgui`.
+  * Created `src/Integrations/FlickMenu.h/.cpp` implementing `FUCK::ITool` under category `Gameplay`.
+  * Dynamic discovery of `FUCK.dll` via `GetModuleHandleW` without hard link dependencies.
+  * Implemented interactive hotkey binding (`FUCK::Hotkey` and `FUCK::StartBinding` on the input thread via `OnAsyncInput`). Clicking any hotkey slot prompts "Press any key..." and binds the pressed keyboard or mouse button in real time.
+  * Implemented tuning controls for combat thresholds, friendly fire protections, collision bypass, and INI file persistence ("Save to INI", "Reload INI", "Restore Defaults").
+* **Verification & Automated Testing:**
+  * All 75 automated unit tests pass cleanly in `scf_tests.exe`.
+  * `SummonControlFramework.dll` compiled and deployed cleanly to both `[STB] Mod Organizer` and `[RE2CE TEST] Mod Organizer`.

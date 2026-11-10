@@ -46,7 +46,7 @@ target("SummonControlFramework")
         description = "Summon Control Framework for Skyrim SE/AE"
     })
 
-    add_includedirs("src")
+    add_includedirs("src", "src/third_party/imgui", "src/third_party/fuck")
     set_encodings("utf-8")
     set_pcxxheader("src/PCH.h")
     add_headerfiles("src/**.h")

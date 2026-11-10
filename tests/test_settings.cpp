@@ -31,9 +31,12 @@ TEST(settings_default_values)
 	CHECK(data.squad.maxRangedSlotsPerTarget == 3);
 	CHECK_NEAR(data.squad.formationSpreadRadius, 160.0f, 0.001f);
 
-	CHECK(data.hotkeys.focusTargetKey == 0);
-	CHECK(data.hotkeys.commandReturnKey == 0);
-	CHECK(data.hotkeys.toggleAggressionKey == 0);
+	CHECK(data.hotkeys.focusTargetKey == 0x4F);
+	CHECK(data.hotkeys.commandReturnKey == 0x50);
+	CHECK(data.hotkeys.toggleAggressionKey == 0x51);
+	CHECK(data.hotkeys.moveToKey == 0x4B);
+	CHECK(data.hotkeys.waitGuardKey == 0x4C);
+	CHECK(data.hotkeys.followKey == 0x4D);
 }
 
 TEST(settings_load_from_string_prefixed)

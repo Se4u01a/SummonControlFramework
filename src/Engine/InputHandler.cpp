@@ -3,6 +3,10 @@
 #include "Core/FrameworkContext.h"
 #include "PCH.h"
 
+#include <cmath>
+#include <cstdio>
+#include <string>
+
 #include <RE/A/Actor.h>
 #include <RE/B/ButtonEvent.h>
 #include <RE/C/CrosshairPickData.h>
@@ -138,6 +142,81 @@ namespace scf::engine
 		Notify(msg.c_str());
 	}
 
+	void InputHandler::HandleMoveTo()
+	{
+		auto* crosshair = RE::CrosshairPickData::GetSingleton();
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		core::Vec3 targetPos{};
+		bool foundPos = false;
+
+		if (crosshair) {
+#if defined(EXCLUSIVE_SKYRIM_FLAT)
+			const auto& pt = crosshair->collisionPoint;
+#else
+			const auto& pt = crosshair->collisionPoint[0];
+#endif
+			if (std::abs(pt.x) > 0.1f || std::abs(pt.y) > 0.1f || std::abs(pt.z) > 0.1f) {
+				targetPos = { pt.x, pt.y, pt.z };
+				foundPos = true;
+			}
+		}
+
+		if (!foundPos) {
+			// Fallback: 600 units ahead of player in facing yaw direction
+			const float angle = player->GetAngleZ();
+			const auto pPos = player->GetPosition();
+			targetPos.x = pPos.x + 600.0f * std::sin(angle);
+			targetPos.y = pPos.y + 600.0f * std::cos(angle);
+			targetPos.z = pPos.z;
+		}
+
+		core::Command cmd{};
+		cmd.type = core::CommandType::SetOrder;
+		cmd.order = core::SummonOrder::MoveTo;
+		cmd.priority = core::CommandPriority::PlayerDirect;
+		cmd.summonId = core::InvalidEntityID;
+		cmd.targetPosition = targetPos;
+
+		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
+		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
+
+		char buf[128];
+		std::snprintf(buf, sizeof(buf), "SCF: Move To Point (%.0f, %.0f, %.0f)", targetPos.x, targetPos.y, targetPos.z);
+		Notify(buf);
+	}
+
+	void InputHandler::HandleWaitGuard()
+	{
+		core::Command cmd{};
+		cmd.type = core::CommandType::SetOrder;
+		cmd.order = core::SummonOrder::WaitGuard;
+		cmd.priority = core::CommandPriority::PlayerDirect;
+		cmd.summonId = core::InvalidEntityID;
+
+		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
+		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
+
+		Notify("SCF: Order -> Guard Position");
+	}
+
+	void InputHandler::HandleFollow()
+	{
+		core::Command cmd{};
+		cmd.type = core::CommandType::SetOrder;
+		cmd.order = core::SummonOrder::Follow;
+		cmd.priority = core::CommandPriority::PlayerDirect;
+		cmd.summonId = core::InvalidEntityID;
+
+		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
+		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
+
+		Notify("SCF: Order -> Follow Owner");
+	}
+
 	RE::BSEventNotifyControl InputHandler::ProcessEvent(
 		RE::InputEvent* const* a_event,
 		RE::BSTEventSource<RE::InputEvent*>*)
@@ -156,10 +235,13 @@ namespace scf::engine
 			return RE::BSEventNotifyControl::kContinue;
 		}
 
-		// Defaults if not explicitly configured in INI (DIK scan codes: 0x22 = G, 0x23 = H, 0x24 = J)
-		const std::uint32_t keyFocus = settings.hotkeys.focusTargetKey != 0 ? settings.hotkeys.focusTargetKey : 0x22;
-		const std::uint32_t keyReturn = settings.hotkeys.commandReturnKey != 0 ? settings.hotkeys.commandReturnKey : 0x23;
-		const std::uint32_t keyAggression = settings.hotkeys.toggleAggressionKey != 0 ? settings.hotkeys.toggleAggressionKey : 0x24;
+		// Defaults: Numpad 1=0x4F, Numpad 2=0x50, Numpad 3=0x51, Numpad 4=0x4B, Numpad 5=0x4C, Numpad 6=0x4D
+		const std::uint32_t keyFocus = settings.hotkeys.focusTargetKey != 0 ? settings.hotkeys.focusTargetKey : 0x4F;
+		const std::uint32_t keyReturn = settings.hotkeys.commandReturnKey != 0 ? settings.hotkeys.commandReturnKey : 0x50;
+		const std::uint32_t keyAggression = settings.hotkeys.toggleAggressionKey != 0 ? settings.hotkeys.toggleAggressionKey : 0x51;
+		const std::uint32_t keyMoveTo = settings.hotkeys.moveToKey != 0 ? settings.hotkeys.moveToKey : 0x4B;
+		const std::uint32_t keyWaitGuard = settings.hotkeys.waitGuardKey != 0 ? settings.hotkeys.waitGuardKey : 0x4C;
+		const std::uint32_t keyFollow = settings.hotkeys.followKey != 0 ? settings.hotkeys.followKey : 0x4D;
 
 		for (auto* event = *a_event; event; event = event->next) {
 			if (event->eventType != RE::INPUT_EVENT_TYPE::kButton) {
@@ -181,6 +263,12 @@ namespace scf::engine
 					HandleReturnOrder();
 				} else if (idCode == keyAggression) {
 					HandleToggleAggression();
+				} else if (idCode == keyMoveTo) {
+					HandleMoveTo();
+				} else if (idCode == keyWaitGuard) {
+					HandleWaitGuard();
+				} else if (idCode == keyFollow) {
+					HandleFollow();
 				}
 			}
 		}

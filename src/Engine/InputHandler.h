@@ -21,15 +21,18 @@ namespace scf::engine
 			RE::InputEvent* const* a_event,
 			RE::BSTEventSource<RE::InputEvent*>* a_eventSource) override;
 
+		void HandleFocusTarget();
+		void HandleReturnOrder();
+		void HandleToggleAggression();
+		void HandleMoveTo();
+		void HandleWaitGuard();
+		void HandleFollow();
+
 	private:
 		InputHandler() = default;
 		~InputHandler() override = default;
 
 		InputHandler(const InputHandler&) = delete;
 		InputHandler& operator=(const InputHandler&) = delete;
-
-		void HandleFocusTarget();
-		void HandleReturnOrder();
-		void HandleToggleAggression();
 	};
 }

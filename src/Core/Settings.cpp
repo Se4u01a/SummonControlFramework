@@ -326,6 +326,12 @@ namespace scf::core
 					_data.hotkeys.commandReturnKey = ParseUInt32(val, _data.hotkeys.commandReturnKey);
 				} else if (key == "toggleaggressionkey" || key == "utoggleaggressionkey") {
 					_data.hotkeys.toggleAggressionKey = ParseUInt32(val, _data.hotkeys.toggleAggressionKey);
+				} else if (key == "movetokey" || key == "umovetokey") {
+					_data.hotkeys.moveToKey = ParseUInt32(val, _data.hotkeys.moveToKey);
+				} else if (key == "waitguardkey" || key == "uwaitguardkey") {
+					_data.hotkeys.waitGuardKey = ParseUInt32(val, _data.hotkeys.waitGuardKey);
+				} else if (key == "followkey" || key == "ufollowkey") {
+					_data.hotkeys.followKey = ParseUInt32(val, _data.hotkeys.followKey);
 				}
 			} else if (currentSection == "friendlyfire") {
 				if (key == "enablesummonprotection" || key == "benablesummonprotection" || key == "enabled" || key == "benabled") {
@@ -476,7 +482,10 @@ namespace scf::core
 		out << "[Hotkeys]\n";
 		out << "uFocusTargetKey = " << _data.hotkeys.focusTargetKey << "\n";
 		out << "uCommandReturnKey = " << _data.hotkeys.commandReturnKey << "\n";
-		out << "uToggleAggressionKey = " << _data.hotkeys.toggleAggressionKey << "\n\n";
+		out << "uToggleAggressionKey = " << _data.hotkeys.toggleAggressionKey << "\n";
+		out << "uMoveToKey = " << _data.hotkeys.moveToKey << "\n";
+		out << "uWaitGuardKey = " << _data.hotkeys.waitGuardKey << "\n";
+		out << "uFollowKey = " << _data.hotkeys.followKey << "\n\n";
 
 		out << "[FriendlyFire]\n";
 		out << "bEnableSummonProtection = " << (_data.friendlyFire.enabled ? "true" : "false") << "\n";

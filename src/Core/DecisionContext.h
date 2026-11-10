@@ -16,6 +16,10 @@ namespace scf::core
 		EntityID detectedTargetId{ InvalidEntityID };
 		float distanceToTarget{ 0.0f };
 
+		// Position targeting (MoveTo order)
+		bool hasMoveTarget{ false };
+		float distanceToMoveTarget{ 0.0f };
+
 		// Stealth coordination
 		StealthContext stealth{};
 

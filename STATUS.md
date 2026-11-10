@@ -101,13 +101,27 @@
   * Covered by 7 comprehensive unit tests in `tests/test_stealth.cpp` (75/75 tests passing).
 * **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
   * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
-  * **Crosshair Target Pick (`RE::CrosshairPickData`):** queries `targetActor[0]` and fallback `target[0]`, casting through `ref->As<RE::Actor>()`, validating alive/non-player/non-summon status.
-  * **Configurable Hotkeys (DirectX Scan Codes):**
-    * `G` (`0x22` default): **Focus Target** under crosshair with HUD confirmation.
-    * `H` (`0x23` default): **Return** summon to player immediately.
-    * `J` (`0x24` default): **Toggle Aggression** cycling `Passive` -> `Defensive` -> `Aggressive`.
+  * **Crosshair Target Pick & Move-To-Point (`RE::CrosshairPickData`):**
+    * Resolves alive target actors via `targetActor[0]` and `target[0]`.
+    * Resolves exact 3D world collision point via `collisionPoint[0]` for point navigation.
+  * **Default Hotkeys on Numpad (DirectX Scan Codes):**
+    * `Numpad 1` (`0x4F`): **Focus Target** under crosshair with HUD confirmation.
+    * `Numpad 2` (`0x50`): **Return** summons to player immediately.
+    * `Numpad 3` (`0x51`): **Toggle Aggression** cycling `Passive` -> `Defensive` -> `Aggressive`.
+    * `Numpad 4` (`0x4B`): **Move To Point** orders squad to navigate to crosshair position and hold guard.
+    * `Numpad 5` (`0x4C`): **Wait / Guard** orders squad to hold ground.
+    * `Numpad 6` (`0x4D`): **Follow** orders squad to resume follow formation.
   * **In-Game HUD Notifications:** top-left alerts via `RE::SendHUDMessage::ShowHUDMessage` for immediate player feedback.
-  * **Console Orders Processor:** `scf order <return | follow | guard | passive | defensive | aggressive | focus <FormID>>` with priority arbitration and input validation.
+  * **Console Command Processor:**
+    * Fixed multi-token parsing: `g_scfParams` now supports 4 parameters with full `StringChunk` iteration.
+    * Resilient prefix parsing: supports both `scf order` and `sfc order` typo alias.
+    * Orders: `scf order <return | follow | guard | moveto [x y z] | passive | defensive | aggressive | focus <FormID>>`.
+    * Comprehensive command help via `scf help` and `scf order help`.
+* **FLICK Menu Integration (`FlickMenu`):**
+  * Dynamic integration with `FUCK.dll` (v7 API) without hard ImGui linkage.
+  * Accessible via in-game overlay hotkey (F7 by default) under the `Gameplay` category.
+  * Real-time interactive keybinding for all squad orders (keyboard and mouse buttons).
+  * Direct tuning of combat thresholds (follow distance, leash return, debounce time), Friendly Fire protections, and collision bypass with instant **Save to INI**.
 * **Observability & Diagnostics:**
   * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, scheduler updates, collision classifications, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.

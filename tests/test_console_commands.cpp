@@ -187,6 +187,40 @@ TEST(console_command_order)
 	CHECK(context.GetCommandQueue().PopNext(0.0f, cmd));
 	CHECK(cmd.type == CommandType::SetFocusTarget);
 	CHECK(cmd.focusTargetId == 0x00012345);
+
+	// 6. Order moveto with coordinates
+	output.clear();
+	ConsoleHandler::Execute("scf order moveto 150.0 250.0 -30.0", context, callback);
+	CHECK(!output.empty());
+	CHECK(output.back().find("MoveTo") != std::string::npos);
+	CHECK(context.GetCommandQueue().PopNext(0.0f, cmd));
+	CHECK(cmd.type == CommandType::SetOrder);
+	CHECK(cmd.order == SummonOrder::MoveTo);
+	CHECK(cmd.targetPosition.x == 150.0f);
+	CHECK(cmd.targetPosition.y == 250.0f);
+	CHECK(cmd.targetPosition.z == -30.0f);
+
+	// 7. Order moveto crosshair (no coordinates)
+	output.clear();
+	ConsoleHandler::Execute("scf order moveto", context, callback);
+	CHECK(!output.empty());
+	CHECK(output.back().find("crosshair") != std::string::npos);
+	CHECK(context.GetCommandQueue().PopNext(0.0f, cmd));
+	CHECK(cmd.order == SummonOrder::MoveTo);
+
+	// 8. Tolerance for sfc typo alias
+	output.clear();
+	ConsoleHandler::Execute("sfc order return", context, callback);
+	CHECK(!output.empty());
+	CHECK(output.back().find("Return dispatched") != std::string::npos);
+	CHECK(context.GetCommandQueue().PopNext(0.0f, cmd));
+	CHECK(cmd.order == SummonOrder::Return);
+
+	// 9. Full help when typing 'scf order' without args
+	output.clear();
+	ConsoleHandler::Execute("scf order", context, callback);
+	CHECK(!output.empty());
+	CHECK(output[0].find("Squad Orders Reference") != std::string::npos);
 }
 
 TEST(console_command_unknown)

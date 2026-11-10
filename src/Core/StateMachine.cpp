@@ -79,6 +79,23 @@ namespace scf::core
 			}
 		}
 
+		// 2b. Check explicit MoveTo command
+		if (a_model.order == SummonOrder::MoveTo) {
+			if (a_ctx.hasMoveTarget) {
+				if (a_ctx.distanceToMoveTarget > 150.0f) {
+					if (a_model.state != SummonState::Approach) {
+						TransitionTo(a_model, SummonState::Approach, "Order: MoveTo point");
+					}
+				} else {
+					a_model.order = SummonOrder::WaitGuard;
+					a_model.hasMoveTarget = false;
+					TransitionTo(a_model, SummonState::Guard, "Arrived at move point, holding guard");
+				}
+				a_model.stateTime += a_dt;
+				return;
+			}
+		}
+
 		// 3. Check leash constraint: if too far from owner, abort combat and return
 		if (a_ctx.hasOwner && a_ctx.distanceToOwner > a_ctx.returnDistanceThreshold) {
 			if (a_model.state != SummonState::Return) {

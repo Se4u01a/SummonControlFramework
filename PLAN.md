@@ -1064,9 +1064,11 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [x] Реализовать `Passive`, `Defensive`, `Aggressive`, `FocusTarget`.
 - [x] Реализовать приоритет явного приказа над автоматическим выбором (CommandQueue).
 - [x] Проверить `CrosshairPickData::target` и `targetActor` на целевом runtime (реализован Crosshair-захват в `InputHandler`).
-- [x] Добавить хоткей Focus Target (клавиша G по умолчанию, настраивается в INI, отправляет `SetFocusTarget` и DebugNotification).
-- [x] Добавить хоткеи Return (клавиша H) и переключения режима агрессии (клавиша J).
-- [x] Реализовать консольные приказы `scf order <follow | guard | return | passive | defensive | aggressive | focus <FormID>>`.
+- [x] Назначить хоткеи управления отрядом на цифровой блок (Numpad 1: Focus Target, Numpad 2: Return, Numpad 3: Toggle Aggression, Numpad 4: MoveTo point, Numpad 5: Guard, Numpad 6: Follow).
+- [x] Реализовать приказ «идти в точку» (`SummonOrder::MoveTo`, `scf order moveto [x y z]`, автоматический захват 3D-точки поверхности под перекрестием прицела `CrosshairPickData::collisionPoint`).
+- [x] Интегрировать FLICK Menu (`FUCK.dll`, F7) для интерактивного переназначения клавиш в реальном времени с поддержкой клавиатуры и мыши.
+- [x] Расширить консольные приказы: `scf order <return | follow | guard | moveto [x y z] | passive | defensive | aggressive | focus <FormID>>`.
+- [x] Исправить обработку многосоставных аргументов в консоли (`g_scfParams` с 4 параметрами и проходом по всем `StringChunk`), добавить отказоустойчивый алиас `sfc` и расширить справку `scf help` / `scf order help`.
 - [ ] Исследовать правильную последовательность Combat Entry + Target Pin через APMF.
 - [ ] Реализовать capability check и ограниченный NativeBackend.
 - [ ] Проверить смерть, выгрузку и смену цели.
@@ -1165,8 +1167,8 @@ JSON-профили по race, actor base, keyword и типу призыва:
 
 ### Этап 8 — UI, настройки и совместимость
 
-- [ ] Назначаемые hotkeys для клавиатуры/мыши/геймпада.
-- [x] MCM или INI для режимов и параметров (Settings.h/.cpp с полным INI-парсером).
+- [x] Назначаемые hotkeys для всех приказов отряда через FLICK Menu (F7) и INI-конфигурацию.
+- [x] Внутриигровое интерактивное меню FLICK (`FUCK.dll`) и INI для управления параметрами AI, коллизий и FriendlyFire на лету.
 - [ ] Индикатор FocusTarget через TrueHUD при наличии зависимости.
 - [ ] Отображение активных призывов и текущих приказов.
 - [x] Serialization долговременных настроек (SaveToFile/LoadFromFile).

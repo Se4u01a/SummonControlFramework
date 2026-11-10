@@ -6,6 +6,7 @@
 #include "Engine/UpdateHook.h"
 #include "FriendlyFire/HitHook.h"
 #include "FriendlyFire/ProjectileHook.h"
+#include "Integrations/FlickMenu.h"
 #include "Integrations/PrecisionBackend.h"
 #include "PCH.h"
 
@@ -41,6 +42,7 @@ namespace scf::plugin
 			friendly_fire::HitHook::Install();
 			friendly_fire::ProjectileHook::Install();
 			integrations::PrecisionBackend::Initialize();
+			integrations::FlickMenu::Install();
 			logger::info("[Messaging] Framework initialization complete.");
 			break;
 

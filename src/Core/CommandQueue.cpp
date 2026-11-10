@@ -115,10 +115,21 @@ namespace scf::core
 		switch (a_cmd.type) {
 		case CommandType::SetOrder:
 			a_model.order = a_cmd.order;
-			if (a_fsm && a_cmd.order == SummonOrder::Return) {
+			if (a_cmd.order == SummonOrder::MoveTo) {
+				a_model.moveTargetPosition = a_cmd.targetPosition;
+				a_model.hasMoveTarget = true;
+				if (a_fsm) {
+					a_fsm->TransitionTo(a_model, SummonState::Approach, "Command: MoveTo executed");
+				}
+			} else if (a_fsm && a_cmd.order == SummonOrder::Return) {
+				a_model.hasMoveTarget = false;
 				a_fsm->TransitionTo(a_model, SummonState::Return, "Command: Return executed");
 			} else if (a_fsm && a_cmd.order == SummonOrder::WaitGuard) {
+				a_model.hasMoveTarget = false;
 				a_fsm->TransitionTo(a_model, SummonState::Guard, "Command: WaitGuard executed");
+			} else if (a_fsm && a_cmd.order == SummonOrder::Follow) {
+				a_model.hasMoveTarget = false;
+				a_fsm->TransitionTo(a_model, SummonState::FollowOwner, "Command: Follow executed");
 			}
 			break;
 

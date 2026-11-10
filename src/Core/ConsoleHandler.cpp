@@ -1,16 +1,27 @@
 #include "Core/ConsoleHandler.h"
 #include "Core/FrameworkContext.h"
+#include "Core/Settings.h"
+#include "Core/SummonRegistry.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
-#include <string>
+#include <sstream>
 #include <vector>
 
 namespace scf::core
 {
 	namespace
 	{
+		std::string ToLower(std::string_view a_str)
+		{
+			std::string result(a_str);
+			std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) {
+				return static_cast<char>(std::tolower(c));
+			});
+			return result;
+		}
+
 		std::string Trim(std::string_view a_str)
 		{
 			const auto first = a_str.find_first_not_of(" \t\r\n");
@@ -19,15 +30,6 @@ namespace scf::core
 			}
 			const auto last = a_str.find_last_not_of(" \t\r\n");
 			return std::string(a_str.substr(first, last - first + 1));
-		}
-
-		std::string ToLower(std::string_view a_str)
-		{
-			std::string result(a_str);
-			std::transform(result.begin(), result.end(), result.begin(), [](unsigned char c) {
-				return static_cast<char>(std::tolower(c));
-			});
-			return result;
 		}
 	}
 
@@ -43,10 +45,12 @@ namespace scf::core
 
 		std::string cmd = Trim(a_commandLine);
 
-		// Strip leading "scf " if present
+		// Strip leading "scf " or "sfc " if present
 		if (cmd.rfind("scf ", 0) == 0) {
 			cmd = Trim(cmd.substr(4));
-		} else if (cmd == "scf") {
+		} else if (cmd.rfind("sfc ", 0) == 0) {
+			cmd = Trim(cmd.substr(4));
+		} else if (cmd == "scf" || cmd == "sfc") {
 			cmd = "help";
 		}
 
@@ -57,9 +61,17 @@ namespace scf::core
 			a_output("[SCF] Available commands:");
 			a_output("  scf status   - View framework status, active counts, and current settings");
 			a_output("  scf registry - View all tracked summons, owners, and lifecycle states");
-			a_output("  scf order <command> - Issue squad orders: follow, guard, return, passive, defensive, aggressive, focus <id>");
 			a_output("  scf reload   - Reload configuration from INI file");
 			a_output("  scf help     - Display this command reference");
+			a_output("[SCF] Squad Orders (scf order <action>):");
+			a_output("  scf order return      - Recall all summons immediately back to player");
+			a_output("  scf order follow      - Resume following player in formation");
+			a_output("  scf order guard       - Hold current position and guard area (also: wait, stay)");
+			a_output("  scf order moveto      - Move summons to position: moveto <x y z> or moveto (crosshair)");
+			a_output("  scf order passive     - Set aggression to Passive (never attack)");
+			a_output("  scf order defensive   - Set aggression to Defensive (attack only active threats)");
+			a_output("  scf order aggressive  - Set aggression to Aggressive (attack any enemy in sight)");
+			a_output("  scf order focus <id>  - Focus fire on target by FormID (hex e.g. 0001234F)");
 			return;
 		}
 
@@ -101,6 +113,15 @@ namespace scf::core
 				s.combat.maxTargetRadius);
 			a_output(buf);
 
+			std::snprintf(buf, sizeof(buf), "  Hotkeys (Numpad): Focus=0x%X | Return=0x%X | Aggression=0x%X | MoveTo=0x%X | Guard=0x%X | Follow=0x%X",
+				s.hotkeys.focusTargetKey,
+				s.hotkeys.commandReturnKey,
+				s.hotkeys.toggleAggressionKey,
+				s.hotkeys.moveToKey,
+				s.hotkeys.waitGuardKey,
+				s.hotkeys.followKey);
+			a_output(buf);
+
 			return;
 		}
 
@@ -124,32 +145,49 @@ namespace scf::core
 				}
 			}
 
-			char buf[256];
-			std::snprintf(buf, sizeof(buf), "[SCF] Registry: %zu registered summon(s):", records.size());
+			char buf[512];
+			std::snprintf(buf, sizeof(buf), "[SCF] Registry: %zu registered summon(s) (%zu active, %zu inactive/purged):",
+				records.size(), activeRecords.size(), inactiveRecords.size());
 			a_output(buf);
 
 			for (const auto* rec : activeRecords) {
-				std::snprintf(buf, sizeof(buf), "  - Summon 0x%08X | Owner: 0x%08X | State: %s | Duration: %.1fs",
+				std::snprintf(buf, sizeof(buf), "  [Active] ID: 0x%08X | Owner: 0x%08X | Type: %s | State: %s | Rem: %.1fs",
 					rec->summonId,
 					rec->ownerId,
+					ToString(rec->type),
 					ToString(rec->lifecycle),
 					rec->remainingDuration);
 				a_output(buf);
 			}
 
 			for (const auto* rec : inactiveRecords) {
-				std::snprintf(buf, sizeof(buf), "  - Summon 0x%08X | Owner: 0x%08X | State: %s (fading)",
+				std::snprintf(buf, sizeof(buf), "  [Inactive] ID: 0x%08X | Owner: 0x%08X | Type: %s | State: %s",
 					rec->summonId,
 					rec->ownerId,
+					ToString(rec->type),
 					ToString(rec->lifecycle));
 				a_output(buf);
 			}
+
 			return;
 		}
 
 		if (subCmd.rfind("order", 0) == 0) {
-			std::string orderArgs = Trim(cmd.substr(5));
+			std::string orderArgs = cmd.size() > 5 ? Trim(cmd.substr(5)) : "";
 			std::string lowerArgs = ToLower(orderArgs);
+
+			if (lowerArgs.empty() || lowerArgs == "help") {
+				a_output("[SCF] Squad Orders Reference:");
+				a_output("  scf order return      - Recall all summons immediately back to player");
+				a_output("  scf order follow      - Resume following player in formation");
+				a_output("  scf order guard       - Hold current position and guard area (also: wait, stay)");
+				a_output("  scf order moveto      - Move summons to position: moveto <x y z> or moveto");
+				a_output("  scf order passive     - Set aggression to Passive (never attack)");
+				a_output("  scf order defensive   - Set aggression to Defensive (attack only active threats)");
+				a_output("  scf order aggressive  - Set aggression to Aggressive (attack any enemy in sight)");
+				a_output("  scf order focus <id>  - Focus fire on target by FormID (hex e.g. 0001234F)");
+				return;
+			}
 
 			if (lowerArgs == "return") {
 				Command c{};
@@ -179,6 +217,44 @@ namespace scf::core
 				c.summonId = InvalidEntityID;
 				a_context.GetCommandQueue().Enqueue(c);
 				a_output("[SCF] Order: Guard position dispatched to all summons.");
+				return;
+			}
+			if (lowerArgs.rfind("moveto", 0) == 0 || lowerArgs.rfind("move", 0) == 0 || lowerArgs.rfind("goto", 0) == 0) {
+				std::string coords;
+				if (lowerArgs.rfind("moveto", 0) == 0) {
+					coords = Trim(orderArgs.substr(6));
+				} else if (lowerArgs.rfind("goto", 0) == 0) {
+					coords = Trim(orderArgs.substr(4));
+				} else {
+					coords = Trim(orderArgs.substr(4));
+				}
+
+				Vec3 targetPos{};
+				bool hasCoords = false;
+				if (!coords.empty()) {
+					std::stringstream ss(coords);
+					float x, y, z;
+					if (ss >> x >> y >> z) {
+						targetPos = { x, y, z };
+						hasCoords = true;
+					}
+				}
+
+				Command c{};
+				c.type = CommandType::SetOrder;
+				c.order = SummonOrder::MoveTo;
+				c.priority = CommandPriority::PlayerDirect;
+				c.summonId = InvalidEntityID;
+				c.targetPosition = targetPos;
+				a_context.GetCommandQueue().Enqueue(c);
+
+				char buf[256];
+				if (hasCoords) {
+					std::snprintf(buf, sizeof(buf), "[SCF] Order: MoveTo (%.1f, %.1f, %.1f) dispatched to all summons.", targetPos.x, targetPos.y, targetPos.z);
+				} else {
+					std::snprintf(buf, sizeof(buf), "[SCF] Order: MoveTo crosshair point dispatched to all summons.");
+				}
+				a_output(buf);
 				return;
 			}
 			if (lowerArgs == "passive") {
@@ -236,7 +312,7 @@ namespace scf::core
 				return;
 			}
 
-			a_output("[SCF] Usage: scf order <follow | guard | return | passive | defensive | aggressive | focus <FormID>>");
+			a_output("[SCF] Unknown order subcommand. Available orders: return, follow, guard, moveto, passive, defensive, aggressive, focus <id>");
 			return;
 		}
 

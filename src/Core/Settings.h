@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/Types.h"
 #include "FriendlyFire/FriendlyFireSettings.h"
 
 #include <cstddef>
@@ -48,9 +49,12 @@ namespace scf::core
 
 	struct HotkeySettings
 	{
-		std::uint32_t focusTargetKey{ 0 };
-		std::uint32_t commandReturnKey{ 0 };
-		std::uint32_t toggleAggressionKey{ 0 };
+		std::uint32_t focusTargetKey{ 0x4F };        // Numpad 1 (79)
+		std::uint32_t commandReturnKey{ 0x50 };      // Numpad 2 (80)
+		std::uint32_t toggleAggressionKey{ 0x51 };   // Numpad 3 (81)
+		std::uint32_t moveToKey{ 0x4B };             // Numpad 4 (75)
+		std::uint32_t waitGuardKey{ 0x4C };          // Numpad 5 (76)
+		std::uint32_t followKey{ 0x4D };             // Numpad 6 (77)
 	};
 
 	struct SettingsData

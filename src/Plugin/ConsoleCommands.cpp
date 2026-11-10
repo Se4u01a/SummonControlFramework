@@ -19,9 +19,20 @@ namespace scf::plugin
 		{
 			std::string argStr;
 			if (a_scriptData && a_scriptData->numParams > 0) {
-				auto* chunk = a_scriptData->GetStringChunk();
-				if (chunk) {
-					argStr = chunk->GetString();
+				auto* chunk = a_scriptData->GetChunk();
+				for (std::uint16_t i = 0; i < a_scriptData->numParams && chunk; ++i) {
+					if (auto* strChunk = chunk->AsString()) {
+						std::string s = strChunk->GetString();
+						if (!s.empty()) {
+							if (!argStr.empty()) {
+								argStr += " ";
+							}
+							argStr += s;
+						}
+						chunk = strChunk->GetNext();
+					} else {
+						break;
+					}
 				}
 			}
 
@@ -37,29 +48,45 @@ namespace scf::plugin
 		}
 
 		RE::SCRIPT_PARAMETER g_scfParams[] = {
-			{ "Subcommand", RE::SCRIPT_PARAM_TYPE::kChar, true }
+			{ "Subcommand", RE::SCRIPT_PARAM_TYPE::kChar, true },
+			{ "Param1", RE::SCRIPT_PARAM_TYPE::kChar, true },
+			{ "Param2", RE::SCRIPT_PARAM_TYPE::kChar, true },
+			{ "Param3", RE::SCRIPT_PARAM_TYPE::kChar, true }
 		};
 	}
 
 	bool ConsoleCommands::Register()
 	{
-		auto* cmd = RE::SCRIPT_FUNCTION::LocateConsoleCommand("TestSeenData");
-		if (!cmd) {
-			cmd = RE::SCRIPT_FUNCTION::LocateConsoleCommand("BetaComment");
+		bool registered = false;
+
+		// 1. Register primary command 'scf'
+		auto* cmdSCF = RE::SCRIPT_FUNCTION::LocateConsoleCommand("TestSeenData");
+		if (cmdSCF) {
+			cmdSCF->functionName = "scf";
+			cmdSCF->shortName = "scf";
+			cmdSCF->helpString = "Summon Control Framework: scf [status|registry|order|reload|help]";
+			cmdSCF->executeFunction = &ExecuteSCFCommand;
+			cmdSCF->SetParameters(g_scfParams);
+			logger::info("[ConsoleCommands] Registered console command 'scf'.");
+			registered = true;
 		}
 
-		if (!cmd) {
-			logger::warn("[ConsoleCommands] Could not locate eligible console command entry to bind 'scf'.");
-			return false;
+		// 2. Register alias 'sfc' for user typo resilience
+		auto* cmdSFC = RE::SCRIPT_FUNCTION::LocateConsoleCommand("BetaComment");
+		if (cmdSFC) {
+			cmdSFC->functionName = "sfc";
+			cmdSFC->shortName = "sfc";
+			cmdSFC->helpString = "Summon Control Framework (alias): sfc [status|registry|order|reload|help]";
+			cmdSFC->executeFunction = &ExecuteSCFCommand;
+			cmdSFC->SetParameters(g_scfParams);
+			logger::info("[ConsoleCommands] Registered console alias 'sfc'.");
+			registered = true;
 		}
 
-		cmd->functionName = "scf";
-		cmd->shortName = "scf";
-		cmd->helpString = "Summon Control Framework: scf [status|registry|reload|help]";
-		cmd->executeFunction = &ExecuteSCFCommand;
-		cmd->SetParameters(g_scfParams);
+		if (!registered) {
+			logger::warn("[ConsoleCommands] Could not locate console command entries to bind 'scf'/'sfc'.");
+		}
 
-		logger::info("[ConsoleCommands] Registered console command 'scf'.");
-		return true;
+		return registered;
 	}
 }

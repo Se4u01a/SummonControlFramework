@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 
 namespace scf::core
 {
@@ -54,7 +55,8 @@ namespace scf::core
 		Follow,
 		WaitGuard,
 		Attack,
-		Return
+		Return,
+		MoveTo
 	};
 
 	enum class AggressionMode : std::uint8_t
@@ -87,6 +89,7 @@ namespace scf::core
 		case SummonOrder::WaitGuard: return "WaitGuard";
 		case SummonOrder::Attack:    return "Attack";
 		case SummonOrder::Return:    return "Return";
+		case SummonOrder::MoveTo:    return "MoveTo";
 		default:                     return "Unknown";
 		}
 	}
