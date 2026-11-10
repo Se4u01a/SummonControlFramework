@@ -1,4 +1,5 @@
 #include "AI/SquadCoordinator.h"
+#include "Core/Formation.h"
 
 #include <cmath>
 #include <cstdio>
@@ -13,34 +14,6 @@ namespace scf::ai
 		{
 			return a_deg * (static_cast<float>(std::numbers::pi) / 180.0f);
 		}
-
-		float GetFormationRelativeAngleDeg(std::size_t a_index, std::size_t a_total) noexcept
-		{
-			if (a_total <= 1) {
-				return -140.0f; // Left-rear
-			}
-
-			switch (a_total) {
-			case 2:
-				return (a_index == 0) ? -130.0f : 130.0f;
-
-			case 3:
-				if (a_index == 0) return -120.0f;
-				if (a_index == 1) return 120.0f;
-				return 180.0f; // Straight behind
-
-			case 4:
-				if (a_index == 0) return -70.0f;   // Left flank
-				if (a_index == 1) return 70.0f;    // Right flank
-				if (a_index == 2) return -145.0f;  // Left rear
-				return 145.0f;                     // Right rear
-
-			default:
-				// Equispaced around rear arc (from 90 to 270 degrees)
-				const float step = 180.0f / static_cast<float>(a_total + 1);
-				return 90.0f + step * static_cast<float>(a_index + 1);
-			}
-		}
 	}
 
 	void SquadCoordinator::CalculateFormationOffsets(
@@ -49,15 +22,13 @@ namespace scf::ai
 		float a_spreadRadius) const
 	{
 		const std::size_t count = a_members.size();
+		const float ownerYawRad = DegToRad(a_ownerYawDeg);
 
 		for (std::size_t i = 0; i < count; ++i) {
-			const float relAngle = GetFormationRelativeAngleDeg(i, count);
-			const float totalAngleRad = DegToRad(a_ownerYawDeg + relAngle);
-
-			// Standard Skyrim 2D orientation: sin is X (East), cos is Y (North)
-			a_members[i].formationOffset.x = std::sin(totalAngleRad) * a_spreadRadius;
-			a_members[i].formationOffset.y = std::cos(totalAngleRad) * a_spreadRadius;
-			a_members[i].formationOffset.z = 0.0f;
+			// Slot geometry lives in Core (single source of truth shared with the
+			// engine movement driver) and is converted from owner body space to world.
+			const auto localOffset = core::FormationSlotOffsetLocal(i, count, a_spreadRadius);
+			a_members[i].formationOffset = core::OwnerLocalToWorldOffset(localOffset, ownerYawRad);
 		}
 	}
 

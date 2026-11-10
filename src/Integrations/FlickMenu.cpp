@@ -104,11 +104,26 @@ namespace scf::integrations
 
 				// --- Section 2: Combat & Squad Parameters ---
 				FUCK::SeparatorText("Tactical & Combat AI");
-				FUCK::SliderFloat("Follow Distance", &data.combat.followDistanceThreshold, 100.0f, 1500.0f, "%.0f");
-				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Distance at which summons follow behind the player");
+				FUCK::SliderFloat("Formation Distance", &data.movement.followMinDistance, 50.0f, 1000.0f, "%.0f");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Distance at which summons hold their formation slot around the player");
+
+				FUCK::SliderFloat("Catch-Up Run Distance", &data.movement.followMaxDistance, 100.0f, 2000.0f, "%.0f");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Beyond this distance from its slot a summon runs instead of walks");
 
 				FUCK::SliderFloat("Return Leash Distance", &data.combat.returnDistanceThreshold, 800.0f, 5000.0f, "%.0f");
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Leash threshold: if player exceeds this distance, summons break combat and return");
+
+				FUCK::Checkbox("Combat Leash", &data.combat.enableCombatLeash);
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Break off combat when a summon strays too far from the player");
+
+				FUCK::SliderFloat("Combat Leash Radius", &data.combat.combatLeashRadius, 200.0f, 8000.0f, "%.0f");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Maximum distance from the player during combat before the leash snaps");
+
+				FUCK::Checkbox("Catch-Up Warp", &data.recovery.enableCatchUpWarp);
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Emergency teleport behind the player when a returning summon is far away or stuck");
+
+				FUCK::SliderFloat("Catch-Up Warp Distance", &data.recovery.catchUpDistance, 500.0f, 20000.0f, "%.0f");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Distance beyond which a Return order warps the summon instead of walking");
 
 				FUCK::SliderFloat("Target Lost Debounce", &data.combat.targetLostDebounceTime, 0.5f, 5.0f, "%.1fs");
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Hysteresis: time to maintain pursuit after momentary loss of line-of-sight");

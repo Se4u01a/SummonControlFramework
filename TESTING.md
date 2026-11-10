@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **75/75 тестов успешно пройдено (0 failures)**.
+Текущий результат: **89/89 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -111,6 +111,22 @@ xmake run scf_tests
 * `relationship_classifier_target_protection`: Проверяет селектор защиты целей в зависимости от настроек (`bProtectPlayerOwnedSummons`, `bProtectAlliedSummons`).
 * `relationship_classifier_evaluate_attack_matrix`: Проверяет матрицу решений: защита атак ближнего боя, стрел, магии, криков от игрока и союзников, при безусловном пропуске атак от врагов и нейтральных сущностей.
 
+### Suite M: Formation Geometry & Movement Intent (`Formation` & `MovementIntent`) — 14 tests
+* `TestFormationSlotOffsetsSitOnRadius`: Проверяет, что смещение любого слота строя лежит ровно на заданном радиусе (50..1000) и не имеет вертикального сдвига.
+* `TestFormationSlotsAreDistinct`: Проверяет непересечение слотов отряда: для 2..6 существ позиции разнесены более чем на 50 единиц.
+* `TestFormationDefaultSlotIsBehindOwner`: Проверяет, что одиночный сумон и замыкающий тройки стоят позади владельца.
+* `TestFormationTwoSlotsAreMirrored`: Проверяет зеркальность двух слотов (левый/правый) относительно оси владельца.
+* `TestOwnerLocalWorldOffsetRoundTrip`: Проверяет обратимость перевода смещения из body space владельца в мир и обратно на нескольких углах поворота.
+* `TestOwnerWorldPointRoundTrip`: Проверяет обратимость перевода абсолютной мировой точки в offset владельца и обратно.
+* `TestOwnerLocalWorldOffsetMatchesSquadConvention`: Фиксирует соглашение `SquadCoordinator` (мир = yaw владельца + пеленг слота, sin -> X, cos -> Y), чтобы общий модуль не изменил поведение строя.
+* `TestMovementIntentGuardHoldsPositionEvenInCombat`: Проверяет, что приказ `WaitGuard` даёт `HoldPosition` с блокировкой транслокации даже в бою.
+* `TestMovementIntentReturnRunsToOwner`: Проверяет `ReturnToOwner` с нулевым смещением и корректными радиусами (follow < catchUp).
+* `TestMovementIntentFollowUsesFormationSlot`: Проверяет `FollowSlot` с дистанцией строя `fFollowMinDistance`.
+* `TestMovementIntentFollowYieldsToCombat`: Проверяет, что в бою `Follow` не навязывает движение (локомоция остаётся боевому AI), а устаревшая цель модели не блокирует приказ.
+* `TestMovementIntentMoveToKeepsWorldDestination`: Ключевой тест: при смещении и повороте владельца пересчитанный offset всё равно указывает на ту же мировую точку.
+* `TestMovementIntentMoveToWithoutDestinationFallsBackToFollow`: Проверяет безопасный откат `MoveTo` без сохранённой точки в обычное следование.
+* `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
+
 ---
 
 ## 2. Static / offline (passing)
@@ -137,7 +153,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 75/75 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 89/89 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -220,6 +236,9 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-ORDER-4 (Move To Point - Numpad 4):** Нажатие `Numpad 4` (`0x4B`) направляет сумонов в точку поверхности под перекрестием прицела (`"SCF: Move To Point (X, Y, Z)"`). Достигнув точки, сумоны переходят в режим охраны позиции (`Guard`).
 * **[ ] TEST-ORDER-5 (Wait / Guard - Numpad 5):** Нажатие `Numpad 5` (`0x4C`) приказывает отряду удерживать текущую позицию (`"SCF: Order -> Guard Position"`).
 * **[ ] TEST-ORDER-6 (Follow - Numpad 6):** Нажатие `Numpad 6` (`0x4D`) приказывает отряду следовать за игроком в боевом строю (`"SCF: Order -> Follow Owner"`).
+* **[ ] TEST-ORDER-7 (Movement log evidence):** В `SummonControlFramework.log` после нажатия хоткея должны появляться строки `[Movement] Summon 0x... <Mode> keep-offset (...)`, `[Movement] Summon 0x... SetDontMove(true|false)` и (для `Return`) `[Movement] Summon 0x... reached owner (...) -> Follow`. Отсутствие строки `keep-offset` означает, что приказ не дошёл до движка.
+* **[ ] TEST-ORDER-8 (Guard in place):** После `Numpad 5` сумон стоит на месте, не бежит за игроком даже когда игрок уходит; при этом он должен поворачиваться и наносить удары по подошедшему врагу (проверка того, что `SetDontMove(true)` не блокирует атаки). Нажатие `Numpad 6` снимает блокировку.
+* **[ ] TEST-ORDER-9 (Catch-up warp):** Уйти от отряда дальше `fCatchUpDistance` (3500) и нажать `Numpad 2`: в логе должно появиться `catch-up warp applied (beyond catch-up distance ...)`, а сумон — оказаться за спиной игрока. Внутри одной ячейки.
 
 ### 6.2. Внутриигровое меню FLICK Menu (FUCK.dll — клавиша F7)
 * **[ ] TEST-FLICK-1 (Меню настроек):** Нажать `F7` для открытия оверлея FLICK. В категории `Gameplay` выбрать вкладку **Summon Control Framework**.

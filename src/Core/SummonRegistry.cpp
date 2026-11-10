@@ -69,12 +69,9 @@ namespace scf::core
 			it->second.model.id = a_summonId;
 			it->second.model.ownerId = a_ownerId;
 
-			if (_logCallback) {
-				std::snprintf(logBuf, sizeof(logBuf),
-					"[Registry] Updated existing summon %u for owner %u (%s, duration: %.1fs)",
-					a_summonId, a_ownerId, ToString(a_type), a_duration);
-				_logCallback(logBuf);
-			}
+			// No log line here: this path runs for every tracked summon on every
+			// tactical tick (15 Hz), and the refresh is not an event. Duration and
+			// lifecycle are reported by `scf registry` instead.
 			return true;
 		}
 

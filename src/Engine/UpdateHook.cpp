@@ -3,6 +3,7 @@
 #include "Core/FrameworkContext.h"
 #include "Core/SummonModel.h"
 #include "Core/SummonRegistry.h"
+#include "Engine/SummonMovement.h"
 #include "PCH.h"
 
 #include <RE/A/ActiveEffect.h>
@@ -17,6 +18,8 @@
 #include <RE/T/TESObjectREFR.h>
 #include <RE/U/UI.h>
 
+#include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -54,7 +57,7 @@ namespace scf::engine::update
 							cc->startedCombat = true;
 						}
 
-						a_summon->EvaluatePackage(true, true);
+						a_summon->EvaluatePackage(true, false);
 					}
 				}
 				break;
@@ -72,8 +75,6 @@ namespace scf::engine::update
 							cc->targetHandle.reset();
 							cc->startedCombat = false;
 						}
-
-						a_summon->EvaluatePackage(true, true);
 					}
 					break;
 
@@ -88,22 +89,12 @@ namespace scf::engine::update
 							cc->targetHandle.reset();
 							cc->startedCombat = false;
 						}
-
-						a_summon->EvaluatePackage(true, true);
 					}
 					break;
 
 				case core::SummonOrder::Follow:
 					{
 						logger::info("[Execution] Summon 0x{:08X} ordered to FOLLOW", a_summon->GetFormID());
-						a_summon->EvaluatePackage(true, true);
-					}
-					break;
-
-				case core::SummonOrder::MoveTo:
-					{
-						logger::info("[Execution] Summon 0x{:08X} ordered to MOVE TO ({:.1f}, {:.1f}, {:.1f})",
-							a_summon->GetFormID(), a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z);
 
 						a_summon->StopCombat();
 						a_summon->GetActorRuntimeData().currentCombatTarget.reset();
@@ -112,12 +103,15 @@ namespace scf::engine::update
 							cc->targetHandle.reset();
 							cc->startedCombat = false;
 						}
+					}
+					break;
 
-						RE::NiPoint3 dest{ a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z + 5.0f };
-						static_cast<RE::TESObjectREFR*>(a_summon)->SetPosition(dest);
-						a_summon->SetPosition(dest, true);
-						a_summon->MoveToNearestNavmesh(0.0f);
-						a_summon->EvaluatePackage(true, true);
+				case core::SummonOrder::MoveTo:
+					{
+						// The physical walking is driven by engine::movement from the
+						// SummonModel destination stored by CommandQueue::ApplyToModel.
+						logger::info("[Execution] Summon 0x{:08X} ordered to MOVE TO ({:.1f}, {:.1f}, {:.1f})",
+							a_summon->GetFormID(), a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z);
 					}
 					break;
 				}
@@ -135,7 +129,7 @@ namespace scf::engine::update
 						cc->startedCombat = false;
 					}
 
-					a_summon->EvaluatePackage(true, true);
+					a_summon->EvaluatePackage(true, false);
 				}
 				break;
 
@@ -213,6 +207,16 @@ namespace scf::engine::update
 			registry.ClearStaleRecords(a_timestamp, 3.0f);
 
 			// 4. Drain pending commands from CommandQueue and dispatch to engine actors
+			//    Iteration order is stable (ascending FormID) so formation slots and
+			//    broadcast command handling do not shuffle between ticks.
+			std::vector<std::pair<core::EntityID, RE::Actor*>> orderedSummons;
+			orderedSummons.reserve(liveActors.size());
+			for (const auto& [id, actor] : liveActors) {
+				orderedSummons.emplace_back(id, actor);
+			}
+			std::sort(orderedSummons.begin(), orderedSummons.end(),
+				[](const auto& a_lhs, const auto& a_rhs) { return a_lhs.first < a_rhs.first; });
+
 			core::Command cmd{};
 			while (cmdQueue.PopNext(a_timestamp, cmd)) {
 				logger::info("[UpdateHook] Popped command (Type: {}, SummonId: 0x{:08X}, Priority: {})",
@@ -222,7 +226,7 @@ namespace scf::engine::update
 				if (cmd.summonId != core::InvalidEntityID) {
 					targetSummonIds.push_back(cmd.summonId);
 				} else {
-					for (const auto& [id, _] : liveActors) {
+					for (const auto& [id, _] : orderedSummons) {
 						targetSummonIds.push_back(id);
 					}
 				}
@@ -243,8 +247,11 @@ namespace scf::engine::update
 				}
 			}
 
-			// 5. Per-tick continuous AI enforcement for active summons
-			for (const auto& [summonId, summonActor] : liveActors) {
+			// 5. Per-tick order execution and continuous AI enforcement
+			const auto& settings = ctx.GetSettings().Get();
+			for (std::size_t i = 0; i < orderedSummons.size(); ++i) {
+				const auto summonId = orderedSummons[i].first;
+				auto* summonActor = orderedSummons[i].second;
 				auto* model = registry.GetModel(summonId);
 				if (!model || !summonActor) {
 					continue;
@@ -261,7 +268,7 @@ namespace scf::engine::update
 						}
 					}
 				}
-				// Return order enforcement: keep combat disengaged until arriving near owner
+				// Return order: keep combat disengaged while the summon is on its way back
 				else if (model->order == core::SummonOrder::Return) {
 					if (summonActor->IsInCombat()) {
 						summonActor->StopCombat();
@@ -271,15 +278,45 @@ namespace scf::engine::update
 							cc->startedCombat = false;
 						}
 					}
+				}
 
-					const float distSq = summonActor->GetPosition().GetSquaredDistance(a_player->GetPosition());
-					if (distSq <= 350.0f * 350.0f) {
-						model->order = core::SummonOrder::Follow;
-						ctx.GetStateMachine().TransitionTo(*model, core::SummonState::FollowOwner, "Returned to owner range");
-						summonActor->EvaluatePackage(true, true);
+				// Movement execution for the current order (follow / return / move-to /
+				// guard). It also flips Return back to Follow on arrival.
+				movement::UpdateForSummon(
+					a_player,
+					summonActor,
+					*model,
+					ctx.GetStateMachine(),
+					settings,
+					i,
+					orderedSummons.size(),
+					a_timestamp);
+
+				// Combat Leash enforcement
+				if (settings.combat.enableCombatLeash && summonActor->IsInCombat()) {
+					const float distToPlayerSq = summonActor->GetPosition().GetSquaredDistance(a_player->GetPosition());
+					const float leashRadius = settings.combat.combatLeashRadius;
+					if (distToPlayerSq > leashRadius * leashRadius) {
+						if (settings.combat.returnToOwnerWhenOutsideLeash) {
+							logger::info("[UpdateHook] Summon 0x{:08X} outside combat leash radius ({:.1f} > {:.1f}), returning to owner",
+								summonId, std::sqrt(distToPlayerSq), leashRadius);
+							summonActor->StopCombat();
+							summonActor->GetActorRuntimeData().currentCombatTarget.reset();
+							if (auto* cc = summonActor->GetActorRuntimeData().combatController) {
+								cc->targetHandle.reset();
+								cc->startedCombat = false;
+							}
+							model->order = core::SummonOrder::Return;
+							model->hasMoveTarget = false;
+							ctx.GetStateMachine().TransitionTo(*model, core::SummonState::Return, "Exceeded combat leash");
+						}
 					}
 				}
 			}
+
+			// Drop movement bookkeeping for summons that left the engine roster (dispel,
+			// death, cell detach, displacement) so a recycled handle cannot inherit it.
+			movement::RetainOnly(currentEngineSummons);
 		}
 
 		struct PlayerUpdate
@@ -335,6 +372,7 @@ namespace scf::engine::update
 	void Reset()
 	{
 		s_totalElapsed = 0.0f;
+		movement::ResetAll();
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

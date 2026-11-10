@@ -141,7 +141,17 @@ namespace scf::engine
 		bool foundPos = false;
 
 		if (crosshair) {
-			if (auto ref = crosshair->GetActiveTarget().get()) {
+#if defined(EXCLUSIVE_SKYRIM_FLAT)
+			const auto& pt = crosshair->collisionPoint;
+#else
+			const auto& pt = crosshair->collisionPoint[0];
+#endif
+			if (std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z) &&
+			    (pt.x != 0.0f || pt.y != 0.0f || pt.z != 0.0f) &&
+			    std::abs(pt.x) < 200000.0f && std::abs(pt.y) < 200000.0f) {
+				targetPos = { pt.x, pt.y, pt.z };
+				foundPos = true;
+			} else if (auto ref = crosshair->GetActiveTarget().get()) {
 				const auto pos = ref->GetPosition();
 				if (std::isfinite(pos.x) && std::isfinite(pos.y) && std::isfinite(pos.z) &&
 				    std::abs(pos.x) < 200000.0f && std::abs(pos.y) < 200000.0f) {

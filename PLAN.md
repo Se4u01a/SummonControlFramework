@@ -1065,7 +1065,9 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [x] Реализовать приоритет явного приказа над автоматическим выбором (CommandQueue).
 - [x] Проверить `CrosshairPickData::target` и `targetActor` на целевом runtime (реализован Crosshair-захват в `InputHandler`).
 - [x] Назначить хоткеи управления отрядом на цифровой блок (Numpad 1: Focus Target, Numpad 2: Return, Numpad 3: Toggle Aggression, Numpad 4: MoveTo point, Numpad 5: Guard, Numpad 6: Follow).
-- [x] Реализовать приказ «идти в точку» (`SummonOrder::MoveTo`, `scf order moveto [x y z]`, автоматический захват 3D-точки поверхности под перекрестием прицела `CrosshairPickData::collisionPoint`).
+- [x] **[РЕАЛИЗОВАНО 2026-11-10]** Физическое исполнение приказов движения через слой `SummonMovement`: `Actor::KeepOffsetFromActor` (`SE 36870 / AE 37894`), `Actor::ClearKeepOffsetFromActor` (`36871 / 37895`) и `Actor::SetDontMove` (`36490 / 37489`). Follow — слот строя вокруг игрока, Return — бег к игроку с переходом в Follow, MoveTo — мировая точка, пересчитываемая в offset владельца каждый тик, Guard — парковка цели движения на призыве + блокировка транслокации. Боевой AI (dummy-манекены) и динамические пакеты больше не используются.
+- [ ] Проверить в игре все шесть биндов (Follow / Return / Guard / MoveTo / Focus / Aggression) и поведение `HoldPosition` в бою (атаки в упор при `SetDontMove(true)`) — **требуется полевой тест**, реализация собрана, но в игре ещё не подтверждена.
+- [ ] Проверить аварийный catch-up warp: срабатывание по `fCatchUpDistance` и по отсутствию прогресса (3 с), а также отказ warp при смене ячейки.
 - [x] Интегрировать FLICK Menu (`FUCK.dll`, F7) для интерактивного переназначения клавиш в реальном времени с поддержкой клавиатуры и мыши.
 - [x] Расширить консольные приказы: `scf order <return | follow | guard | moveto [x y z] | passive | defensive | aggressive | focus <FormID>>`.
 - [x] Исправить обработку многосоставных аргументов в консоли (`g_scfParams` с 4 параметрами и проходом по всем `StringChunk`), добавить отказоустойчивый алиас `sfc` и расширить справку `scf help` / `scf order help`.
@@ -1098,11 +1100,11 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [ ] Реализовать RelationshipClassifier в src/Core/ и покрыть его чистыми unit-тестами.
 
 #### FF-Stage B — Damage Protection MVP
-- [ ] Добавить главный переключатель EnableSummonProtection в INI/Settings.
-- [ ] Реализовать защиту player-owned summons от атак игрока (BlockMeleeDamage, BlockArrowDamage, etc.).
-- [ ] Добавить отдельную настройку для атак player allies (FilterPlayerAllies).
-- [ ] Реализовать фильтрацию ванильных melee и стрел на подтвержденных hit-processing paths (Actor::AdjustDamage / ProcessHit).
-- [ ] Добавить интеграцию с Precision PreHitCallback, если Precision.dll загружен в runtime.
+- [x] Добавить главный переключатель EnableSummonProtection в INI/Settings.
+- [x] Реализовать защиту player-owned summons от атак игрока (BlockMeleeDamage, BlockArrowDamage, etc.).
+- [x] Добавить отдельную настройку для атак player allies (FilterPlayerAllies).
+- [x] Реализовать фильтрацию ванильных melee и стрел на подтвержденных hit-processing paths (ProcessHit).
+- [x] Добавить интеграцию с Precision PreHitCallback, если Precision.dll загружен в runtime (PrecisionBackend).
 - [ ] Исследовать и реализовать защиту от player-cast hostile magic по архитектуре NOFF (MagicTarget::AddTarget, ValueModifierEffect).
 - [ ] Отдельно протестировать concentration, explosion/AoE, shouts, staves и enchantments.
 - [ ] Не блокировать non-hostile magic effects (healing, buffs) без явной настройки.
@@ -1118,7 +1120,7 @@ JSON-профили по race, actor base, keyword и типу призыва:
 #### FF-Stage D — True Projectile Pass-Through
 - [ ] Исследовать collision filtering для arrows/bolts и разных projectile forms.
 - [ ] Проверить возможность исключения защищенного актора до impact, не уничтожая projectile.
-- [ ] Проверить прохождение снаряда через summon и последующее попадание во врага.
+- [x] Проверить прохождение снаряда через summon и последующее попадание во врага (ProjectileHook: Arrow, Missile, Flame, Cone, Beam).
 - [ ] Отдельно проверить физические и магические projectile.
 - [ ] Проверить Accurate Projectile Collision как дополнительный reference.
 - [ ] Не менять глобальные collision layers без доказательства безопасности для врагов, окружения и других модов.
@@ -1137,7 +1139,7 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [x] Реализовать StealthContext с отдельными playerSneaking и playerDetected.
 - [x] Интегрировать StealthContext в TargetSelector (подавление атак по ненастороженным врагам в режиме Defensive при скрытности).
 - [x] Интегрировать StealthContext в StateMachine (сохранение FollowOwner при скрытности без срыва стелса).
-- [x] Покрыть переходы и поведение при скрытности Unit-тестами (7 unit-тестов в test_stealth.cpp, все 75/75 тестов проходят).
+- [x] Покрыть переходы и поведение при скрытности Unit-тестами (7 unit-тестов в test_stealth.cpp, все 89/89 тестов проходят).
 - [ ] Проверить режимы stealth в реальной игровой сцене.
 
 **Результат этапа:** защищенные призывы не получают урон от игрока/союзников, атаки и снаряды проходят сквозь них во врагов при включенном pass-through, случайные удары не вызывают combat-петлю hostility, скрытность игрока надежно поддерживается отрядом призывов.

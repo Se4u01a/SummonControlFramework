@@ -261,6 +261,7 @@
    * Выполняет регистрацию в `SummonRegistry`.
    * Автоматически очищает исчезнувших или рассеянных движком существ через `NotifyEffectRemoved`.
 4. **Мгновенный триггер при событиях:** при поступлении `TESActiveEffectApplyRemoveEvent` адаптер немедленно инициирует `update::SyncPlayerSummons()`, исключая задержку отображения при касте.
+5. **Исполнение приказов движения:** на каждом тактическом тике после дренажа очереди команд вызывается `movement::UpdateForSummon(...)`, который переводит `SummonModel::order` в движковые примитивы `KeepOffsetFromActor` / `SetDontMove` (см. §20).
 
 ---
 
@@ -488,5 +489,64 @@ struct StealthContext {
 1. Открывается вкладка **Summon Control Framework** в категории `Gameplay`.
 2. Пользователь может кликнуть на любую из 6 строчек хоткеев: включается режим захвата ввода (`FUCK::StartBinding`).
 3. На потоке ввода `OnAsyncInput` перехватывает нажатие любой клавиши клавиатуры или мыши и сохраняет скан-код в настройки `Settings`.
-4. Вкладка предоставляет слайдеры боевых дистанций (Follow Distance, Return Leash Distance, Debounce Time), переключатели дружественного огня и чекбоксы сквозного прохождения атак.
+4. Вкладка предоставляет слайдеры дистанций (`Formation Distance`, `Catch-Up Run Distance`, `Return Leash Distance`, `Combat Leash Radius`, `Catch-Up Warp Distance`), переключатели дружественного огня, боевого поводка и аварийного warp, а также чекбоксы сквозного прохождения атак.
 5. Кнопка **Save to INI** фиксирует сделанные изменения в файл `SummonControlFramework.ini`.
+
+---
+
+## 20. Исполнение приказов движения (`SummonMovement`)
+
+* **Файлы:**
+  * [src/Core/MovementIntent.h](file:///D:/projects/Summon_Control_Framework/src/Core/MovementIntent.h), [src/Core/MovementIntent.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/MovementIntent.cpp) — чистая трансляция приказа в намерение движения.
+  * [src/Core/Formation.h](file:///D:/projects/Summon_Control_Framework/src/Core/Formation.h), [src/Core/Formation.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/Formation.cpp) — геометрия строя в системе координат владельца (общая для `SquadCoordinator` и слоя движения).
+  * [src/Engine/SummonMovement.h](file:///D:/projects/Summon_Control_Framework/src/Engine/SummonMovement.h), [src/Engine/SummonMovement.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/SummonMovement.cpp) — единственное место, где вызываются движковые примитивы движения.
+
+### 20.1. Проблема, которую решает слой
+`Command` меняет только модель (`SummonModel::order`), а `StateMachine` — тактическое состояние. Сами по себе они не двигают актора. До появления слоя исполнение приказов сводилось к `StopCombat()` + `EvaluatePackage()`, что для призванного существа является **наблюдаемым no-op**: бой сбрасывается, но нового намерения движения никто не задаёт. Попытки использовать боевой AI (невидимый бессмертный «манекен» + `StartCombat`) двигали существо к точке, но оставляли его в бою с неуязвимой целью и не давали вернуться к игроку.
+
+`SummonMovement` каждый тактический тик (15 Гц) переводит `order` в конкретное намерение и доводит его до Creation Engine, не создавая сущностей в мире, не подменяя AI-пакеты и не добавляя новых хуков.
+
+### 20.2. Движковые примитивы и проверенные адреса
+Все три функции в закреплённой ревизии CommonLibSSE-NG отсутствуют, поэтому объявлены в `SummonMovement.cpp` через Address Library:
+
+| Функция | ID (SE, AE) | Проверка 1.5.97 |
+|---|---|---|
+| `Actor::SetDontMove(bool)` | `36490`, `37489` | `id 36490 -> SkyrimSE.exe+5E3330` (`addrlib.py`), совпадает со строкой `MovementDeny.SetDontMove` в `APMF/Docs/ADDRESS-TABLE-2026-09-15.md` |
+| `Actor::KeepOffsetFromActor(const ActorHandle&, const NiPoint3& /*offset*/, const NiPoint3& /*angle*/, float /*catchUpRadius*/, float /*followRadius*/)` | `36870`, `37894` | `id 36870 -> SkyrimSE.exe+603990`; дизассемблер: функция читает `Actor::movementController` (`Actor+0x148`, `BSTSmartPointer<MovementControllerNPC>`), делает RTTI-cast к `IMovementSetKeepOffsetFromActor` (дескриптор типа присутствует в образе) и вызывает её слот 1 с записью `{ActorHandle target, NiPoint3 offset, NiPoint3 angle, float catchUp, float follow}` — это в точности список аргументов Papyrus `Actor.KeepOffsetFromActor` |
+| `Actor::ClearKeepOffsetFromActor()` | `36871`, `37895` | `id 36871 -> SkyrimSE.exe+603AC0`, тот же интерфейс, слот 0 |
+
+Семантика смещения (CK Wiki / Papyrus Index): смещения задаются в **body space цели** (`+X` — вправо от цели, `+Y` — вперёд, `+Z` — вверх); `afCatchUpRadius` — радиус, за пределами которого актор **бежит** догонять; `afFollowRadius` — радиус, внутри которого актор **не двигается**. Телепортации в этой функции нет.
+
+### 20.3. Матрица приказ → намерение
+| `SummonModel::order` | Намерение | Действие |
+|---|---|---|
+| `Follow` | `FollowSlot` (только вне боя и без активной цели) | `KeepOffsetFromActor(owner, слот строя)`; при входе в бой цель снимается, локомоция отдаётся боевому AI |
+| `Return` | `ReturnToOwner` | `KeepOffsetFromActor(owner, 0,0,0)`; по достижении `fFollowMinDistance` приказ переключается на `Follow` |
+| `MoveTo` | `MoveToPoint` | мировая точка цели пересчитывается в offset владельца **каждый тик**, поэтому владелец может двигаться и поворачиваться, а цель остаётся на месте |
+| `WaitGuard` | `HoldPosition` | цель движения «паркуется» на самом призыве и включается `SetDontMove(true)` — чистая стойка на месте (боевые атаки в упор при этом работают) |
+| бой (`Actor::IsInCombat()`) | `None` | примитивы не применяются: движением управляет боевой AI |
+
+Слот строя берётся из `core::FormationSlotOffsetLocal` — той же таблицы, что использует `SquadCoordinator`; порядок существ — возрастание `FormID`, чтобы слоты не перетасовывались между тиками.
+
+### 20.4. Аварийный catch-up warp
+`Return` не телепортирует существо в нормальном режиме. Warp применяется только в двух случаях и всегда логируется:
+1. расстояние до игрока превысило `[Recovery] fCatchUpDistance` (по умолчанию 3500);
+2. существо не приблизилось ни на 50 единиц за 3 секунды (застряло).
+
+Warp = позиция за спиной игрока на `fFollowMinDistance` + `MoveToNearestNavmesh()`; между разными ячейками он не выполняется (эту ситуацию закрывает ванильный snap призыва, порог которого `PatchGameSettings` выставляет из `fCatchUpDistance`). Один warp на один приказ `Return`.
+
+### 20.5. Учёт состояния примитивов
+`SetDontMove` и keep-offset — это **состояние на акторе**, поэтому драйвер хранит `AppliedMovement` на каждого призыва:
+* примитивы вызываются только при смене намерения (смещение сравнивается с допуском 8 единиц);
+* для движущихся режимов keep-offset повторно подтверждается раз в 2 секунды — на случай, если движок перезаписал цель своей ванильной логикой следования призыва;
+* `SetDontMove(false)` принудительно отправляется на первом тике после (пере)обнаружения призыва, потому что флаг переживает загрузку сохранения;
+* записи удаляются через `movement::RetainOnly` для призывов, покинувших `commandedActors` (dispel, смерть, detach ячейки, вытеснение), и через `movement::ResetAll()` на `kPreLoadGame` / `kNewGame`.
+
+### 20.6. Потокобезопасность
+Слой вызывается из того же места, что и остальная синхронизация: хук `PlayerCharacter::Update` (vfunc `0xAD`), главный поток, тактический тик 15 Гц. Новых хуков и потоков нет; все вызовы движка идут с игрового потока. Кэш состояния — обычный `std::unordered_map`, доступный только из этого потока.
+
+### 20.7. Ограничения и допущения
+* `SetDontMove(true)` блокирует **перемещение**; предполагается, что атаки в упор при этом продолжают работать (проверяется в игре). Если нет — для `HoldPosition` останется только парковка цели движения (без блокировки транслокации), это локальное изменение.
+* Warp между ячейками не реализован намеренно: позиционная запись в чужой ячейке некорректна, а ванильный snap уже покрывает этот случай.
+* Слой не управляет `FocusTarget`/агрессией: эти приказы по-прежнему исполняются через `StartCombat`/`StopCombat` в `UpdateHook`.
+

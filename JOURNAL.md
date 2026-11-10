@@ -408,3 +408,58 @@ Address user feedback regarding hotkey accessibility, in-game menu binding via F
 * **Verification & Automated Testing:**
   * All 75 automated unit tests pass cleanly in `scf_tests.exe`.
   * `SummonControlFramework.dll` compiled and deployed cleanly to both `[STB] Mod Organizer` and `[RE2CE TEST] Mod Organizer`.
+
+---
+
+## 2026-11-10 — Target Dummy Combat Pathing Workaround (User Solution for MoveTo & Return)
+
+Implemented the navigation workaround proposed directly by the user: using Skyrim's native combat AI system to drive physical running/sprinting towards a targeted position without teleports or synthetic package failures.
+
+* **Target Dummy Navigation Workaround (`SummonOrder::MoveTo`):**
+  * Spawning runtime AI packages without an ESP/ESL form record caused Skyrim's summoned creatures to ignore `kTravel` run-once packages due to high-priority follow quest overrides.
+  * Workaround implementation in `src/Engine/UpdateHook.cpp`:
+    1. An invisible, immortal ghost target dummy actor is spawned at the crosshair 3D raycast point (`dest`).
+    2. The dummy is initialized with `SetAlpha(0.0f)`, `SpeedMult = 0.0f` (stationary beacon), `99999 HP`, and snapped to the nearest navmesh vertex (`MoveToNearestNavmesh()`).
+    3. The summon is ordered to engage combat with the dummy (`StartCombat(dummyActor)` and `combatController->targetHandle = dummyActor`).
+    4. Skyrim's combat navigation engine takes over immediately, forcing the summon to run/sprint at full speed across any terrain/navmesh directly to the beacon.
+* **Proximity Arrival & Guard Transition:**
+  * When the summon reaches proximity (`dist <= 180.0f` from the destination dummy, or on 25s timeout):
+    1. Summon disengages combat (`StopCombat()` and target handles cleared).
+    2. Dummy actor is disabled and marked for deletion (`dummy->Disable()`, `dummy->SetDelete(true)`).
+    3. Summon `SpeedMult` is set to `0.0f` to prevent it from wandering or walking back to the player, cleanly holding its guard position at the target point.
+    4. FSM state transitions to `Guard`.
+* **Return Order (`SummonOrder::Return`):**
+  * Cleans up any active dummy beacon immediately.
+  * Restores `SpeedMult` to `100.0f` on the summon.
+  * Disengages combat on the summon.
+  * With combat cleared and speed restored, the summon's native follow package smoothly navigates it back to the player.
+  * Once within follow range (`dist <= followMinDistance`), the order transitions to `Follow`.
+* **Verification & Build:**
+  * All 75 automated unit tests pass cleanly in `scf_tests.exe`.
+  * `SummonControlFramework.dll` compiled and deployed to both MO2 plugin folders.
+
+---
+
+## 2026-11-10 — Order Execution Rework: `SummonMovement` (KeepOffsetFromActor) instead of combat dummies
+
+Diagnosis of the "binds do nothing" report and a new physical execution layer for squad orders.
+
+* **Field evidence (STB, profile SBORKA, `SummonControlFramework.log` 11:27–11:28):**
+  * Input plumbing is healthy: every Numpad press arrives (`[InputHandler] SCF: Order -> ...`), the command is popped, and `[Execution]` runs for the summon.
+  * The summons did not obey anyway. The only thing `Return` did was `StopCombat()` + `EvaluatePackage()`, which for a summoned creature creates no movement intent — a no-op in practice.
+  * The dummy-beacon build before that did walk the summon to a point (combat AI pathing), but left it fighting an invisible immortal dummy; the 11:28 Return presses (9 in a row) could not disengage it, so the approach was reverted to the "[Pending R&D]" MoveTo in the working tree.
+* **Root cause:** SCF had orders (Core/FSM), but no engine-side execution of "where the body should go". `SetRunOncePackage(nullptr)` / runtime packages / dummy actors were all attempts to borrow an intent the engine owns. `Actor::KeepOffsetFromActor` is the engine's own intent primitive (it is what a follower's movement goal uses).
+* **Implemented — new layer `src/Engine/SummonMovement.{h,cpp}` + pure `Core/Formation` + `Core/MovementIntent`:**
+  * `Actor::KeepOffsetFromActor` (`RELOCATION_ID(36870, 37894)`), `ClearKeepOffsetFromActor` (`36871, 37895`), `SetDontMove` (`36490, 37489`). Not bound by the pinned CommonLibSSE-NG; ids/signature cross-checked against the unpacked 1.5.97 image (`addrlib.py`: `36870 -> +603990`, `36871 -> +603AC0`; disassembly shows `Actor+0x148 movementController` RTTI-cast to `IMovementSetKeepOffsetFromActor`, slot 1, nine-field record) and against APMF's verified address table.
+  * Offset semantics from CK Wiki / Papyrus Index: target **body space** (+X right, +Y forward), `catchUpRadius` = run-to-catch-up radius, `followRadius` = stand-still radius, no teleport.
+  * Order → intent matrix: `Follow` → formation slot keep-offset (suppressed while the engine reports the summon in combat), `Return` → keep-offset at the owner and flip to `Follow` on arrival, `MoveTo` → owner-relative offset of the world point recomputed every tick, `WaitGuard` → goal parked on the summon itself + `SetDontMove(true)`, in-combat → no primitives.
+  * Formation slot table moved into `Core::Formation` and is now shared with `SquadCoordinator` (single source of truth); command broadcast/iteration order is sorted by FormID so slots stay stable between ticks.
+  * Emergency catch-up warp: only beyond `[Recovery] fCatchUpDistance` or after 3 s without 50 units of progress, once per `Return` order, same-cell only, always logged.
+  * Primitive bookkeeping per summon: re-issue only on change (8-unit epsilon), keep-offset re-asserted every 2 s (the vanilla summoned-creature follow may rewrite it), `SetDontMove(false)` forced on first discovery because the flag survives save/load, state dropped via `RetainOnly` / `ResetAll`.
+  * `FocusTarget` keeps `StartCombat`; `SetRunOncePackage(nullptr)` + `EvaluatePackage` removed from Return/Guard/Follow because their effect was unverified and they competed with the new intent.
+  * Registry per-tick `[Registry] Updated existing summon` info line removed: it printed once per summon per 15 Hz tick and drowned the log (~132 KB per session).
+  * FLICK menu: `Formation Distance`, `Catch-Up Run Distance`, `Combat Leash`, `Combat Leash Radius`, `Catch-Up Warp` + `Catch-Up Warp Distance` replace the misleading `Follow Distance` binding to `combat.followDistanceThreshold`.
+* **Tests:** 14 new pure unit tests in `tests/test_movement_intent.cpp` (formation geometry, body-space round trips, intent matrix, MoveTo world-destination invariance, arrival radius). `scf_tests.exe`: **89/89 passing** (was 75/75).
+* **Build:** `SummonControlFramework.dll` compiled with zero warnings and auto-deployed to both MO2 instances.
+* **NOT verified in game yet:** whether a *summoned creature* honours `KeepOffsetFromActor` (the vanilla summoned-creature follow may fight it), whether `SetDontMove(true)` still allows in-place attacks, and the warp thresholds. The user tests in game; the log now has `[Movement]` lines that say what was applied and why.
+
