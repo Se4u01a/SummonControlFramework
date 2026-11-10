@@ -1,6 +1,8 @@
 #include "check.h"
 #include "Core/PassThrough.h"
 
+#include <vector>
+
 using namespace scf::core;
 
 namespace
@@ -75,4 +77,47 @@ TEST(TestPassThroughLayerPairs)
 	CHECK(!IsPassThroughLayerPair(6, 8));
 	CHECK(!IsPassThroughLayerPair(30, 1));
 	CHECK(!IsPassThroughLayerPair(30, 13));
+}
+
+// Given a wolf whose pairs Havok already accepted before SCF knew it (spawned against
+// another wolf, or its controller had no group yet)
+// When the next table carries it with a system group
+// Then its existing pairs are re-filtered; unchanged rows are left alone.
+TEST(TestPassThroughRefilterNewOrRegrouped)
+{
+	const CollisionSettings on{};
+	const std::vector<PassThroughRow> before{ { kPlayer, 7 }, { 0xFF000001, 9 }, { 0xFF000002, 0 } };
+	const std::vector<PassThroughRow> after{ { kPlayer, 7 }, { 0xFF000001, 9 }, { 0xFF000002, 11 }, { 0xFF000003, 12 }, { 0xFF000004, 0 } };
+	const auto ids = RowsToRefilter(before, on, after, on);
+	CHECK(ids.size() == 2);
+	CHECK(ids[0] == 0xFF000002);
+	CHECK(ids[1] == 0xFF000003);
+
+	CHECK(RowsToRefilter(after, on, after, on).empty());
+}
+
+// Given a summon dismissed (or no longer managed), its pairs return to vanilla:
+// it is re-filtered once more after it left the table.
+TEST(TestPassThroughRefilterRemoved)
+{
+	const CollisionSettings on{};
+	const std::vector<PassThroughRow> before{ { kPlayer, 7 }, { 0xFF000001, 9 } };
+	const std::vector<PassThroughRow> after{ { kPlayer, 7 } };
+	const auto ids = RowsToRefilter(before, on, after, on);
+	CHECK(ids.size() == 1);
+	CHECK(ids[0] == 0xFF000001);
+}
+
+// Given the bypass switched off (or on) in the menu, every actor of both tables is
+// re-filtered, each once.
+TEST(TestPassThroughRefilterSettingsChange)
+{
+	CollisionSettings off{};
+	off.enableCollisionBypass = false;
+	const std::vector<PassThroughRow> rows{ { kPlayer, 7 }, { 0xFF000001, 9 } };
+	const std::vector<PassThroughRow> fewer{ { kPlayer, 7 } };
+	const auto ids = RowsToRefilter(rows, CollisionSettings{}, fewer, off);
+	CHECK(ids.size() == 2);
+	CHECK(ids[0] == kPlayer);
+	CHECK(ids[1] == 0xFF000001);
 }

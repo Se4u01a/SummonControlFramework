@@ -124,7 +124,8 @@
   * **Field status:** build deployed, not yet re-tested in game.
 * **Pass-through: summons no longer stand on each other — 2026-11-11:**
   * Field: summons passed through each other but could land on top of one another (their controller stood on the other's body bones, layer Biped 8 / BipedNoCC 33, which the seat did not cover).
-  * The body seat now also disables controller (30) ↔ the other actor's Biped/BipedNoCC bones for the same pass-through pairs (`core::IsPassThroughLayerPair`, 1 test — **122/122 passing**); separate counter in the 10 s summary.
+  * The body seat now also disables controller (30) ↔ the other actor's Biped/BipedNoCC bones for the same pass-through pairs (`core::IsPassThroughLayerPair`, 1 test); separate counter in the 10 s summary. Field: still "micro-collisions", the bones counter stayed 0 (Skyrim.esm COLL: the controller never collides with Biped 8).
+  * Follow-up: pairs Havok accepted before the table knew both actors keep colliding while they overlap. Every publish now re-filters the existing pairs of new / regrouped / removed actors through `bhkWorld::UpdateCollisionFilter` (id 76091) (`core::RowsToRefilter`, 3 tests — **125/125 passing**).
   * **Field status:** built and deployed, NOT tested in game (TEST-PASS-4).
 * **PoE2 stage M2: attack what I attack + aggression radius — 2026-11-11:**
   * `TESHitEvent` sink: when the player hits an enemy, summons in `Follow` (or `Attack` on another target) get a FocusTarget on it; never in `Passive`, never over `Return`/`MoveTo`/`Guard` (`core::ShouldAssistPlayerHit`). INI `[Combat] bAssistPlayerAttacks`.
@@ -188,7 +189,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **122/122 test cases passing** (0 failures, execution time < 2 ms).
+  * **125/125 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

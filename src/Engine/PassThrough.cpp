@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <shared_mutex>
 #include <vector>
 
@@ -143,6 +144,95 @@ namespace scf::engine::passthrough
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
+		// ---------------------------------------------------------------- re-filter
+		// Havok asks the filter only when two bodies START overlapping, so a pair accepted
+		// before the table knew both actors keeps colliding while they stay together (a
+		// wolf climbing another in the pack). bhkWorld::UpdateCollisionFilter makes Havok
+		// re-run the filter on the existing pairs of one body.
+		//
+		// id 76091 (+DAAED0), read on the SE 1.5.97 image 2026-11-11:
+		// `void (bhkWorld* world, bhkWorldObject* object)`. It reads only object+0x10 (the
+		// Havok hkpWorldObject), takes the world's write lock (bhkWorld+0xC598) when physics
+		// runs multithreaded, then calls hkpWorld::updateCollisionFilterOnEntity (id 60509,
+		// +A78710; full check, shape collections) when the body's broad-phase type
+		// (hkpWorldObject+0x48) is 1 (entity), else updateCollisionFilterOnPhantom (id 60511,
+		// +A78E50). Vanilla reaches it from NiAVObject::SetCollisionLayer (id 76170) through
+		// bhkWorldObject::UpdateCollisionFilter (id 75968, +DA3960).
+		constexpr std::uint8_t kUpdateFilterPrologue[] = { 0x40, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xEC, 0x40 };
+		constexpr std::size_t kWorldObjectWorld = 0x10;       // hkpWorldObject::world
+		constexpr std::size_t kWorldObjectFilterInfo = 0x4C;  // collidable (+0x20) filter info (+0x2C)
+		constexpr std::size_t kWorldObjectBroadPhaseType = 0x48;
+
+		struct WorldObjectView  // what id 76091 reads of a bhkWorldObject: referencedObject at +0x10
+		{
+			void* vtable{ nullptr };
+			void* unk08{ nullptr };
+			void* havokObject{ nullptr };
+		};
+		static_assert(offsetof(WorldObjectView, havokObject) == 0x10);
+
+		using UpdateCollisionFilter_t = void (*)(RE::bhkWorld*, WorldObjectView*);
+		UpdateCollisionFilter_t s_updateCollisionFilter{ nullptr };
+		std::uint64_t s_refiltered{ 0 };
+		std::uint64_t s_lastRefilteredReported{ 0 };
+		bool s_refilterObserved{ false };
+
+		// The Havok body of an actor's character controller: the proxy's shape phantom
+		// or the rigid-body controller's body. Checked to really be a layer-30 body in a
+		// world before it is handed to the engine.
+		void* ControllerBody(RE::Actor* a_actor)
+		{
+			auto* controller = a_actor ? a_actor->GetCharController() : nullptr;
+			if (!controller) {
+				return nullptr;
+			}
+			void* body = nullptr;
+			if (auto* proxy = skyrim_cast<RE::bhkCharProxyController*>(controller)) {
+				auto* havok = static_cast<RE::hkpCharacterProxy*>(proxy->proxy.referencedObject.get());
+				body = havok ? static_cast<void*>(havok->shapePhantom) : nullptr;
+			} else if (auto* rigid = skyrim_cast<RE::bhkCharRigidBodyController*>(controller)) {
+				auto* havok = static_cast<RE::hkpCharacterRigidBody*>(rigid->charRigidBody.referencedObject.get());
+				body = havok ? static_cast<void*>(havok->character) : nullptr;
+			}
+			if (!body) {
+				return nullptr;
+			}
+			const auto base = reinterpret_cast<std::uintptr_t>(body);
+			const auto world = *reinterpret_cast<void* const*>(base + kWorldObjectWorld);
+			const auto layer = *reinterpret_cast<const std::uint32_t*>(base + kWorldObjectFilterInfo) & 0x7F;
+			const auto type = *reinterpret_cast<const std::uint8_t*>(base + kWorldObjectBroadPhaseType);
+			if (!world || layer != kCharControllerLayer || (type != 1 && type != 2)) {
+				return nullptr;
+			}
+			return body;
+		}
+
+		void Refilter(RE::Actor* a_actor)
+		{
+			if (!s_updateCollisionFilter || !a_actor || !a_actor->Is3DLoaded()) {
+				return;
+			}
+			auto* cell = a_actor->GetParentCell();
+			auto* world = cell ? cell->GetbhkWorld() : nullptr;
+			void* body = ControllerBody(a_actor);
+			if (!world || !body) {
+				return;
+			}
+			// The body must live in this cell's physics world.
+			const auto bodyWorld = *reinterpret_cast<void* const*>(reinterpret_cast<std::uintptr_t>(body) + kWorldObjectWorld);
+			if (bodyWorld != world->referencedObject.get()) {
+				return;
+			}
+			WorldObjectView view{};
+			view.havokObject = body;
+			s_updateCollisionFilter(world, &view);
+			++s_refiltered;
+			if (!s_refilterObserved) {
+				s_refilterObserved = true;
+				logger::info("[PassThrough] first re-filter of existing collision pairs (actor 0x{:08X}).", a_actor->GetFormID());
+			}
+		}
+
 		// Refuse a slot that holds a different function of SkyrimSE.exe (wrong id /
 		// wrong runtime); accept the verified function or another plugin's hook on it
 		// (outside the game image), which keeps the same ABI and is chained.
@@ -188,6 +278,14 @@ namespace scf::engine::passthrough
 				kIsCollisionEnabledSlot, CollisionFilterHook::func.address());
 			any = true;
 		}
+
+		const auto update = REL::ID(76091).address();
+		if (std::memcmp(reinterpret_cast<const void*>(update), kUpdateFilterPrologue, sizeof(kUpdateFilterPrologue)) == 0) {
+			s_updateCollisionFilter = reinterpret_cast<UpdateCollisionFilter_t>(update);
+			logger::info("[PassThrough] bhkWorld::UpdateCollisionFilter (id 76091) verified; existing pairs are re-filtered when the table changes.");
+		} else {
+			logger::error("[PassThrough] bhkWorld::UpdateCollisionFilter (id 76091) bytes differ; existing pairs will NOT be re-filtered.");
+		}
 		return any;
 	}
 
@@ -207,12 +305,37 @@ namespace scf::engine::passthrough
 			table.push_back(entry);
 		}
 
+		std::vector<core::PassThroughRow> previousRows;
+		std::vector<core::PassThroughRow> currentRows;
+		core::CollisionSettings previousSettings{};
 		{
 			std::unique_lock lock(s_tableLock);
+			previousRows.reserve(s_table.size());
+			for (const auto& entry : s_table) {
+				previousRows.push_back({ entry.party.id, entry.systemGroup });
+			}
+			previousSettings = s_settings;
 			s_table = std::move(table);
 			s_settings = a_settings;
+			currentRows.reserve(s_table.size());
+			for (const auto& entry : s_table) {
+				currentRows.push_back({ entry.party.id, entry.systemGroup });
+			}
 		}
 		s_hasSummons.store(hasSummons, std::memory_order_relaxed);
+
+		// After the swap (the filter must already give the new answer) and outside the
+		// table lock (re-filtering calls the filter seat, which takes it shared).
+		for (const auto id : core::RowsToRefilter(previousRows, previousSettings, currentRows, a_settings)) {
+			RE::Actor* actor = nullptr;
+			for (const auto& member : a_members) {
+				if (member.party.id == id) {
+					actor = member.actor;
+					break;
+				}
+			}
+			Refilter(actor ? actor : RE::TESForm::LookupByID<RE::Actor>(id));
+		}
 
 		// A summary every 10 s while something was let through, so a field log shows the
 		// seats acting without a line per physics step.
@@ -221,12 +344,14 @@ namespace scf::engine::passthrough
 			const auto avoid = s_avoidSkipped.load(std::memory_order_relaxed);
 			const auto collision = s_collisionSkipped.load(std::memory_order_relaxed);
 			const auto bones = s_bonesSkipped.load(std::memory_order_relaxed);
-			if (avoid != s_lastAvoidReported || collision != s_lastCollisionReported || bones != s_lastBonesReported) {
-				logger::info("[PassThrough] last 10 s: {} avoidance checks, {} controller collisions and {} controller<->bones collisions skipped between own summons/owner (totals {} / {} / {}).",
-					avoid - s_lastAvoidReported, collision - s_lastCollisionReported, bones - s_lastBonesReported, avoid, collision, bones);
+			if (avoid != s_lastAvoidReported || collision != s_lastCollisionReported || bones != s_lastBonesReported || s_refiltered != s_lastRefilteredReported) {
+				logger::info("[PassThrough] last 10 s: {} avoidance checks, {} controller collisions and {} controller<->bones collisions skipped between own summons/owner, {} bodies re-filtered (totals {} / {} / {} / {}).",
+					avoid - s_lastAvoidReported, collision - s_lastCollisionReported, bones - s_lastBonesReported, s_refiltered - s_lastRefilteredReported,
+					avoid, collision, bones, s_refiltered);
 				s_lastAvoidReported = avoid;
 				s_lastCollisionReported = collision;
 				s_lastBonesReported = bones;
+				s_lastRefilteredReported = s_refiltered;
 			}
 			s_lastReport = now;
 		}

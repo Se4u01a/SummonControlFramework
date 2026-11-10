@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **122/122 тестов успешно пройдено (0 failures)**.
+Текущий результат: **125/125 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -152,13 +152,14 @@ xmake run scf_tests
 
 Suite G (`Settings`) дополнительно проверяет значения по умолчанию и сохранение `bAssistPlayerAttacks` / `fAggressionRadius`.
 
-### Suite O: Pass-Through (`PassThrough`) — 6 tests
+### Suite O: Pass-Through (`PassThrough`) — 9 tests
 Файл `tests/test_pass_through.cpp`, правило `core::ShouldPassThrough` для seat'ов обхода в движении и фильтра коллизий тел.
 * `TestPassThroughSameOwnerSummons`: два призыва игрока игнорируют друг друга (в обе стороны).
 * `TestPassThroughSummonAndOwner`: призыв и его владелец игнорируют друг друга.
 * `TestPassThroughDifferentOwnersCollide`: призыв игрока и призыв/сам NPC-маг продолжают обходить и толкать друг друга.
 * `TestPassThroughUnknownOrSelf`: неизвестный SCF актор и пара «сам с собой» — ванильное поведение.
 * `TestPassThroughLayerPairs`: отключаются только пары «контроллер↔контроллер» и «контроллер↔кости тела (Biped 8 / BipedNoCC 33)»; оружие, снаряды, мир, мёртвые тела и кости↔кости — нет.
+* `TestPassThroughRefilterNewOrRegrouped` / `TestPassThroughRefilterRemoved` / `TestPassThroughRefilterSettingsChange`: перефильтровываются новые и сменившие группу строки, ушедшие из таблицы, и все — при смене переключателей; неизменные строки не трогаются, каждый id один раз.
 * `TestPassThroughSettingsGates`: `bEnableCollisionBypass=false` выключает всё, `bEnableSummonToSummonBypass=false` — только пары призывов.
 
 ### Suite N: Target Pin (`TargetPin`) — 7 tests
@@ -197,7 +198,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 122/122 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 125/125 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -326,7 +327,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-FF-AOE-1 (Fireball splash):** выстрелить фаерболом в землю рядом с призывами: призывы не получают урона и не загораются; в логе `[MagicHook] Refused friendly AreaEffect effect ...`. Враг рядом получает урон как обычно. Лечение/баффы игрока на призыве продолжают работать.
 * **[ ] TEST-PASS-1 (Seats installed and running):** при загрузке — две строки `[PassThrough] ... hooked`; при движении отряда — `movement avoidance seat OBSERVED running` и `collision filter seat OBSERVED a CharController pair`; во время движения раз в 10 с — `last 10 s: N avoidance checks and M body collisions skipped`. Нули при плотном строе означают, что seat не срабатывает — пришлите лог.
 * **[ ] TEST-PASS-2 (Run through each other):** 3–4 волка, `Return` (Numpad 2) или `MoveTo` (Numpad 4) так, чтобы путь одного проходил через другого: призывы бегут по прямой сквозь друг друга, не огибают, не тормозят и не толкаются.
-* **[ ] TEST-PASS-4 (No standing on each other):** волки при беге/прыжках через друг друга не оказываются друг на друге; в логе `first controller<->body-bones pair disabled (layers 30 / 8)` и в сводке ненулевые `controller<->bones collisions`. Игрок по-прежнему может стоять на земле рядом, удары по врагам не изменились.
+* **[ ] TEST-PASS-4 (No standing on each other):** призвать двух-трёх волков (в том числе вторым заклинанием вплотную к первому), бегать стаей и прыгать: ни один волк не взбирается на другого. В логе `bhkWorld::UpdateCollisionFilter (id 76091) verified`, `first re-filter of existing collision pairs`, в сводке ненулевые `bodies re-filtered`. Игрок по-прежнему стоит на земле, удары по врагам не изменились. (Счётчик `controller<->bones` в ванили может оставаться 0: контроллер не сталкивается с `Biped`.)
 * **[ ] TEST-PASS-3 (Enemies unchanged):** призывы по-прежнему обходят и упираются во врагов и посторонних NPC; бой и удары по врагам не изменились.
 * **[ ] TEST-COMBAT-12 (Focus on a far target):** Навестись на врага в 1500–2500 ед. и нажать `Numpad 1`: в логе `[Leash] ... follow leash RELEASED`, `AttackApproach keep-offset ... target=focus`; суммон бежит прямо к врагу (не возвращается к игроку), по дороге `re-engage StartCombat(...) -> true` и атакует. Приказ не должен сбрасываться (`combat never started`) раньше 15 с.
 * **[ ] TEST-COMBAT-8 (Target pin seat runs):** В первом же бою в логе должна появиться строка `[TargetPin] selector seat OBSERVED running`. После `Numpad 1` — `[TargetPin] Summon 0x... pinned to focus 0x...` и затем `engine picked handle ..., answered with focus ...`. Если вместо этого раз в 2 с идёт `not pinned this update (... membership absent)`, фокус не попал в цели боевой группы — пришлите эти строки и соседние `add-target StartCombat`.

@@ -40,6 +40,12 @@ namespace scf::engine::passthrough
 	//      character controller's filter info), so the physics thread only compares two
 	//      integers from the collidables it was handed.
 	//
+	//   3. EXISTING PAIRS. Havok asks seat 2 only when two bodies start overlapping, so
+	//      after each table swap Publish() re-filters the controller bodies of actors whose
+	//      answer may have changed (core::RowsToRefilter) through bhkWorld::
+	//      UpdateCollisionFilter (id 76091), the call vanilla NiAVObject::SetCollisionLayer
+	//      ends in. Details in the .cpp.
+	//
 	// Threads: Publish() is main-thread; both seats run on AI / physics worker threads
 	// and only read the published table under a shared lock.
 

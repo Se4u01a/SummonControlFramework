@@ -4,6 +4,7 @@
 #include "Core/Settings.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace scf::core
 {
@@ -31,9 +32,32 @@ namespace scf::core
 
 	// Which collision-layer pairs the body seat may disable (Havok COL_LAYER numbers):
 	// an actor's character controller (30) against the other actor's controller (30) or
-	// its living body bones - Biped (8) and BipedNoCC (33). The bones are what a wolf
-	// lands on when it jumps onto another one (field report 2026-11-11). Anything without
+	// its living body bones - Biped (8) and BipedNoCC (33). Skyrim.esm's COLL matrix
+	// (checked 2026-11-11) lets the controller collide with BipedNoCC but NOT with Biped,
+	// so in vanilla only 30/30 and 30/33 ever reach the seat enabled; 8 is kept as a
+	// harmless guard for edited layer tables. Anything without
 	// a character controller on one side (weapons, projectiles, spells, the world, dead
 	// bodies) is never touched, so hits and ragdolls stay vanilla.
 	bool IsPassThroughLayerPair(std::uint32_t a_layerA, std::uint32_t a_layerB) noexcept;
+
+	// One published row of the pass-through table: who, and the system group of its
+	// character controller (0 = no controller loaded yet).
+	struct PassThroughRow
+	{
+		EntityID id{ InvalidEntityID };
+		std::uint32_t systemGroup{ 0 };
+	};
+
+	// Havok asks the collision filter only when two bodies START overlapping; a pair that
+	// was let in earlier (summon spawned against another before SCF published it, its
+	// controller had no group yet, the bypass was off) keeps colliding for as long as the
+	// two keep overlapping - a wolf running in the pack can climb onto another one
+	// (field report 2026-11-11). The engine therefore asks Havok to re-filter the
+	// existing pairs of every actor whose answer may have changed since the last table:
+	//   * every actor of both tables when a CollisionSettings switch changed;
+	//   * an actor new in the table, or whose system group changed (group != 0);
+	//   * an actor that left the table (its pairs fall back to vanilla).
+	// Result: unique ids, current-table order first, then the removed ones.
+	std::vector<EntityID> RowsToRefilter(const std::vector<PassThroughRow>& a_previous, const CollisionSettings& a_previousSettings,
+		const std::vector<PassThroughRow>& a_current, const CollisionSettings& a_currentSettings);
 }
