@@ -118,6 +118,11 @@ namespace scf::core
 
 		[[nodiscard]] std::size_t GetActiveCount() const noexcept;
 
+		[[nodiscard]] const std::unordered_map<EntityID, SummonRecord>& GetAllRecords() const noexcept
+		{
+			return _records;
+		}
+
 		void ClearStaleRecords();
 
 		void Reset();

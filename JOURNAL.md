@@ -158,3 +158,25 @@ Implementation of core configuration parsing, validation, and serialization.
 * **Verification & Tests:**
   * 6 new test cases added in `tests/test_settings.cpp`: default values verification, prefixed parsing, unprefixed parsing with inline comments, defensive clamping, round-trip serialization, and disk file persistence.
   * Total automated test count expanded to **44 test cases**, all passing with 0 failures.
+
+---
+
+## 2026-11-10 — FrameworkContext, Console Commands & SKSE Messaging
+
+Implementation of Stage 0 infrastructure: unified runtime state locator, in-game console commands, and SKSE message dispatching.
+
+* **Architectural Decoupling of Console Handling:**
+  * Rather than embedding console formatting inside Skyrim-dependent SKSE hooks, created `ConsoleHandler` in `src/Core/`: pure C++ parsing and formatting for commands (`scf status`, `scf registry`, `scf reload`, `scf help`).
+  * `ConsoleCommands` in `src/Plugin/` serves as the engine adapter, registering the `scf` command in Skyrim's `SCRIPT_FUNCTION` table and outputting to both `RE::ConsoleLog` and the log file.
+* **Unified Framework Context (`FrameworkContext`):**
+  * Centralizes lifecycle management for `Settings`, `SummonRegistry`, `CommandQueue`, `UpdateScheduler`, `StateMachine`, and `SquadCoordinator`.
+  * Wires all individual component logging callbacks into a unified sink.
+  * Provides `ResetRuntimeState()` called on `kPreLoadGame` and `kNewGame` to prevent ghost summons from lingering across save-load transitions.
+* **SKSE Messaging Dispatcher (`Messaging`):**
+  * Listens to SKSE message bus:
+    * `kDataLoaded`: automatically loads `Data/SKSE/Plugins/SummonControlFramework.ini` or saves defaults if absent; registers `scf` console command.
+    * `kPreLoadGame` / `kNewGame`: purges runtime registries.
+    * `kPostLoadGame` / `kPostLoad`: logs readiness.
+* **Verification & Tests:**
+  * 6 new test cases added in `tests/test_console_commands.cpp`: help command, status report, empty and populated registry dumps, live INI reload, unknown command fallback, and runtime state reset.
+  * Total automated test count expanded to **50 test cases**, all passing with 0 failures.

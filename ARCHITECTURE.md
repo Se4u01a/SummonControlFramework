@@ -116,3 +116,81 @@
    * `SummonControlFramework` — компилирует DLL плагина SKSE с включением PCH и CommonLib.
    * `scf_tests` — компилирует автономный консольный бинарник тестов ядра без тяжелых движковых библиотек. Сборка и запуск тестов занимают ~1 секунду.
 4. **Гибкий поиск зависимостей:** автоматический поиск CommonLib через переменную `COMMONLIBSSE_NG_PATH`, локальный путь `D:/Games/Issen/CommonLibSSE-NG` или подмодуль `extern/CommonLibSSE-NG`.
+
+---
+
+## 7. Координация отряда и арбитраж слотов атак (`SquadCoordinator`)
+
+* **Файл:** [src/AI/SquadCoordinator.h](file:///D:/projects/Summon_Control_Framework/src/AI/SquadCoordinator.h), [src/AI/SquadCoordinator.cpp](file:///D:/projects/Summon_Control_Framework/src/AI/SquadCoordinator.cpp)
+
+### Проблема «свалки» (Dogpiling):
+В стандартном Skyrim все призванные существа независимо выбирают одну и ту же ближайшую цель и устремляются в одну точку. В результате существа расталкивают друг друга, застревают в геометрии и блокируют игрока.
+
+### Решение:
+1. **Квотирование слотов атак:**
+   * Каждая цель имеет ограниченную емкость слотов ближнего боя (`maxMeleeSlotsPerTarget`, по умолчанию 2) и дальнего боя (`maxRangedSlotsPerTarget`, по умолчанию 3).
+   * Если лимит ближнего боя исчерпан, следующие бойцы ближнего боя перенаправляются на альтернативные цели или удерживают строй.
+2. **Симметричные формации:**
+   * Вычисление веерных смещений отряда с учетом угла рыскания (Yaw) игрока: 1 призыв (левый фланг), 2 призыва (левый и правый арьергард), 3-4 призыва (фланговые «рога» и тыловые якоря).
+   * Непересекающиеся позиции предотвращают наложение физических капсул.
+
+---
+
+## 8. Реестр призывов и управление жизненным циклом (`SummonRegistry`)
+
+* **Файл:** [src/Core/SummonRegistry.h](file:///D:/projects/Summon_Control_Framework/src/Core/SummonRegistry.h), [src/Core/SummonRegistry.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/SummonRegistry.cpp)
+
+1. **Идемпотентная регистрация:** повторный каст или обновление длительности существующего призыва не порождает дубликатов в отряде.
+2. **Состояние `Suspended` при выгрузке ячейки:** при переходе через двери ячейка выгружается (`TESCellAttachDetachEvent(detach)`), но существо не удаляется из игры. Реестр переводит запись в `Suspended` и восстанавливает `Active` при загрузке ячейки, защищая от потери контроля.
+3. **Вытеснение старейшего призыва при превышении лимита:** при призыве существа сверх лимита владельца реестр вычисляет старейший активный призыв, маркирует его `Displaced` и возвращает `EntityID` для инициирования dispel в движке.
+
+---
+
+## 9. Очередь команд и приоритеты (`CommandQueue`)
+
+* **Файл:** [src/Core/CommandQueue.h](file:///D:/projects/Summon_Control_Framework/src/Core/CommandQueue.h), [src/Core/CommandQueue.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/CommandQueue.cpp)
+
+1. **Иерархия приоритетов (Strict Priority Hierarchy):**
+   * `Lifecycle` (0): смерть, принудительный dispel, вытеснение (высший приоритет).
+   * `PlayerDirect` (1): хоткеи игрока (`Return`, `FocusTarget`, `WaitGuard`).
+   * `ModeChange` (2): смена режима агрессии (`Passive`, `Defensive`, `Aggressive`).
+   * `Tactical` (3): автоматические решения ИИ (низший приоритет).
+2. **Коалесценция и подавление осцилляций:** быстрые нажатия клавиш игроком объединяются in-place, исключая бесполезную очередь устаревших приказов.
+3. **Безопасность TTL (Time-to-Live):** команды старше 5 секунд автоматически аннулируются, исключая запоздалое выполнение после паузы или загрузочных экранов.
+4. **Потокобезопасность:** защищена `std::mutex` для безопасной передачи из потока ввода в главный поток тика.
+
+---
+
+## 10. Планировщик обновлений и квантование времени (`UpdateScheduler`)
+
+* **Файл:** [src/Core/UpdateScheduler.h](file:///D:/projects/Summon_Control_Framework/src/Core/UpdateScheduler.h), [src/Core/UpdateScheduler.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/UpdateScheduler.cpp)
+
+1. **Отвязка тактовой частоты ИИ от FPS рендера:** тактическая частота зафиксирована на 15 Гц (~66.7 мс) вместо 60-144 Гц рендера, экономя такты CPU.
+2. **Аккумулятор с защитой от дрейфа и спайков:** дробные остатки дельты сохраняются; спайки времени свыше 2 интервалов усекаются, защищая от лавинных догоняющих расчетов.
+3. **Time-Slicing отряда:** расчеты поиска целей для нескольких существ распределяются по соседним тикам по алгоритму чередования (round-robin).
+4. **Немедленное пробуждение (Priority Immediate Wakeup):** экстренные приказы игрока вызывают `RequestImmediateTick()`, инициируя расчет на ближайшем кадре.
+
+---
+
+## 11. Управление конфигурацией (`Settings`)
+
+* **Файл:** [src/Core/Settings.h](file:///D:/projects/Summon_Control_Framework/src/Core/Settings.h), [src/Core/Settings.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/Settings.cpp)
+
+1. **Чистый C++ INI-парсер без внешних зависимостей:** сохраняет нулевой оверхед и независимость от сторонних библиотек.
+2. **Двойная схема именования:** поддерживает как ванильные префиксы Skyrim (`bEnabled`, `sLogLevel`, `uMaxSummonsPerOwner`, `fUpdateFrequencyHz`), так и строчные ключи без префиксов.
+3. **Санитизация и клампинг границ:** `ValidateAndSanitize()` защищает от некорректных значений из пользовательских INI, предотвращая зацикливания и деление на ноль.
+
+---
+
+## 12. Центральный контекст рантайма и интеграция движка
+
+* **Файлы:**
+  * [src/Core/FrameworkContext.h](file:///D:/projects/Summon_Control_Framework/src/Core/FrameworkContext.h) / [FrameworkContext.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/FrameworkContext.cpp)
+  * [src/Core/ConsoleHandler.h](file:///D:/projects/Summon_Control_Framework/src/Core/ConsoleHandler.h) / [ConsoleHandler.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/ConsoleHandler.cpp)
+  * [src/Plugin/ConsoleCommands.h](file:///D:/projects/Summon_Control_Framework/src/Plugin/ConsoleCommands.h) / [ConsoleCommands.cpp](file:///D:/projects/Summon_Control_Framework/src/Plugin/ConsoleCommands.cpp)
+  * [src/Plugin/Messaging.h](file:///D:/projects/Summon_Control_Framework/src/Plugin/Messaging.h) / [Messaging.cpp](file:///D:/projects/Summon_Control_Framework/src/Plugin/Messaging.cpp)
+
+1. **`FrameworkContext`:** объединяет все подсистемы (`Settings`, `SummonRegistry`, `CommandQueue`, `UpdateScheduler`, `StateMachine`, `SquadCoordinator`), связывает их логгеры в единый поток и предоставляет централизованный метод `ResetRuntimeState()` для очистки при загрузке сохранений.
+2. **`ConsoleHandler`:** чистое C++ ядро обработки консольных команд (`scf status`, `scf registry`, `scf reload`, `scf help`), полностью тестируемое офлайн без запуска игры.
+3. **`ConsoleCommands`:** плагин-адаптер, подключающий консольную команду `scf` к таблице консольных функций Skyrim через `SCRIPT_FUNCTION::LocateConsoleCommand` и выводящий результаты в `RE::ConsoleLog`.
+4. **`Messaging`:** диспетчер сообщений SKSE (`kDataLoaded`, `kPreLoadGame`, `kPostLoadGame`, `kNewGame`), отвечающий за инициализацию INI-файла и своевременную очистку временных реестров.

@@ -1,5 +1,6 @@
 #include "PCH.h"
-#include "Core/StateMachine.h"
+#include "Core/FrameworkContext.h"
+#include "Plugin/Messaging.h"
 #include "Plugin/RuntimeGate.h"
 
 namespace
@@ -19,30 +20,6 @@ namespace
 		spdlog::set_default_logger(std::move(log));
 		spdlog::set_pattern("[%H:%M:%S.%e] [%l] %v"s);
 	}
-
-	void LogFSMTransition(scf::core::EntityID a_id, scf::core::SummonState a_from, scf::core::SummonState a_to, const char* a_reason)
-	{
-		logger::info("[FSM] Entity {}: {} -> {} (Reason: {})",
-			a_id,
-			scf::core::ToString(a_from),
-			scf::core::ToString(a_to),
-			a_reason ? a_reason : "none");
-	}
-
-	scf::core::StateMachine g_stateMachine(LogFSMTransition);
-
-	void OnMessage(SKSE::MessagingInterface::Message* a_message)
-	{
-		switch (a_message->type) {
-		case SKSE::MessagingInterface::kPostLoad:
-			break;
-		case SKSE::MessagingInterface::kDataLoaded:
-			logger::info("Data loaded: SKSE message received, SCF FSM ready.");
-			break;
-		default:
-			break;
-		}
-	}
 }
 
 SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
@@ -59,7 +36,12 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 		return false;
 	}
 
-	SKSE::GetMessagingInterface()->RegisterListener(OnMessage);
+	// Wire unified logging from Core/AI subsystems to spdlog
+	scf::core::FrameworkContext::GetSingleton().SetLogCallback([](const char* a_message) {
+		logger::info("{}", a_message ? a_message : "");
+	});
+
+	scf::plugin::RegisterMessaging();
 
 	logger::info("{} has finished loading.", plugin->GetName());
 	return true;

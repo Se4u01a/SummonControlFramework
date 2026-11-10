@@ -6,7 +6,7 @@ Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE
 
 ## 1. Automated (passing)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **44 cases, 0 failures, 0 failed checks**.  
+Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **50 cases, 0 failures, 0 failed checks**.  
 Execution time: ~1-2 ms.
 
 ### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
@@ -67,6 +67,14 @@ Execution time: ~1-2 ms.
 * `settings_serialization_roundtrip`: Verifies serialize-to-string followed by parse roundtrip preserves all values without data loss.
 * `settings_file_save_and_load`: Tests filesystem write, read, and non-existent file handling with clean temporary file teardown.
 
+### Suite H: Console Diagnostics & Context (`ConsoleHandler` & `FrameworkContext`) — 6 tests
+* `console_command_help`: Tests `help`, empty line, and `scf help` input dispatching command documentation.
+* `console_command_status`: Verifies `status` outputs enabled flags, log levels, owner limits, scheduler frequency, and pending command counts.
+* `console_command_registry_empty_and_populated`: Verifies empty registry output and formatted dumps of active summons with ID, owner, lifecycle state, and duration.
+* `console_command_reload`: Verifies live INI reloading from disk and graceful failure reporting when the target file does not exist.
+* `console_command_unknown`: Verifies unknown subcommands report guidance to type `scf help`.
+* `framework_context_reset`: Tests `FrameworkContext::ResetRuntimeState()`, verifying simultaneous cleanup of `SummonRegistry`, `CommandQueue`, and `UpdateScheduler`.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -88,8 +96,8 @@ Execution time: ~1-2 ms.
 ### Verified
 | Component | Evidence |
 |---|---|
-| Plugin build output | `SummonControlFramework.dll` generated (496 KB, with `.pdb`) |
-| Core unit tests | 44/44 passing via `scf_tests.exe` |
+| Plugin build output | `SummonControlFramework.dll` generated (502 KB, with `.pdb`) |
+| Core unit tests | 50/50 passing via `scf_tests.exe` |
 
 ### Waiting for live Skyrim run
 | Feature | Target verification |
@@ -97,6 +105,7 @@ Execution time: ~1-2 ms.
 | Plugin load | `SummonControlFramework v0.1.0 is loading...` in SKSE log |
 | `RuntimeGate` check | Log lines verifying `Detected game version: 1.6.1170.0` |
 | `kDataLoaded` receipt | Log line `Data loaded: SKSE message received, SCF FSM ready` |
+| Console command `scf` | Executing `scf status` and `scf registry` prints diagnostic output in console |
 | Summon registration | Log lines on casting `Conjure Familiar` / `Flame Atronach` |
 | Friendly fire guard in game | Player weapon/spell hitting summon without hostility loop |
 | Collision non-blocking | Player walking through summoned creature |
