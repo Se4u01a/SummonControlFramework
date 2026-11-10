@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/EntityID.h"
+#include "Core/SummonModel.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -63,6 +64,8 @@ namespace scf::core
 
 		bool isDead{ false };
 		bool isSuspended{ false };
+
+		SummonModel model{};
 	};
 
 	class SummonRegistry
@@ -106,6 +109,10 @@ namespace scf::core
 		void NotifyEffectRemoved(EntityID a_ownerId, EntityID a_summonId, float a_timestamp = 0.0f);
 
 		[[nodiscard]] const SummonRecord* FindRecord(EntityID a_summonId) const noexcept;
+		[[nodiscard]] SummonRecord* FindRecord(EntityID a_summonId) noexcept;
+
+		[[nodiscard]] SummonModel* GetModel(EntityID a_summonId) noexcept;
+		[[nodiscard]] const SummonModel* GetModel(EntityID a_summonId) const noexcept;
 
 		[[nodiscard]] std::vector<EntityID> GetActiveSummonsForOwner(EntityID a_ownerId) const;
 

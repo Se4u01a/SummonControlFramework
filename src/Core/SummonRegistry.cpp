@@ -8,8 +8,12 @@ namespace scf::core
 {
 	void SummonRegistry::SetOwnerMaxSummons(EntityID a_ownerId, std::size_t a_max)
 	{
-		if (a_ownerId != InvalidEntityID) {
-			_ownerMaxSummons[a_ownerId] = a_max;
+		_ownerMaxSummons[a_ownerId] = a_max;
+		if (_logCallback) {
+			char logBuf[256];
+			std::snprintf(logBuf, sizeof(logBuf),
+				"[Registry] Set max summons for owner %u to %zu", a_ownerId, a_max);
+			_logCallback(logBuf);
 		}
 	}
 
@@ -62,6 +66,8 @@ namespace scf::core
 			it->second.isSuspended = false;
 			it->second.isDead = false;
 			it->second.deathTimestamp = 0.0f;
+			it->second.model.id = a_summonId;
+			it->second.model.ownerId = a_ownerId;
 
 			if (_logCallback) {
 				std::snprintf(logBuf, sizeof(logBuf),
@@ -109,6 +115,8 @@ namespace scf::core
 		record.deathTimestamp = 0.0f;
 		record.isDead = false;
 		record.isSuspended = false;
+		record.model.id = a_summonId;
+		record.model.ownerId = a_ownerId;
 
 		_records[a_summonId] = record;
 
@@ -125,7 +133,7 @@ namespace scf::core
 
 	bool SummonRegistry::UnregisterSummon(EntityID a_summonId, const char* a_reason)
 	{
-		const auto it = _records.find(a_summonId);
+		auto it = _records.find(a_summonId);
 		if (it == _records.end()) {
 			return false;
 		}
@@ -133,8 +141,8 @@ namespace scf::core
 		if (_logCallback) {
 			char logBuf[256];
 			std::snprintf(logBuf, sizeof(logBuf),
-				"[Registry] Unregistered summon %u (owner %u, reason: %s)",
-				a_summonId, it->second.ownerId, a_reason ? a_reason : "Unspecified");
+				"[Registry] Unregistered summon %u (Reason: %s)",
+				a_summonId, a_reason ? a_reason : "Unspecified");
 			_logCallback(logBuf);
 		}
 
@@ -144,15 +152,15 @@ namespace scf::core
 
 	void SummonRegistry::NotifyCellDetach(EntityID a_summonId)
 	{
-		const auto it = _records.find(a_summonId);
-		if (it != _records.end() && !it->second.isDead) {
+		auto it = _records.find(a_summonId);
+		if (it != _records.end()) {
 			it->second.lifecycle = SummonLifecycleState::Suspended;
 			it->second.isSuspended = true;
 
 			if (_logCallback) {
 				char logBuf[256];
 				std::snprintf(logBuf, sizeof(logBuf),
-					"[Registry] Cell detach: summon %u suspended (reference preserved)", a_summonId);
+					"[Registry] Cell detach: summon %u suspended", a_summonId);
 				_logCallback(logBuf);
 			}
 		}
@@ -160,15 +168,15 @@ namespace scf::core
 
 	void SummonRegistry::NotifyCellAttach(EntityID a_summonId)
 	{
-		const auto it = _records.find(a_summonId);
-		if (it != _records.end() && !it->second.isDead) {
+		auto it = _records.find(a_summonId);
+		if (it != _records.end()) {
 			it->second.lifecycle = SummonLifecycleState::Active;
 			it->second.isSuspended = false;
 
 			if (_logCallback) {
 				char logBuf[256];
 				std::snprintf(logBuf, sizeof(logBuf),
-					"[Registry] Cell attach: summon %u resumed active", a_summonId);
+					"[Registry] Cell attach: summon %u resumed", a_summonId);
 				_logCallback(logBuf);
 			}
 		}
@@ -176,7 +184,7 @@ namespace scf::core
 
 	void SummonRegistry::NotifyDeath(EntityID a_summonId, float a_timestamp)
 	{
-		const auto it = _records.find(a_summonId);
+		auto it = _records.find(a_summonId);
 		if (it != _records.end()) {
 			it->second.lifecycle = SummonLifecycleState::Dead;
 			it->second.isDead = true;
@@ -185,7 +193,7 @@ namespace scf::core
 			if (_logCallback) {
 				char logBuf[256];
 				std::snprintf(logBuf, sizeof(logBuf),
-					"[Registry] Death event: summon %u marked dead", a_summonId);
+					"[Registry] Death event: summon %u marked dead at %.2fs", a_summonId, a_timestamp);
 				_logCallback(logBuf);
 			}
 		}
@@ -193,15 +201,16 @@ namespace scf::core
 
 	void SummonRegistry::NotifyEffectRemoved(EntityID a_ownerId, EntityID a_summonId, float a_timestamp)
 	{
-		const auto it = _records.find(a_summonId);
-		if (it != _records.end() && it->second.ownerId == a_ownerId) {
+		auto it = _records.find(a_summonId);
+		if (it != _records.end()) {
 			it->second.lifecycle = SummonLifecycleState::Dispatched;
+			it->second.isDead = true;
 			it->second.deathTimestamp = a_timestamp;
 
 			if (_logCallback) {
 				char logBuf[256];
 				std::snprintf(logBuf, sizeof(logBuf),
-					"[Registry] Effect removed: summon %u dispatched by owner %u",
+					"[Registry] Summon %u magic effect expired/removed for owner %u",
 					a_summonId, a_ownerId);
 				_logCallback(logBuf);
 			}
@@ -212,6 +221,24 @@ namespace scf::core
 	{
 		const auto it = _records.find(a_summonId);
 		return (it != _records.end()) ? &it->second : nullptr;
+	}
+
+	SummonRecord* SummonRegistry::FindRecord(EntityID a_summonId) noexcept
+	{
+		auto it = _records.find(a_summonId);
+		return (it != _records.end()) ? &it->second : nullptr;
+	}
+
+	SummonModel* SummonRegistry::GetModel(EntityID a_summonId) noexcept
+	{
+		auto* rec = FindRecord(a_summonId);
+		return rec ? &rec->model : nullptr;
+	}
+
+	const SummonModel* SummonRegistry::GetModel(EntityID a_summonId) const noexcept
+	{
+		const auto* rec = FindRecord(a_summonId);
+		return rec ? &rec->model : nullptr;
 	}
 
 	std::vector<EntityID> SummonRegistry::GetActiveSummonsForOwner(EntityID a_ownerId) const
