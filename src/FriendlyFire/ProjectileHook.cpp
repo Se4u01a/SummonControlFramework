@@ -4,7 +4,11 @@
 #include "PCH.h"
 
 #include <RE/A/ArrowProjectile.h>
+#include <RE/B/BeamProjectile.h>
+#include <RE/C/ConeProjectile.h>
+#include <RE/F/FlameProjectile.h>
 #include <RE/M/MissileProjectile.h>
+#include <RE/P/PlayerCharacter.h>
 #include <RE/P/Projectile.h>
 #include <RE/T/TESHavokUtilities.h>
 #include <vector>
@@ -44,6 +48,9 @@ namespace scf::friendly_fire
 				return false;
 			}
 
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			const auto playerId = player ? player->GetFormID() : 0x14;
+
 			const auto targetId = targetActor->GetFormID();
 			auto shooterPtr = a_proj->GetProjectileRuntimeData().shooter.get();
 			const auto attackerId = shooterPtr ? shooterPtr->GetFormID() : core::InvalidEntityID;
@@ -65,16 +72,29 @@ namespace scf::friendly_fire
 			const auto sourceKind = RelationshipClassifier::ClassifySource(
 				attackerId,
 				ctx.GetRegistry(),
-				0x14,
+				playerId,
 				isAlly,
 				cmdChain);
 
-			const bool isProtected = RelationshipClassifier::IsProtectedTarget(
+			bool isProtected = RelationshipClassifier::IsProtectedTarget(
 				targetId,
 				ctx.GetRegistry(),
 				settings,
-				0x14,
+				playerId,
 				isAlly);
+
+			// Dynamic fallback check in case newly summoned actor is not yet registered
+			if (!isProtected) {
+				auto commanding = targetActor->GetCommandingActor();
+				if (commanding) {
+					const auto cmdId = commanding->GetFormID();
+					if (cmdId == playerId) {
+						isProtected = settings.protectPlayerOwnedSummons;
+					} else if (settings.protectAllyOwnedSummons && isAlly(cmdId)) {
+						isProtected = true;
+					}
+				}
+			}
 
 			if (!isProtected) {
 				return false;
@@ -86,8 +106,9 @@ namespace scf::friendly_fire
 				true,
 				settings);
 
-			if (decision.passThrough) {
-				logger::debug("[ProjectileHook] Projectile 0x{:08X} passed through friendly summon 0x{:08X}", a_proj->GetFormID(), targetId);
+			if (decision.passThrough || decision.blockDamage) {
+				logger::info("[ProjectileHook] Projectile 0x{:08X} passed through friendly summon 0x{:08X} ({}) from attacker 0x{:08X}",
+					a_proj->GetFormID(), targetId, targetActor->GetName(), attackerId);
 				return true;
 			}
 
@@ -178,6 +199,9 @@ namespace scf::friendly_fire
 	{
 		HookProjectileVtbl<0>(RE::VTABLE_ArrowProjectile[0], "ArrowProjectile");
 		HookProjectileVtbl<1>(RE::VTABLE_MissileProjectile[0], "MissileProjectile");
+		HookProjectileVtbl<2>(RE::VTABLE_FlameProjectile[0], "FlameProjectile");
+		HookProjectileVtbl<3>(RE::VTABLE_ConeProjectile[0], "ConeProjectile");
+		HookProjectileVtbl<4>(RE::VTABLE_BeamProjectile[0], "BeamProjectile");
 		return true;
 	}
 }

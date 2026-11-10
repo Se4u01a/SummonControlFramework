@@ -34,6 +34,9 @@ namespace scf::friendly_fire
 				return;
 			}
 
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			const auto playerId = player ? player->GetFormID() : 0x14;
+
 			const auto targetId = a_victim->GetFormID();
 			auto aggressorPtr = a_hitData->aggressor.get();
 			const auto attackerId = aggressorPtr ? aggressorPtr->GetFormID() : core::InvalidEntityID;
@@ -55,16 +58,29 @@ namespace scf::friendly_fire
 			const auto sourceKind = RelationshipClassifier::ClassifySource(
 				attackerId,
 				ctx.GetRegistry(),
-				0x14,
+				playerId,
 				isAlly,
 				cmdChain);
 
-			const bool isProtected = RelationshipClassifier::IsProtectedTarget(
+			bool isProtected = RelationshipClassifier::IsProtectedTarget(
 				targetId,
 				ctx.GetRegistry(),
 				settings,
-				0x14,
+				playerId,
 				isAlly);
+
+			// Dynamic fallback check in case newly summoned actor is not yet registered
+			if (!isProtected) {
+				auto commanding = a_victim->GetCommandingActor();
+				if (commanding) {
+					const auto cmdId = commanding->GetFormID();
+					if (cmdId == playerId) {
+						isProtected = settings.protectPlayerOwnedSummons;
+					} else if (settings.protectAllyOwnedSummons && isAlly(cmdId)) {
+						isProtected = true;
+					}
+				}
+			}
 
 			if (isProtected) {
 				const auto decision = RelationshipClassifier::EvaluateAttack(
@@ -79,7 +95,8 @@ namespace scf::friendly_fire
 					a_hitData->physicalDamage = 0.0f;
 					a_hitData->stagger = 0.0f;
 					a_hitData->pushBack = 0.0f;
-					logger::debug("[HitHook] Blocked friendly hit on summon 0x{:08X} from attacker 0x{:08X}", targetId, attackerId);
+					logger::info("[HitHook] Blocked friendly hit on summon 0x{:08X} ({}) from attacker 0x{:08X} ({})",
+						targetId, a_victim->GetName(), attackerId, aggressorPtr ? aggressorPtr->GetName() : "Unknown");
 					return; // Drop hit processing entirely
 				}
 			}
