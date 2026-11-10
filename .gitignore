@@ -5,3 +5,4 @@ build/
 *.sln
 *.user
 dist/
+compile_commands.json

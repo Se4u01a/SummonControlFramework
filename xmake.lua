@@ -19,6 +19,7 @@ set_project("SummonControlFramework")
 set_version("0.1.0")
 
 add_rules("mode.debug", "mode.releasedbg")
+add_rules("plugin.compile_commands.autoupdate")
 set_defaultplat("windows")
 set_defaultarchs("windows|x64")
 set_allowedplats("windows")
@@ -38,7 +39,7 @@ set_config("skyrim_se", true)
 set_config("skse_xbyak", true)
 
 option("deploy_dir")
-    set_default("")
+    set_default("D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins")
     set_showmenu(true)
     set_description("SKSE/Plugins folder of the mod to copy the build into (empty = no copy)")
 option_end()
@@ -59,18 +60,21 @@ target("SummonControlFramework")
 
     after_build(function (target)
         local deploy_dir = get_config("deploy_dir")
-        if not deploy_dir or deploy_dir == "" then
-            return
+        if deploy_dir and deploy_dir ~= "" then
+            os.mkdir(deploy_dir)
+            if not os.trycp(target:targetfile(), deploy_dir) then
+                cprint("${yellow}warning: %s is in use (the game is running?): not copied", path.join(deploy_dir, path.filename(target:targetfile())))
+            else
+                local pdb = path.join(path.directory(target:targetfile()), target:basename() .. ".pdb")
+                if os.isfile(pdb) then
+                    os.trycp(pdb, deploy_dir)
+                end
+                cprint("${green}deployed to %s", deploy_dir)
+            end
         end
-        os.mkdir(deploy_dir)
-        if not os.trycp(target:targetfile(), deploy_dir) then
-            cprint("${yellow}warning: %s is in use (the game is running?): not copied", path.join(deploy_dir, path.filename(target:targetfile())))
-            return
-        end
-        local pdb = path.join(path.directory(target:targetfile()), target:basename() .. ".pdb")
-        if os.isfile(pdb) then
-            os.trycp(pdb, deploy_dir)
-        end
+
+        import("core.base.task")
+        task.run("project", {kind = "compile_commands"})
     end)
 
 -- Engine-free Core unit tests (runs without Skyrim runtime)
