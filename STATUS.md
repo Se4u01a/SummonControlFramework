@@ -186,3 +186,4 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 * Raycast / Line-of-sight checks currently depend on snapshot inputs and will be connected to engine raycasts in the adapter layer.
 * `SummonMovement` has not been verified in game yet. Two assumptions need a field pass: a summoned creature honours `KeepOffsetFromActor` (the vanilla summoned-creature follow may rewrite the goal; the driver re-asserts every 2 s), and `SetDontMove(true)` preserves in-place attacks while guarding.
 * Catch-up warp is same-cell only; cross-cell recall relies on the engine's vanilla summon snap (`fSummonedCreatureMaxFollowDist`, patched from `[Recovery] fCatchUpDistance`).
+* `SetDontMove` is actor state, not framework state: turning the framework off with `[General] bEnabled = false` (or disabling the plugin) does not release a hold that was already applied. Use any other order before disabling, or reload the save.
