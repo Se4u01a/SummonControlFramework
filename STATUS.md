@@ -104,10 +104,10 @@
   * Engine primitives (not bound by the pinned CommonLibSSE-NG, resolved via Address Library and verified against the unpacked 1.5.97 image): `Actor::KeepOffsetFromActor` (`SE 36870 / AE 37894`), `Actor::ClearKeepOffsetFromActor` (`36871 / 37895`), `Actor::SetDontMove` (`36490 / 37489`).
   * Order → intent matrix: `Follow` holds the formation slot around the player (suppressed while fighting so combat AI keeps locomotion), `Return` runs to the player and flips to `Follow` on arrival, `MoveTo` walks to the world point (owner-relative offset recomputed every tick), `WaitGuard` parks the movement goal on the summon and locks translation.
   * Pure geometry/rules split: `src/Core/Formation.{h,cpp}` (slot table now shared with `SquadCoordinator`) and `src/Core/MovementIntent.{h,cpp}` (intent matrix, arrival radius).
-  * Emergency catch-up warp (only beyond `[Recovery] fCatchUpDistance` or after 3 s without progress, once per Return order, same-cell only, always logged). One catch-up warp per Return order.
+  * Emergency catch-up warp (only beyond `[Recovery] fCatchUpDistance` or after 3 s without progress, same-cell only, always logged; at most one warp per Return order).
   * Primitive state bookkeeping (`AppliedMovement`): re-issue only on change, keep-offset re-assert every 2 s, `SetDontMove(false)` forced on first discovery so a stale save/load flag cannot freeze a summon; state dropped on dispel/death/detach and on `kPreLoadGame`/`kNewGame`.
   * `SetRunOncePackage(nullptr)` / `EvaluatePackage()` removed from Return/Guard/Follow execution: they created no movement intent and competed with the new one.
-  * Covered by 11 new pure unit tests in `tests/test_movement_intent.cpp` (89/89 tests passing).
+  * Covered by 14 new pure unit tests in `tests/test_movement_intent.cpp` (89/89 tests passing).
   * **Field-verification pending:** whether a summoned creature honours the keep-offset, whether `SetDontMove(true)` still allows in-place attacks, and the warp thresholds. Log lines are prefixed `[Movement]`.
 * **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
   * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
