@@ -31,6 +31,12 @@ namespace scf::core
 		float commandTTL{ 5.0f };
 	};
 
+	struct MovementSettings
+	{
+		float followMinDistance{ 200.0f };
+		float followMaxDistance{ 450.0f };
+	};
+
 	struct CombatSettings
 	{
 		float maxTargetRadius{ 2000.0f };
@@ -38,6 +44,17 @@ namespace scf::core
 		float returnDistanceThreshold{ 2500.0f };
 		float engageDistanceThreshold{ 300.0f };
 		float targetLostDebounceTime{ 1.5f };
+
+		// Combat leash
+		bool enableCombatLeash{ true };
+		float combatLeashRadius{ 2000.0f };
+		bool returnToOwnerWhenOutsideLeash{ true };
+	};
+
+	struct RecoverySettings
+	{
+		bool enableCatchUpWarp{ true };
+		float catchUpDistance{ 3500.0f };
 	};
 
 	struct SquadSettings
@@ -62,7 +79,9 @@ namespace scf::core
 		GeneralSettings general{};
 		CollisionSettings collision{};
 		TimingSettings timing{};
+		MovementSettings movement{};
 		CombatSettings combat{};
+		RecoverySettings recovery{};
 		SquadSettings squad{};
 		HotkeySettings hotkeys{};
 		friendly_fire::FriendlyFireSettings friendlyFire{};

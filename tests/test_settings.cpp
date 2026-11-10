@@ -21,11 +21,20 @@ TEST(settings_default_values)
 	CHECK(data.timing.enableTimeSlicing == true);
 	CHECK_NEAR(data.timing.commandTTL, 5.0f, 0.001f);
 
+	CHECK_NEAR(data.movement.followMinDistance, 200.0f, 0.001f);
+	CHECK_NEAR(data.movement.followMaxDistance, 450.0f, 0.001f);
+
+	CHECK(data.combat.enableCombatLeash == true);
+	CHECK_NEAR(data.combat.combatLeashRadius, 2000.0f, 0.001f);
+	CHECK(data.combat.returnToOwnerWhenOutsideLeash == true);
 	CHECK_NEAR(data.combat.maxTargetRadius, 2000.0f, 0.001f);
 	CHECK_NEAR(data.combat.followDistanceThreshold, 500.0f, 0.001f);
 	CHECK_NEAR(data.combat.returnDistanceThreshold, 2500.0f, 0.001f);
 	CHECK_NEAR(data.combat.engageDistanceThreshold, 300.0f, 0.001f);
 	CHECK_NEAR(data.combat.targetLostDebounceTime, 1.5f, 0.001f);
+
+	CHECK(data.recovery.enableCatchUpWarp == true);
+	CHECK_NEAR(data.recovery.catchUpDistance, 3500.0f, 0.001f);
 
 	CHECK(data.squad.maxMeleeSlotsPerTarget == 2);
 	CHECK(data.squad.maxRangedSlotsPerTarget == 3);
@@ -53,12 +62,23 @@ fUpdateFrequencyHz = 20.0
 bEnableTimeSlicing = false
 fCommandTTL = 10.0
 
+[Movement]
+fFollowMinDistance = 180.0
+fFollowMaxDistance = 500.0
+
 [Combat]
+bEnableCombatLeash = true
+fCombatLeashRadius = 2200.0
+bReturnToOwnerWhenOutsideLeash = true
 fMaxTargetRadius = 3000.0
 fFollowDistanceThreshold = 600.0
 fReturnDistanceThreshold = 3500.0
 fEngageDistanceThreshold = 400.0
 ftargetLostDebounceTime = 2.0
+
+[Recovery]
+bEnableCatchUpWarp = true
+fCatchUpDistance = 4000.0
 
 [Squad]
 uMaxMeleeSlotsPerTarget = 4
@@ -84,11 +104,20 @@ uToggleAggressionKey = 47
 	CHECK(data.timing.enableTimeSlicing == false);
 	CHECK_NEAR(data.timing.commandTTL, 10.0f, 0.001f);
 
+	CHECK_NEAR(data.movement.followMinDistance, 180.0f, 0.001f);
+	CHECK_NEAR(data.movement.followMaxDistance, 500.0f, 0.001f);
+
+	CHECK(data.combat.enableCombatLeash == true);
+	CHECK_NEAR(data.combat.combatLeashRadius, 2200.0f, 0.001f);
+	CHECK(data.combat.returnToOwnerWhenOutsideLeash == true);
 	CHECK_NEAR(data.combat.maxTargetRadius, 3000.0f, 0.001f);
 	CHECK_NEAR(data.combat.followDistanceThreshold, 600.0f, 0.001f);
 	CHECK_NEAR(data.combat.returnDistanceThreshold, 3500.0f, 0.001f);
 	CHECK_NEAR(data.combat.engageDistanceThreshold, 400.0f, 0.001f);
 	CHECK_NEAR(data.combat.targetLostDebounceTime, 2.0f, 0.001f);
+
+	CHECK(data.recovery.enableCatchUpWarp == true);
+	CHECK_NEAR(data.recovery.catchUpDistance, 4000.0f, 0.001f);
 
 	CHECK(data.squad.maxMeleeSlotsPerTarget == 4);
 	CHECK(data.squad.maxRangedSlotsPerTarget == 6);
@@ -113,12 +142,23 @@ updatefrequencyhz = 30.0 ; another comment
 enabletimeslicing = 1
 commandttl = 3.5
 
+[movement]
+followmindistance = 150.0
+followmaxdistance = 400.0
+
 [combat]
+enablecombatleash = 1
+combatleashradius = 1800.0
+returntoownerwhenoutsideleash = 1
 maxtargetradius = 1500.0
 followdistancethreshold = 400.0
 returndistancethreshold = 1800.0
 engagedistancethreshold = 250.0
 targetlostdebouncetime = 0.8
+
+[recovery]
+enablecatchupwarp = 1
+catchupdistance = 3200.0
 
 [squad]
 maxmeleeslotspertarget = 3
@@ -143,11 +183,20 @@ toggleaggressionkey = 20
 	CHECK(data.timing.enableTimeSlicing == true);
 	CHECK_NEAR(data.timing.commandTTL, 3.5f, 0.001f);
 
+	CHECK_NEAR(data.movement.followMinDistance, 150.0f, 0.001f);
+	CHECK_NEAR(data.movement.followMaxDistance, 400.0f, 0.001f);
+
+	CHECK(data.combat.enableCombatLeash == true);
+	CHECK_NEAR(data.combat.combatLeashRadius, 1800.0f, 0.001f);
+	CHECK(data.combat.returnToOwnerWhenOutsideLeash == true);
 	CHECK_NEAR(data.combat.maxTargetRadius, 1500.0f, 0.001f);
 	CHECK_NEAR(data.combat.followDistanceThreshold, 400.0f, 0.001f);
 	CHECK_NEAR(data.combat.returnDistanceThreshold, 1800.0f, 0.001f);
 	CHECK_NEAR(data.combat.engageDistanceThreshold, 250.0f, 0.001f);
 	CHECK_NEAR(data.combat.targetLostDebounceTime, 0.8f, 0.001f);
+
+	CHECK(data.recovery.enableCatchUpWarp == true);
+	CHECK_NEAR(data.recovery.catchUpDistance, 3200.0f, 0.001f);
 
 	CHECK(data.squad.maxMeleeSlotsPerTarget == 3);
 	CHECK(data.squad.maxRangedSlotsPerTarget == 5);
@@ -170,8 +219,11 @@ TEST(settings_validation_and_clamping)
 	mutableData.general.logLevel = "invalid_level";   // Should default to info
 	mutableData.timing.updateFrequencyHz = 120.0f;    // Should clamp to 60.0
 	mutableData.timing.commandTTL = 0.01f;           // Should clamp to 0.1
+	mutableData.movement.followMinDistance = 10.0f;   // Should clamp to 50
+	mutableData.movement.followMaxDistance = 20.0f;   // min (50) >= max (20), should adjust to min+100 = 150
 	mutableData.combat.followDistanceThreshold = 800.0f;
 	mutableData.combat.returnDistanceThreshold = 500.0f; // return <= follow! Should adjust
+	mutableData.recovery.catchUpDistance = 100.0f;   // Should clamp to 500
 	mutableData.squad.maxMeleeSlotsPerTarget = 50;   // Should clamp to 16
 
 	settings.ValidateAndSanitize();
@@ -181,8 +233,11 @@ TEST(settings_validation_and_clamping)
 	CHECK(data.general.logLevel == "info");
 	CHECK_NEAR(data.timing.updateFrequencyHz, 60.0f, 0.001f);
 	CHECK_NEAR(data.timing.commandTTL, 0.1f, 0.001f);
+	CHECK_NEAR(data.movement.followMinDistance, 50.0f, 0.001f);
+	CHECK_NEAR(data.movement.followMaxDistance, 150.0f, 0.001f);
 	CHECK(data.combat.returnDistanceThreshold > data.combat.followDistanceThreshold);
 	CHECK_NEAR(data.combat.returnDistanceThreshold, 900.0f, 0.001f);
+	CHECK_NEAR(data.recovery.catchUpDistance, 500.0f, 0.001f);
 	CHECK(data.squad.maxMeleeSlotsPerTarget == 16);
 
 	CHECK(!logs.empty());
@@ -196,7 +251,14 @@ TEST(settings_serialization_roundtrip)
 	mod.general.logLevel = "warn";
 	mod.general.maxSummonsPerOwner = 7;
 	mod.timing.updateFrequencyHz = 25.0f;
+	mod.movement.followMinDistance = 175.0f;
+	mod.movement.followMaxDistance = 425.0f;
+	mod.combat.enableCombatLeash = true;
+	mod.combat.combatLeashRadius = 2500.0f;
+	mod.combat.returnToOwnerWhenOutsideLeash = true;
 	mod.combat.maxTargetRadius = 4500.0f;
+	mod.recovery.enableCatchUpWarp = true;
+	mod.recovery.catchUpDistance = 3800.0f;
 	mod.squad.formationSpreadRadius = 250.0f;
 	mod.hotkeys.focusTargetKey = 99;
 
@@ -211,7 +273,14 @@ TEST(settings_serialization_roundtrip)
 	CHECK(d.general.logLevel == "warn");
 	CHECK(d.general.maxSummonsPerOwner == 7);
 	CHECK_NEAR(d.timing.updateFrequencyHz, 25.0f, 0.001f);
+	CHECK_NEAR(d.movement.followMinDistance, 175.0f, 0.001f);
+	CHECK_NEAR(d.movement.followMaxDistance, 425.0f, 0.001f);
+	CHECK(d.combat.enableCombatLeash == true);
+	CHECK_NEAR(d.combat.combatLeashRadius, 2500.0f, 0.001f);
+	CHECK(d.combat.returnToOwnerWhenOutsideLeash == true);
 	CHECK_NEAR(d.combat.maxTargetRadius, 4500.0f, 0.001f);
+	CHECK(d.recovery.enableCatchUpWarp == true);
+	CHECK_NEAR(d.recovery.catchUpDistance, 3800.0f, 0.001f);
 	CHECK_NEAR(d.squad.formationSpreadRadius, 250.0f, 0.001f);
 	CHECK(d.hotkeys.focusTargetKey == 99);
 }

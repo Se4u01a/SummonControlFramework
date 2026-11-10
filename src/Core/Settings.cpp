@@ -153,6 +153,29 @@ namespace scf::core
 			_data.timing.commandTTL = clamped;
 		}
 
+		// Movement
+		if (_data.movement.followMinDistance < 50.0f || _data.movement.followMinDistance > 2000.0f) {
+			const float clamped = std::clamp(_data.movement.followMinDistance, 50.0f, 2000.0f);
+			if (_logCallback) {
+				std::snprintf(logBuf, sizeof(logBuf),
+					"[Settings] Warning: followMinDistance (%.1f) out of range [50, 2000], clamping to %.1f.",
+					_data.movement.followMinDistance, clamped);
+				_logCallback(logBuf);
+			}
+			_data.movement.followMinDistance = clamped;
+		}
+
+		if (_data.movement.followMaxDistance <= _data.movement.followMinDistance) {
+			const float adjusted = _data.movement.followMinDistance + 100.0f;
+			if (_logCallback) {
+				std::snprintf(logBuf, sizeof(logBuf),
+					"[Settings] Warning: followMaxDistance (%.1f) <= followMinDistance (%.1f), setting to %.1f.",
+					_data.movement.followMaxDistance, _data.movement.followMinDistance, adjusted);
+				_logCallback(logBuf);
+			}
+			_data.movement.followMaxDistance = adjusted;
+		}
+
 		// Combat
 		if (_data.combat.maxTargetRadius < 100.0f || _data.combat.maxTargetRadius > 10000.0f) {
 			const float clamped = std::clamp(_data.combat.maxTargetRadius, 100.0f, 10000.0f);
@@ -207,6 +230,29 @@ namespace scf::core
 				_logCallback(logBuf);
 			}
 			_data.combat.targetLostDebounceTime = clamped;
+		}
+
+		if (_data.combat.combatLeashRadius < 200.0f || _data.combat.combatLeashRadius > 20000.0f) {
+			const float clamped = std::clamp(_data.combat.combatLeashRadius, 200.0f, 20000.0f);
+			if (_logCallback) {
+				std::snprintf(logBuf, sizeof(logBuf),
+					"[Settings] Warning: combatLeashRadius (%.1f) out of range [200, 20000], clamping to %.1f.",
+					_data.combat.combatLeashRadius, clamped);
+				_logCallback(logBuf);
+			}
+			_data.combat.combatLeashRadius = clamped;
+		}
+
+		// Recovery
+		if (_data.recovery.catchUpDistance < 500.0f || _data.recovery.catchUpDistance > 50000.0f) {
+			const float clamped = std::clamp(_data.recovery.catchUpDistance, 500.0f, 50000.0f);
+			if (_logCallback) {
+				std::snprintf(logBuf, sizeof(logBuf),
+					"[Settings] Warning: catchUpDistance (%.1f) out of range [500, 50000], clamping to %.1f.",
+					_data.recovery.catchUpDistance, clamped);
+				_logCallback(logBuf);
+			}
+			_data.recovery.catchUpDistance = clamped;
 		}
 
 		// Squad
@@ -299,6 +345,12 @@ namespace scf::core
 				} else if (key == "commandttl" || key == "fcommandttl") {
 					_data.timing.commandTTL = ParseFloat(val, _data.timing.commandTTL);
 				}
+			} else if (currentSection == "movement") {
+				if (key == "followmindistance" || key == "ffollowmindistance") {
+					_data.movement.followMinDistance = ParseFloat(val, _data.movement.followMinDistance);
+				} else if (key == "followmaxdistance" || key == "ffollowmaxdistance") {
+					_data.movement.followMaxDistance = ParseFloat(val, _data.movement.followMaxDistance);
+				}
 			} else if (currentSection == "combat") {
 				if (key == "maxtargetradius" || key == "fmaxtargetradius") {
 					_data.combat.maxTargetRadius = ParseFloat(val, _data.combat.maxTargetRadius);
@@ -310,6 +362,18 @@ namespace scf::core
 					_data.combat.engageDistanceThreshold = ParseFloat(val, _data.combat.engageDistanceThreshold);
 				} else if (key == "targetlostdebouncetime" || key == "ftargetlostdebouncetime") {
 					_data.combat.targetLostDebounceTime = ParseFloat(val, _data.combat.targetLostDebounceTime);
+				} else if (key == "enablecombatleash" || key == "benablecombatleash") {
+					_data.combat.enableCombatLeash = ParseBool(val, _data.combat.enableCombatLeash);
+				} else if (key == "combatleashradius" || key == "fcombatleashradius") {
+					_data.combat.combatLeashRadius = ParseFloat(val, _data.combat.combatLeashRadius);
+				} else if (key == "returntoownerwhenoutsideleash" || key == "breturntoownerwhenoutsideleash") {
+					_data.combat.returnToOwnerWhenOutsideLeash = ParseBool(val, _data.combat.returnToOwnerWhenOutsideLeash);
+				}
+			} else if (currentSection == "recovery") {
+				if (key == "enablecatchupwarp" || key == "benablecatchupwarp") {
+					_data.recovery.enableCatchUpWarp = ParseBool(val, _data.recovery.enableCatchUpWarp);
+				} else if (key == "catchupdistance" || key == "fcatchupdistance") {
+					_data.recovery.catchUpDistance = ParseFloat(val, _data.recovery.catchUpDistance);
 				}
 			} else if (currentSection == "squad") {
 				if (key == "maxmeleeslotspertarget" || key == "umaxmeleeslotspertarget") {
@@ -467,12 +531,26 @@ namespace scf::core
 		out << "bEnableTimeSlicing = " << (_data.timing.enableTimeSlicing ? "true" : "false") << "\n";
 		out << "fCommandTTL = " << _data.timing.commandTTL << "\n\n";
 
+		out << "[Movement]\n";
+		out << "; Normal follow distance\n";
+		out << "fFollowMinDistance = " << _data.movement.followMinDistance << "\n";
+		out << "fFollowMaxDistance = " << _data.movement.followMaxDistance << "\n\n";
+
 		out << "[Combat]\n";
+		out << "; Combat pursuit leash\n";
+		out << "bEnableCombatLeash = " << (_data.combat.enableCombatLeash ? "true" : "false") << "\n";
+		out << "fCombatLeashRadius = " << _data.combat.combatLeashRadius << "\n";
+		out << "bReturnToOwnerWhenOutsideLeash = " << (_data.combat.returnToOwnerWhenOutsideLeash ? "true" : "false") << "\n";
 		out << "fMaxTargetRadius = " << _data.combat.maxTargetRadius << "\n";
 		out << "fFollowDistanceThreshold = " << _data.combat.followDistanceThreshold << "\n";
 		out << "fReturnDistanceThreshold = " << _data.combat.returnDistanceThreshold << "\n";
 		out << "fEngageDistanceThreshold = " << _data.combat.engageDistanceThreshold << "\n";
 		out << "fTargetLostDebounceTime = " << _data.combat.targetLostDebounceTime << "\n\n";
+
+		out << "[Recovery]\n";
+		out << "; Emergency warp catch-up if summon gets stuck\n";
+		out << "bEnableCatchUpWarp = " << (_data.recovery.enableCatchUpWarp ? "true" : "false") << "\n";
+		out << "fCatchUpDistance = " << _data.recovery.catchUpDistance << "\n\n";
 
 		out << "[Squad]\n";
 		out << "uMaxMeleeSlotsPerTarget = " << _data.squad.maxMeleeSlotsPerTarget << "\n";
