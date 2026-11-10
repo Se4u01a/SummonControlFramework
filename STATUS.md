@@ -122,12 +122,16 @@
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
   * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **Friendly splash / magic damage filter (`MagicHook`) — 2026-11-11:**
+  * Field: pass-through confirmed working by the user; a player fireball that hits the ground next to summons still damaged them (explosion effects are applied through `MagicTarget::AddTarget`, not `ProcessHit`).
+  * Seat on `Character` MagicTarget vtable[3] slot 1 (SE id 37020 → `MagicTarget::AddTarget` id 32157): hostile/detrimental effects from the player, allies or their summons are refused on protected summons; buffs/heals and enemy spells unaffected. 1 new test — **117/117 passing**.
+  * **Field status:** built and deployed, NOT tested in game (TEST-FF-AOE-1). Explosion knockback force is not covered.
 * **Summons pass through each other (movement avoidance + bodies) — 2026-11-11:**
   * Finding: `CollisionPairClassifier` was never wired to an engine hook; the field-verified player-through-summon passthrough most likely came from the installed mod "Disable Follower Collision", not from SCF.
   * Seat 1 (SE 1.5.97): `MovementAvoidanceManager` slot 4 `ShouldAvoid(self, other)` (id 40659), asked first by both the local actor avoider and the path avoidance parameters — returns false for own summon↔summon and summon↔owner pairs.
   * Seat 2 (SE 1.5.97): `bhkCollisionFilter::IsCollisionEnabled(collidable, collidable)` (id 76676, real ABI with a hidden hkBool* return) — clears the result for two CharController collidables whose system groups belong to such a pair (groups published from `Actor::GetCollisionFilterInfo`).
   * Rule `core::ShouldPassThrough`, 5 tests — **116/116 passing**.
-  * **Field status:** built and deployed to both MO2 instances, NOT tested in game (TEST-PASS-1…3).
+  * **Field status (2026-11-11 00:42):** works — the user confirmed summons run through each other; the log shows both seats running (`movement avoidance seat OBSERVED`, thousands of avoidance checks and hundreds of body collisions skipped per minute).
 * **M0: follow package recognition without `templateParent` — 2026-11-11:**
   * The 00:08 session proved the follow-leash release never fired: the summon's runtime package (type 18) has `templateParent = 0`.
   * New creation seat (SE 1.5.97 only, byte-checked): call site `id 36410 + 0x84` → id 36422 is patched with `write_call<5>`; it records the package built for each summon and builds it already released under an away order. Fallback (AE, packages restored from a save): shape — runtime FormID `0xFF…`, type 18, exactly two float inputs (`core::IsSummonFollowPackageShape`, 1 test, **111/111 passing**).
@@ -175,7 +179,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **116/116 test cases passing** (0 failures, execution time < 2 ms).
+  * **117/117 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

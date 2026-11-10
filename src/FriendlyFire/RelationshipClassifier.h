@@ -94,6 +94,15 @@ namespace scf::friendly_fire
 			core::EntityID a_playerId = 0x14,
 			IsAllyCallback a_isAllyCb = nullptr) noexcept;
 
+		// Kind of a magic effect application (MagicTarget::AddTarget): an explosion / area
+		// target is AreaEffect, then concentration, enchantment, shout; anything else is a
+		// MagicProjectile (aimed / touch / self delivered spell).
+		[[nodiscard]] static AttackKind ClassifyMagicAttack(
+			bool a_areaTarget,
+			bool a_concentration,
+			bool a_enchantment,
+			bool a_shout) noexcept;
+
 		[[nodiscard]] static FilterDecision EvaluateAttack(
 			AttackSourceKind a_sourceKind,
 			AttackKind a_attackKind,

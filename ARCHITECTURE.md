@@ -417,6 +417,13 @@ bSuppressFriendlyHitReactions=false   ; Stagger/recoil (выключено до 
 
 ---
 
+### 16.8. Магия и взрывы: `MagicHook` (2026-11-11)
+* **Проблема из поля:** фаербол игрока пролетал сквозь призыва (`ProjectileHook`), но при попадании в землю рядом взрыв наносил призыву урон: эффекты взрыва применяются не через `ProcessHit`, а через `MagicTarget::AddTarget` с `AddTargetData::areaTarget`.
+* **Seat:** `Character` vtable `[3]` (MagicTarget, SE id 261400 → `+165E3C8`) слот 1 = id 37020 (`+60F240`, `jmp` на общий `MagicTarget::AddTarget` id 32157 `+4F12C0`; `rcx` — подобъект MagicTarget, `rdx` — `AddTargetData*`, возвращает `bool`). Только SE 1.5.97, слот сверяется перед патчем.
+* **Правило:** только враждебные/вредные эффекты (`EffectSetting::IsHostile`/`IsDetrimental`) на защищённом призыве (командир — игрок, или союзник при `bProtectAllyOwnedSummons`) от игрока, его союзника или их призывов отклоняются (`return false`, как при сопротивлении). Вид атаки — `RelationshipClassifier::ClassifyMagicAttack` (взрыв/область → `AreaEffect`, концентрация, зачарование, крик, иначе `MagicProjectile`), решение — `EvaluateAttack` с `bBlockAreaMagicDamage` и др. Баффы и лечение проходят всегда, заклинания врагов — всегда. Реестр не читается: seat опирается на командующего актора и флаг напарника (поток вызова не гарантирован).
+* **Лог:** `[MagicHook] Refused friendly AreaEffect effect ...` / `Allowed ...` (не чаще 2 раз в секунду).
+* **Не покрыто:** физическая сила взрыва (отбрасывание/knockdown через Havok) — это не магический эффект.
+
 ## 17. Архитектура координации скрытности (Stealth Coordination)
 
 ### 17.1. Проблема несогласованности скрытности в ванильном Skyrim

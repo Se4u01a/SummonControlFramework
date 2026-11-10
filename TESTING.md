@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **116/116 тестов успешно пройдено (0 failures)**.
+Текущий результат: **117/117 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -104,7 +104,8 @@ xmake run scf_tests
 * `stealth_state_machine_holds_follow_when_stealthing`: Проверяет FSM: сумон остается в состоянии `FollowOwner` при скрытном перемещении мимо врагов.
 * `stealth_state_machine_engages_on_explicit_order`: Проверяет FSM: приказ FocusTarget переводит сумона в `AcquireTarget` -> `Approach` -> `Engage`.
 
-### Suite K: Friendly Fire & Attack Filtering (`FriendlyFireSettings` & `RelationshipClassifier`) — 5 tests
+### Suite K: Friendly Fire & Attack Filtering (`FriendlyFireSettings` & `RelationshipClassifier`) — 6 tests
+* `relationship_classifier_magic_attack_kind`: взрыв/область → `AreaEffect` (блокируется для дружественного источника, не блокируется для врага), концентрация, зачарование, крик, прочее → `MagicProjectile`.
 * `friendly_fire_settings_default_values`: Проверяет соответствие параметров FriendlyFire спецификации по умолчанию (`bEnableSummonProtection = true`, `bMeleePassThrough = true`, `bProjectilePassThrough = true` и др.).
 * `friendly_fire_settings_parse_ini_and_serialization`: Проверяет парсинг секции `[FriendlyFire]` в INI и round-trip сериализацию без потери данных.
 * `relationship_classifier_source_classification`: Проверяет классификацию атакующих: игрок -> `Player`, спутник -> `PlayerAlly`, сумон игрока -> `PlayerOwnedSummon`, сумон спутника -> `AlliedSummon`, враг -> `Hostile`, неизвестный -> `Unknown` с защитой от циклов цепочки командования (глубина 4).
@@ -186,7 +187,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 116/116 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 117/117 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -310,6 +311,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-4 (Focus engages):** Навестись на врага и нажать `Numpad 1`: в логе `StartCombat(0x...) -> true (dist ..., hostile ..., inCombat yes)`, суммон подходит (`AttackApproach keep-offset ...`) и атакует. Если `StartCombat -> false` — пришлите строку целиком.
 * **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
 * **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
+* **[ ] TEST-FF-AOE-1 (Fireball splash):** выстрелить фаерболом в землю рядом с призывами: призывы не получают урона и не загораются; в логе `[MagicHook] Refused friendly AreaEffect effect ...`. Враг рядом получает урон как обычно. Лечение/баффы игрока на призыве продолжают работать.
 * **[ ] TEST-PASS-1 (Seats installed and running):** при загрузке — две строки `[PassThrough] ... hooked`; при движении отряда — `movement avoidance seat OBSERVED running` и `collision filter seat OBSERVED a CharController pair`; во время движения раз в 10 с — `last 10 s: N avoidance checks and M body collisions skipped`. Нули при плотном строе означают, что seat не срабатывает — пришлите лог.
 * **[ ] TEST-PASS-2 (Run through each other):** 3–4 волка, `Return` (Numpad 2) или `MoveTo` (Numpad 4) так, чтобы путь одного проходил через другого: призывы бегут по прямой сквозь друг друга, не огибают, не тормозят и не толкаются.
 * **[ ] TEST-PASS-3 (Enemies unchanged):** призывы по-прежнему обходят и упираются во врагов и посторонних NPC; бой и удары по врагам не изменились.

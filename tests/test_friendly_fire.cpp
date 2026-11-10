@@ -255,3 +255,22 @@ TEST(relationship_classifier_evaluate_attack_matrix)
 		CHECK(dec.suppressAggression);
 	}
 }
+
+// Given a magic effect applied to a protected summon
+// When it comes from an explosion / area (a fireball hitting the ground next to it)
+// Then it is classified AreaEffect, which bBlockAreaMagicDamage blocks for friendly casters
+TEST(relationship_classifier_magic_attack_kind)
+{
+	CHECK(RelationshipClassifier::ClassifyMagicAttack(true, false, false, false) == AttackKind::AreaEffect);
+	CHECK(RelationshipClassifier::ClassifyMagicAttack(true, true, true, true) == AttackKind::AreaEffect);
+	CHECK(RelationshipClassifier::ClassifyMagicAttack(false, true, false, false) == AttackKind::Concentration);
+	CHECK(RelationshipClassifier::ClassifyMagicAttack(false, false, true, false) == AttackKind::Enchantment);
+	CHECK(RelationshipClassifier::ClassifyMagicAttack(false, false, false, true) == AttackKind::Shout);
+	CHECK(RelationshipClassifier::ClassifyMagicAttack(false, false, false, false) == AttackKind::MagicProjectile);
+
+	FriendlyFireSettings settings{};
+	const auto area = RelationshipClassifier::EvaluateAttack(AttackSourceKind::Player, AttackKind::AreaEffect, true, settings);
+	CHECK(area.blockDamage);
+	const auto hostile = RelationshipClassifier::EvaluateAttack(AttackSourceKind::Hostile, AttackKind::AreaEffect, true, settings);
+	CHECK(!hostile.blockDamage);
+}

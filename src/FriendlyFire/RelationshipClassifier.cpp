@@ -102,6 +102,27 @@ namespace scf::friendly_fire
 		return false;
 	}
 
+	AttackKind RelationshipClassifier::ClassifyMagicAttack(
+		bool a_areaTarget,
+		bool a_concentration,
+		bool a_enchantment,
+		bool a_shout) noexcept
+	{
+		if (a_areaTarget) {
+			return AttackKind::AreaEffect;
+		}
+		if (a_concentration) {
+			return AttackKind::Concentration;
+		}
+		if (a_enchantment) {
+			return AttackKind::Enchantment;
+		}
+		if (a_shout) {
+			return AttackKind::Shout;
+		}
+		return AttackKind::MagicProjectile;
+	}
+
 	FilterDecision RelationshipClassifier::EvaluateAttack(
 		AttackSourceKind a_sourceKind,
 		AttackKind a_attackKind,
