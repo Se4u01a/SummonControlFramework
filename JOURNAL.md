@@ -219,3 +219,29 @@ Implementation of Stage 2 (Collision PoC): decoupled collision pair matrix arbit
 * **Verification & Tests:**
   * Added 7 unit tests in `tests/test_collision_pair_classifier.cpp` covering all collision combinations, toggles, and logging.
   * Total automated test count expanded to **61 test cases**, all passing cleanly with 0 failures in ~2 ms.
+
+---
+
+## 2026-11-10 — Fix: In-Game Summon Registration via Player Update Hook & commandedActors
+
+Discovery and resolution of in-game summon registration failure.
+
+* **Investigation of User Report:**
+  * User tested in Mod Organizer (`SBORKA` profile) and reported `scf registry` returning `0 registered summons` even while a summoned spirit wolf/familiar was standing next to the player character (`Geone`).
+* **Root Causes Identified:**
+  1. **Engine Event Disconnect:** In Skyrim Creation Engine, `TESActiveEffectApplyRemoveEvent` for conjuration spells fires with `caster == target == Player` (as seen in the screenshot where auras and spirit buffs target `Geone`), because `SummonCreatureEffect` attaches to the caster to maintain the spell duration. The summoned actor reference (`Actor*`) is NOT passed as `target` in this event. Consequently, `EventDispatcher::HandleActiveEffect` discarded the event as a self-buff.
+  2. **Missing Game Loop Hook:** The engine update hook had not yet been wired into the game loop, so `UpdateScheduler::ShouldTick` was never executing during live gameplay.
+* **Solution Implemented:**
+  1. **`UpdateHook` (PlayerCharacter::Update):**
+     * Hooked `PlayerCharacter::Update` at virtual table index `0xAD` on `RE::VTABLE_PlayerCharacter[0]` (following the battle-tested pattern from `ReactiveDodgeFramework`).
+     * Runs synchronously in the engine main thread at 15 Hz without thread-safety risks.
+  2. **Direct Engine State Query (`commandedActors`):**
+     * Reads `player->GetActorRuntimeData().currentProcess->middleHigh->commandedActors`.
+     * Iterates over engine-managed `ActorHandle` entries, resolves live `Actor*` pointers, checks `!IsDead()`, reads remaining duration from `activeEffect`, and registers valid summons in `SummonRegistry`.
+     * Automatically sweeps and removes dispelled summons using `registry.NotifyEffectRemoved`.
+  3. **Event Sink Accelerated Trigger:**
+     * Added immediate `update::SyncPlayerSummons()` call inside `ActiveEffectEventSink::ProcessEvent` so that summons are recorded instantly when spells finish casting.
+* **Verification:**
+  * Rebuilt `SummonControlFramework.dll` (~607 KB) and confirmed clean compilation with 0 warnings.
+  * All 61 unit tests continue to pass in `scf_tests.exe`.
+  * Deployed fresh DLL and PDB to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.

@@ -8,6 +8,12 @@
   * Enums for summon lifecycle and orders: `SummonState`, `SummonOrder`, `AggressionMode`.
   * `SummonModel`: state time tracking, target lost debounce timer, owner and target IDs.
   * `DecisionContext`: snapshot structure capturing distances to owner and target, combat flags, and configurable thresholds.
+* **Engine Main Loop Hook & Summon Synchronization (`UpdateHook`):**
+  * Hooks `PlayerCharacter::Update` at vtable index `0xAD` on `RE::VTABLE_PlayerCharacter[0]`.
+  * Advances `UpdateScheduler` at tactical 15 Hz cadence, executing synchronously in the main thread with zero multi-threading instability.
+  * Directly queries `player->GetActorRuntimeData().currentProcess->middleHigh->commandedActors`, resolving true engine-managed `ActorHandle` references for all player summons.
+  * Synchronizes remaining duration from active effects, handles dead actors via `NotifyDeath`, and cleanses dispelled summons via `NotifyEffectRemoved`.
+  * Triggers immediate synchronization from `EventAdapter` on `TESActiveEffectApplyRemoveEvent` arrivals for zero-delay registration upon casting.
 * **Collision Classification Subsystem (`CollisionPairClassifier`):**
   * **Matrix arbitration (Stage 2 PoC):** pure C++ classification of collision pairs with zero game-engine header coupling:
     * `Player <-> Own Summon`: `Passthrough` (prevents doorway blocking and physical body clinches).
@@ -20,7 +26,7 @@
   * **Integrated Observability:** diagnostic log callback support and reporting in `scf status`.
 * **Engine Event Adapters & Dispatcher (`EventAdapter` & `EventDispatcher`):**
   * **Creation Engine event sinks:** registered through `RE::ScriptEventSourceHolder` on `kDataLoaded`:
-    * `TESActiveEffectApplyRemoveEvent`: catches magic effect applications and removals, correlating caster (owner) and target (summon) FormIDs, and registering/unregistering them in `SummonRegistry`. Filters out self-buffs (`caster == target`) and triggers displacement callbacks.
+    * `TESActiveEffectApplyRemoveEvent`: catches magic effect applications and removals, correlating caster (owner) and target (summon) FormIDs, and triggering immediate player summon synchronization.
     * `TESDeathEvent`: detects actor mortality, transitioning registered summons to `Dead` state. Safely ignores non-fatal events and unregistered entities.
     * `TESCellAttachDetachEvent`: captures cell lifecycle transitions, switching detached references to `Suspended` and restoring attached references to `Active`.
   * **Pure event dispatcher:** `EventDispatcher` in `src/Core/` implements 100% testable event translation logic isolated from Skyrim headers.
@@ -36,7 +42,7 @@
     * `scf help`: command reference.
   * Engine binding via `RE::SCRIPT_FUNCTION::LocateConsoleCommand` routing output to `RE::ConsoleLog` and SKSE file log.
 * **SKSE Messaging Dispatcher (`Messaging`):**
-  * Handles `kDataLoaded`: automatically locates or initializes `Data/SKSE/Plugins/SummonControlFramework.ini` and registers console commands and event sinks.
+  * Handles `kDataLoaded`: automatically locates or initializes `Data/SKSE/Plugins/SummonControlFramework.ini`, registers console commands, event sinks, and installs `UpdateHook`.
   * Handles `kPreLoadGame` & `kNewGame`: clears transient registries to avoid cross-save state leakage.
   * Handles `kPostLoadGame` & `kPostLoad`.
 * **Configuration & Settings Manager (`Settings`):**
@@ -89,7 +95,7 @@
   * **Formation offsets:** calculates symmetrical, non-overlapping follow/guard offsets around the owner based on squad size and owner yaw.
 * **Observability & Diagnostics:**
   * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, scheduler updates, collision classifications, and squad slot claims with structured reasons.
-  * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
+  * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
   * **61/61 test cases passing** (0 failures, execution time < 2 ms).
@@ -107,6 +113,7 @@
 * `RuntimeGate` log output verifying detected game version (1.5.97.0).
 * SKSE messaging listener receiving `kDataLoaded`, `kPreLoadGame`, `kPostLoadGame`, `kNewGame`.
 * Console command `scf` (with `status`, `registry`, `reload`, `help`) executing from the in-game tilde console.
+* `UpdateHook` active on `PlayerCharacter::Update`, synchronizing player summons from `commandedActors`.
 * Engine event sinks observing active effects, death, and cell attach/detach in live gameplay.
 * Collision bypass settings active in `SummonControlFramework.ini`.
 

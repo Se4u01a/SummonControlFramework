@@ -2,6 +2,7 @@
 #include "Plugin/ConsoleCommands.h"
 #include "Core/FrameworkContext.h"
 #include "Engine/EventAdapter.h"
+#include "Engine/UpdateHook.h"
 #include "PCH.h"
 
 namespace scf::plugin
@@ -32,12 +33,13 @@ namespace scf::plugin
 
 			ConsoleCommands::Register();
 			engine::EventAdapter::RegisterEventSinks();
+			engine::update::Install();
 			logger::info("[Messaging] Framework initialization complete.");
 			break;
 
 		case SKSE::MessagingInterface::kPreLoadGame:
 			logger::info("[Messaging] SKSE kPreLoadGame: Resetting ephemeral runtime state for save load.");
-			core::FrameworkContext::GetSingleton().ResetRuntimeState();
+			engine::update::Reset();
 			break;
 
 		case SKSE::MessagingInterface::kPostLoadGame:
@@ -46,7 +48,7 @@ namespace scf::plugin
 
 		case SKSE::MessagingInterface::kNewGame:
 			logger::info("[Messaging] SKSE kNewGame: Initializing clean runtime state for new game.");
-			core::FrameworkContext::GetSingleton().ResetRuntimeState();
+			engine::update::Reset();
 			break;
 
 		default:

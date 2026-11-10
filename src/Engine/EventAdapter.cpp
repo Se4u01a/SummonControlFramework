@@ -1,4 +1,5 @@
 #include "Engine/EventAdapter.h"
+#include "Engine/UpdateHook.h"
 #include "Core/EventDispatcher.h"
 #include "Core/FrameworkContext.h"
 #include "PCH.h"
@@ -36,6 +37,9 @@ namespace scf::engine
 				});
 
 				dispatcher.HandleActiveEffect(evt, ctx.GetRegistry());
+
+				// Immediately synchronize player's summoned actors on effect change
+				update::SyncPlayerSummons();
 
 				return RE::BSEventNotifyControl::kContinue;
 			}

@@ -136,7 +136,7 @@
 
 ---
 
-## 8. Реестр призывов и управление жизненным циклом (`SummonRegistry`)\
+## 8. Реестр призывов и управление жизненным циклом (`SummonRegistry`)
 
 * **Файл:** [src/Core/SummonRegistry.h](file:///D:/projects/Summon_Control_Framework/src/Core/SummonRegistry.h), [src/Core/SummonRegistry.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/SummonRegistry.cpp)
 
@@ -240,3 +240,24 @@
 1. **Глобальный выключатель (`bEnableCollisionBypass = false`):** мгновенно возвращает движок к 100% ванильной физике без накладных расходов.
 2. **Селективный выключатель `bEnableSummonToSummonBypass`:** позволяет раздельно настраивать прохождение игрока сквозь призывов и призывов сквозь друг друга.
 3. **Безопасность геометрии:** классификатор принимает решение об отключении коллизии **только** для пар живых сущностей с зарегистрированным владением. Коллизия со стенами, полами и препятствиями мира никогда не затрагивается.
+
+---
+
+## 15. Синхронизация с игровым циклом (`UpdateHook` и `MiddleHighProcessData`)
+
+* **Файл:**
+  * [src/Engine/UpdateHook.h](file:///D:/projects/Summon_Control_Framework/src/Engine/UpdateHook.h)
+  * [src/Engine/UpdateHook.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/UpdateHook.cpp)
+
+### Архитектурный разрыв между событиями магии и реальными акторами:
+В Creation Engine при касте заклинаний школы Колдовства (`Conjure Familiar`, `Conjure Flame Atronach` и др.) событие `TESActiveEffectApplyRemoveEvent` генерируется для самого заклинателя (`caster == target == Player`), так как эффект призыва (`SummonCreatureEffect`) накладывается на кастера для удержания связи и таймера. Созданный в мире физический актор (`Actor*`) **не является** целью этого события.
+
+### Решение через прямой опрос и хук главного цикла:
+1. **Хук `PlayerCharacter::Update` (vtable index `0xAD`):** перехватывает обновление игрока в каждом кадре рендера, не создавая сторонних потоков.
+2. **Тик тактической частоты (15 Гц):** планировщик `UpdateScheduler::ShouldTick(delta)` фильтрует вызовы, выполняя ресурсоемкую синхронизацию только с оптимальной тактической частотой (~66.7 мс).
+3. **Прямое чтение `MiddleHighProcessData::commandedActors`:**
+   * Внутренний массив движка `player->GetActorRuntimeData().currentProcess->middleHigh->commandedActors` содержит реальные хэндлы всех активных призванных существ (`ActorHandle`).
+   * Извлекает `FormID` актора, проверяет факт жизни (`!IsDead()`), считывает остаток длительности из `activeEffect->duration - activeEffect->elapsedSeconds`.
+   * Выполняет регистрацию в `SummonRegistry`.
+   * Автоматически очищает исчезнувших или рассеянных движком существ через `NotifyEffectRemoved`.
+4. **Мгновенный триггер при событиях:** при поступлении `TESActiveEffectApplyRemoveEvent` адаптер немедленно инициирует `update::SyncPlayerSummons()`, исключая задержку отображения при касте.
