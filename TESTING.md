@@ -6,7 +6,7 @@ Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE
 
 ## 1. Automated (passing)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **50 cases, 0 failures, 0 failed checks**.  
+Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **54 cases, 0 failures, 0 failed checks**.  
 Execution time: ~1-2 ms.
 
 ### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
@@ -75,6 +75,12 @@ Execution time: ~1-2 ms.
 * `console_command_unknown`: Verifies unknown subcommands report guidance to type `scf help`.
 * `framework_context_reset`: Tests `FrameworkContext::ResetRuntimeState()`, verifying simultaneous cleanup of `SummonRegistry`, `CommandQueue`, and `UpdateScheduler`.
 
+### Suite I: Engine Event Dispatching (`EventDispatcher`) — 4 tests
+* `event_dispatcher_active_effect_apply_and_remove`: Tests active effect apply (registration into `Active`), self-buff rejection (`caster == target`), and effect removal (transition to `Dispatched`).
+* `event_dispatcher_recast_displacement`: Verifies that recast exceeding owner limit triggers `_displaceCallback` with the oldest summon ID.
+* `event_dispatcher_death_event`: Confirms actor death event marks registered entity `Dead`, while safely ignoring unregistered or non-fatal events.
+* `event_dispatcher_cell_attach_detach_lifecycle`: Validates cell detach transition into `Suspended` and attach restoration into `Active`.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -96,8 +102,8 @@ Execution time: ~1-2 ms.
 ### Verified
 | Component | Evidence |
 |---|---|
-| Plugin build output | `SummonControlFramework.dll` generated (502 KB, with `.pdb`) |
-| Core unit tests | 50/50 passing via `scf_tests.exe` |
+| Plugin build output | `SummonControlFramework.dll` generated (504 KB, with `.pdb`) |
+| Core unit tests | 54/54 passing via `scf_tests.exe` |
 
 ### Waiting for live Skyrim run
 | Feature | Target verification |
@@ -106,6 +112,7 @@ Execution time: ~1-2 ms.
 | `RuntimeGate` check | Log lines verifying `Detected game version: 1.6.1170.0` |
 | `kDataLoaded` receipt | Log line `Data loaded: SKSE message received, SCF FSM ready` |
 | Console command `scf` | Executing `scf status` and `scf registry` prints diagnostic output in console |
+| Event sinks registration | Log line verifying registration of `TESActiveEffectApplyRemoveEvent`, `TESDeathEvent`, `TESCellAttachDetachEvent` |
 | Summon registration | Log lines on casting `Conjure Familiar` / `Flame Atronach` |
 | Friendly fire guard in game | Player weapon/spell hitting summon without hostility loop |
 | Collision non-blocking | Player walking through summoned creature |

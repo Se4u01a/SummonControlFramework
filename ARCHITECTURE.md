@@ -194,3 +194,21 @@
 2. **`ConsoleHandler`:** чистое C++ ядро обработки консольных команд (`scf status`, `scf registry`, `scf reload`, `scf help`), полностью тестируемое офлайн без запуска игры.
 3. **`ConsoleCommands`:** плагин-адаптер, подключающий консольную команду `scf` к таблице консольных функций Skyrim через `SCRIPT_FUNCTION::LocateConsoleCommand` и выводящий результаты в `RE::ConsoleLog`.
 4. **`Messaging`:** диспетчер сообщений SKSE (`kDataLoaded`, `kPreLoadGame`, `kPostLoadGame`, `kNewGame`), отвечающий за инициализацию INI-файла и своевременную очистку временных реестров.
+
+---
+
+## 13. Адаптация событий Creation Engine (`EventDispatcher` и `EventAdapter`)
+
+* **Файлы:**
+  * [src/Core/EventDispatcher.h](file:///D:/projects/Summon_Control_Framework/src/Core/EventDispatcher.h) / [EventDispatcher.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/EventDispatcher.cpp)
+  * [src/Engine/EventAdapter.h](file:///D:/projects/Summon_Control_Framework/src/Engine/EventAdapter.h) / [EventAdapter.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/EventAdapter.cpp)
+
+1. **`EventDispatcher` (Core):**
+   * Чистая логика обработки событий Creation Engine без включения заголовочных файлов движка.
+   * `HandleActiveEffect`: регистрирует призыв при наложении эффекта, исключает баффы на себя (`caster == target`), вызывает callback вытеснения при превышении лимита, переводит в `Dispatched` при снятии эффекта.
+   * `HandleDeath`: переводит погибшего актора в статус `Dead`, безопасно игнорируя нелетальные события.
+   * `HandleCellAttachDetach`: реализует двухфазный переход `Active <-> Suspended` при загрузке и выгрузке ячейки.
+2. **`EventAdapter` (Engine):**
+   * Реализует `BSTEventSink<RE::TESActiveEffectApplyRemoveEvent>`, `BSTEventSink<RE::TESDeathEvent>` и `BSTEventSink<RE::TESCellAttachDetachEvent>`.
+   * Извлекает `FormID` из `NiPointer<TESObjectREFR>` с проверкой на `nullptr`.
+   * Регистрирует приемники событий через `RE::ScriptEventSourceHolder::GetSingleton()->AddEventSink<T>()` в момент `kDataLoaded`.

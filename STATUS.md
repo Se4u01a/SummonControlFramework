@@ -8,6 +8,12 @@
   * Enums for summon lifecycle and orders: `SummonState`, `SummonOrder`, `AggressionMode`.
   * `SummonModel`: state time tracking, target lost debounce timer, owner and target IDs.
   * `DecisionContext`: snapshot structure capturing distances to owner and target, combat flags, and configurable thresholds.
+* **Engine Event Adapters & Dispatcher (`EventAdapter` & `EventDispatcher`):**
+  * **Creation Engine event sinks:** registered through `RE::ScriptEventSourceHolder` on `kDataLoaded`:
+    * `TESActiveEffectApplyRemoveEvent`: catches magic effect applications and removals, correlating caster (owner) and target (summon) FormIDs, and registering/unregistering them in `SummonRegistry`. Filters out self-buffs (`caster == target`) and triggers displacement callbacks.
+    * `TESDeathEvent`: detects actor mortality, transitioning registered summons to `Dead` state. Safely ignores non-fatal events and unregistered entities.
+    * `TESCellAttachDetachEvent`: captures cell lifecycle transitions, switching detached references to `Suspended` and restoring attached references to `Active`.
+  * **Pure event dispatcher:** `EventDispatcher` in `src/Core/` implements 100% testable event translation logic isolated from Skyrim headers.
 * **Unified Runtime State (`FrameworkContext`):**
   * Central service locator coordinating `Settings`, `SummonRegistry`, `CommandQueue`, `UpdateScheduler`, `StateMachine`, and `SquadCoordinator`.
   * Unified functional logging bridge propagating structured logs across all subsystems to `spdlog`.
@@ -20,7 +26,7 @@
     * `scf help`: command reference.
   * Engine binding via `RE::SCRIPT_FUNCTION::LocateConsoleCommand` routing output to `RE::ConsoleLog` and SKSE file log.
 * **SKSE Messaging Dispatcher (`Messaging`):**
-  * Handles `kDataLoaded`: automatically locates or initializes `Data/SKSE/Plugins/SummonControlFramework.ini` and registers console commands.
+  * Handles `kDataLoaded`: automatically locates or initializes `Data/SKSE/Plugins/SummonControlFramework.ini` and registers console commands and event sinks.
   * Handles `kPreLoadGame` & `kNewGame`: clears transient registries to avoid cross-save state leakage.
   * Handles `kPostLoadGame` & `kPostLoad`.
 * **Configuration & Settings Manager (`Settings`):**
@@ -76,7 +82,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **50/50 test cases passing** (0 failures, execution time < 2 ms).
+  * **54/54 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Steam AE 1.6.1170 (primary) and SE 1.5.97 via Address Library (`commonlibsse-ng.plugin`).
@@ -91,13 +97,12 @@
 * `RuntimeGate` log output verifying detected game version.
 * SKSE messaging listener receiving `kDataLoaded`, `kPreLoadGame`, `kPostLoadGame`, `kNewGame`.
 * Console command `scf` (with `status`, `registry`, `reload`, `help`) executing from the in-game tilde console.
+* Engine event sinks observing active effects, death, and cell attach/detach in live gameplay.
 
 ## Up next (Plan Roadmap)
 
-* **Stage 1 (SummonRegistry Engine Wiring):**
-  * Connect `SummonRegistry` to engine `BSTEventSink` handlers for `TESActiveEffectApplyRemoveEvent`, `TESDeathEvent`, and `TESCellAttachDetachEvent`.
 * **Stage 2 (Collision PoC - Key Technical Risk):**
-  * Passive observation hook for Havok collision filter callbacks.
+  * Passive observation hook for Havok collision filter callbacks (`bhkCollisionFilter`).
   * Filter pair classification (`Player <-> Own Summon` non-blocking).
 
 ## Known limitations

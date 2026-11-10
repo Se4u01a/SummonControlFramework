@@ -55,7 +55,7 @@ target("SummonControlFramework")
     set_encodings("utf-8")
     set_pcxxheader("src/PCH.h")
     add_headerfiles("src/**.h")
-    add_files("src/main.cpp", "src/Core/**.cpp", "src/AI/**.cpp", "src/Plugin/**.cpp")
+    add_files("src/main.cpp", "src/Core/**.cpp", "src/AI/**.cpp", "src/Engine/**.cpp", "src/Plugin/**.cpp")
 
     after_build(function (target)
         local deploy_dir = get_config("deploy_dir")

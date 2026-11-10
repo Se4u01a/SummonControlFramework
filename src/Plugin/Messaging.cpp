@@ -1,6 +1,7 @@
 #include "Plugin/Messaging.h"
 #include "Plugin/ConsoleCommands.h"
 #include "Core/FrameworkContext.h"
+#include "Engine/EventAdapter.h"
 #include "PCH.h"
 
 namespace scf::plugin
@@ -30,6 +31,7 @@ namespace scf::plugin
 			}
 
 			ConsoleCommands::Register();
+			engine::EventAdapter::RegisterEventSinks();
 			logger::info("[Messaging] Framework initialization complete.");
 			break;
 

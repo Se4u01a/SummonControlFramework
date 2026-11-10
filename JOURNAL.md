@@ -180,3 +180,21 @@ Implementation of Stage 0 infrastructure: unified runtime state locator, in-game
 * **Verification & Tests:**
   * 6 new test cases added in `tests/test_console_commands.cpp`: help command, status report, empty and populated registry dumps, live INI reload, unknown command fallback, and runtime state reset.
   * Total automated test count expanded to **50 test cases**, all passing with 0 failures.
+
+---
+
+## 2026-11-10 — Engine Event Adapters (`EventDispatcher` & `EventAdapter`)
+
+Implementation of Stage 1: Wiring Skyrim's `BSTEventSink` into `SummonRegistry`.
+
+* **Separation of Engine Sinks and Dispatch Logic:**
+  * To preserve the pure decoupled core, `EventDispatcher` resides in `src/Core/` with zero `#include <RE/Skyrim.h>`, processing lightweight `ActiveEffectEvent`, `DeathEvent`, and `CellAttachDetachEvent`.
+  * `EventAdapter` in `src/Engine/` implements `RE::BSTEventSink<T>` for the three target events, safely resolving `FormID` from `NiPointer<TESObjectREFR>` and forwarding to `EventDispatcher`.
+* **Displacement Callback Integration:**
+  * When a recast event exceeds the owner's limit, `EventDispatcher` fires a `DisplaceCallback` with the oldest summon ID, enabling the engine adapter to initiate in-game dispel.
+* **Self-Buff & Non-Fatal Event Filtering:**
+  * Self-buffs where `caster == target` are rejected immediately.
+  * Non-fatal events (`isDead = false`) and events from untracked entities are safely ignored without corrupting registry state.
+* **Verification & Tests:**
+  * 4 new test cases added in `tests/test_event_dispatcher.cpp`: effect apply & remove, recast limit displacement, death events, and cell attach/detach lifecycle transitions.
+  * Total automated test count expanded to **54 test cases**, all passing with 0 failures.
