@@ -49,6 +49,10 @@ namespace scf::core
 		bool enableCombatLeash{ true };
 		float combatLeashRadius{ 2000.0f };
 		bool returnToOwnerWhenOutsideLeash{ true };
+
+		// PoE2-style targeting (stage M2)
+		bool assistPlayerAttacks{ true };  // summons focus whatever the player hits
+		float aggressionRadius{ 1500.0f };  // engine-chosen fights only within this of the owner; 0 = off
 	};
 
 	struct RecoverySettings

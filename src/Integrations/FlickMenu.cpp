@@ -121,6 +121,12 @@ namespace scf::integrations
 				FUCK::SliderFloat("Combat Leash Radius", &data.combat.combatLeashRadius, 200.0f, 8000.0f, "%.0f");
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Maximum distance from the player during combat before the leash snaps");
 
+				FUCK::Checkbox("Assist Player Attacks", &data.combat.assistPlayerAttacks);
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Summons switch to whatever enemy the player hits (not in Passive, Guard, Return or Move To)");
+
+				FUCK::SliderFloat("Aggression Radius", &data.combat.aggressionRadius, 0.0f, 6000.0f, "%.0f");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Summons start their own fights only with enemies this close to the player (0 = no limit)");
+
 				FUCK::Checkbox("Catch-Up Warp", &data.recovery.enableCatchUpWarp);
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Emergency teleport behind the player when a returning summon is far away or stuck");
 

@@ -122,6 +122,11 @@
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
   * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **PoE2 stage M2: attack what I attack + aggression radius — 2026-11-11:**
+  * `TESHitEvent` sink: when the player hits an enemy, summons in `Follow` (or `Attack` on another target) get a FocusTarget on it; never in `Passive`, never over `Return`/`MoveTo`/`Guard` (`core::ShouldAssistPlayerHit`). INI `[Combat] bAssistPlayerAttacks`.
+  * StartCombat seat: engine-chosen fights in `Follow`/`Guard` only against actors within `[Combat] fAggressionRadius` (1500, 0 = off) of the player (`core::IsWithinAggressionRadius`). Both in FLICK.
+  * 4 new tests + settings checks — **121/121 passing**.
+  * **Field status:** built and deployed, NOT tested in game (TEST-M2-1/2).
 * **Friendly splash / magic damage filter (`MagicHook`) — 2026-11-11:**
   * Field: pass-through confirmed working by the user; a player fireball that hits the ground next to summons still damaged them (explosion effects are applied through `MagicTarget::AddTarget`, not `ProcessHit`).
   * Seat on `Character` MagicTarget vtable[3] slot 1 (SE id 37020 → `MagicTarget::AddTarget` id 32157): hostile/detrimental effects from the player, allies or their summons are refused on protected summons; buffs/heals and enemy spells unaffected. 1 new test — **117/117 passing**.
@@ -179,7 +184,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **117/117 test cases passing** (0 failures, execution time < 2 ms).
+  * **121/121 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

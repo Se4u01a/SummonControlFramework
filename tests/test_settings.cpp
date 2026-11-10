@@ -27,6 +27,8 @@ TEST(settings_default_values)
 	CHECK(data.combat.enableCombatLeash == true);
 	CHECK_NEAR(data.combat.combatLeashRadius, 2000.0f, 0.001f);
 	CHECK(data.combat.returnToOwnerWhenOutsideLeash == true);
+	CHECK(data.combat.assistPlayerAttacks == true);
+	CHECK_NEAR(data.combat.aggressionRadius, 1500.0f, 0.001f);
 	CHECK_NEAR(data.combat.maxTargetRadius, 2000.0f, 0.001f);
 	CHECK_NEAR(data.combat.followDistanceThreshold, 500.0f, 0.001f);
 	CHECK_NEAR(data.combat.returnDistanceThreshold, 2500.0f, 0.001f);
@@ -257,6 +259,8 @@ TEST(settings_serialization_roundtrip)
 	mod.combat.combatLeashRadius = 2500.0f;
 	mod.combat.returnToOwnerWhenOutsideLeash = true;
 	mod.combat.maxTargetRadius = 4500.0f;
+	mod.combat.assistPlayerAttacks = false;
+	mod.combat.aggressionRadius = 2200.0f;
 	mod.recovery.enableCatchUpWarp = true;
 	mod.recovery.catchUpDistance = 3800.0f;
 	mod.squad.formationSpreadRadius = 250.0f;
@@ -279,6 +283,8 @@ TEST(settings_serialization_roundtrip)
 	CHECK_NEAR(d.combat.combatLeashRadius, 2500.0f, 0.001f);
 	CHECK(d.combat.returnToOwnerWhenOutsideLeash == true);
 	CHECK_NEAR(d.combat.maxTargetRadius, 4500.0f, 0.001f);
+	CHECK(d.combat.assistPlayerAttacks == false);
+	CHECK_NEAR(d.combat.aggressionRadius, 2200.0f, 0.001f);
 	CHECK(d.recovery.enableCatchUpWarp == true);
 	CHECK_NEAR(d.recovery.catchUpDistance, 3800.0f, 0.001f);
 	CHECK_NEAR(d.squad.formationSpreadRadius, 250.0f, 0.001f);

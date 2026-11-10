@@ -259,6 +259,12 @@ namespace scf::engine::update
 				}
 				passthrough::Publish(members, settings.collision);
 			}
+
+			// PoE2-style aggression radius around the owner for engine-chosen fights.
+			{
+				const auto& ownerPosition = a_player->GetPosition();
+				combat::PublishAggressionArea({ ownerPosition.x, ownerPosition.y, ownerPosition.z }, settings.combat.aggressionRadius);
+			}
 			for (std::size_t i = 0; i < orderedSummons.size(); ++i) {
 				const auto summonId = orderedSummons[i].first;
 				auto* summonActor = orderedSummons[i].second;

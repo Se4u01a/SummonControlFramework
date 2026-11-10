@@ -2,6 +2,7 @@
 
 #include "Core/CombatPolicy.h"
 #include "Core/EntityID.h"
+#include "Core/Types.h"
 
 #include <cstdint>
 #include <unordered_set>
@@ -40,6 +41,10 @@ namespace scf::engine::combat
 	// mutex-protected table and the group's target list under the group's own read lock.
 
 	bool Install();
+
+	// Main thread, every tick: the owner's position and the aggression radius used for
+	// engine-chosen fights (Follow / Guard). Radius <= 0 disables the rule.
+	void PublishAggressionArea(const core::Vec3& a_ownerPosition, float a_radius);
 
 	// Leave combat through the engine's own StopCombat (main thread). Never writes the
 	// CombatController members: the combat workers own them.

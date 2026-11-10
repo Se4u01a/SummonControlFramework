@@ -243,6 +243,18 @@ namespace scf::core
 			_data.combat.combatLeashRadius = clamped;
 		}
 
+		if (_data.combat.aggressionRadius != 0.0f &&
+			(_data.combat.aggressionRadius < 200.0f || _data.combat.aggressionRadius > 10000.0f)) {
+			const float clamped = std::clamp(_data.combat.aggressionRadius, 200.0f, 10000.0f);
+			if (_logCallback) {
+				std::snprintf(logBuf, sizeof(logBuf),
+					"[Settings] Warning: aggressionRadius (%.1f) out of range [200, 10000] (0 = off), clamping to %.1f.",
+					_data.combat.aggressionRadius, clamped);
+				_logCallback(logBuf);
+			}
+			_data.combat.aggressionRadius = clamped;
+		}
+
 		// Recovery
 		if (_data.recovery.catchUpDistance < 500.0f || _data.recovery.catchUpDistance > 50000.0f) {
 			const float clamped = std::clamp(_data.recovery.catchUpDistance, 500.0f, 50000.0f);
@@ -368,6 +380,10 @@ namespace scf::core
 					_data.combat.combatLeashRadius = ParseFloat(val, _data.combat.combatLeashRadius);
 				} else if (key == "returntoownerwhenoutsideleash" || key == "breturntoownerwhenoutsideleash") {
 					_data.combat.returnToOwnerWhenOutsideLeash = ParseBool(val, _data.combat.returnToOwnerWhenOutsideLeash);
+				} else if (key == "assistplayerattacks" || key == "bassistplayerattacks") {
+					_data.combat.assistPlayerAttacks = ParseBool(val, _data.combat.assistPlayerAttacks);
+				} else if (key == "aggressionradius" || key == "faggressionradius") {
+					_data.combat.aggressionRadius = ParseFloat(val, _data.combat.aggressionRadius);
 				}
 			} else if (currentSection == "recovery") {
 				if (key == "enablecatchupwarp" || key == "benablecatchupwarp") {
@@ -541,6 +557,10 @@ namespace scf::core
 		out << "bEnableCombatLeash = " << (_data.combat.enableCombatLeash ? "true" : "false") << "\n";
 		out << "fCombatLeashRadius = " << _data.combat.combatLeashRadius << "\n";
 		out << "bReturnToOwnerWhenOutsideLeash = " << (_data.combat.returnToOwnerWhenOutsideLeash ? "true" : "false") << "\n";
+		out << "; Summons focus whatever the player hits (Follow / Attack orders, not Passive)\n";
+		out << "bAssistPlayerAttacks = " << (_data.combat.assistPlayerAttacks ? "true" : "false") << "\n";
+		out << "; Engine-chosen fights only against actors within this distance of the player (0 = off)\n";
+		out << "fAggressionRadius = " << _data.combat.aggressionRadius << "\n";
 		out << "fMaxTargetRadius = " << _data.combat.maxTargetRadius << "\n";
 		out << "fFollowDistanceThreshold = " << _data.combat.followDistanceThreshold << "\n";
 		out << "fReturnDistanceThreshold = " << _data.combat.returnDistanceThreshold << "\n";

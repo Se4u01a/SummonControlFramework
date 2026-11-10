@@ -1,4 +1,5 @@
 #include "Engine/CombatGate.h"
+#include "Core/Assist.h"
 #include "Core/TargetPin.h"
 #include "PCH.h"
 
@@ -62,6 +63,10 @@ namespace scf::engine::combat
 		// Shared with the StartCombat call sites and the selector seat (any thread).
 		std::mutex                                 s_mutex;
 		std::unordered_map<RE::FormID, Permission> s_permissions;
+
+		// Aggression area (owner position + radius), guarded by s_mutex.
+		core::Vec3 s_aggressionCentre{};
+		float s_aggressionRadius{ 0.0f };
 
 		// Number of published pins: the selector seat runs for EVERY actor in combat,
 		// so it returns before touching the mutex when no summon has a FocusTarget.
@@ -271,10 +276,19 @@ namespace scf::engine::combat
 			const auto targetId = a_target ? a_target->GetFormID() : static_cast<RE::FormID>(0);
 
 			bool deny = false;
+			const char* reason = "";
 			if (!permission.allowCombat) {
 				deny = true;
+				reason = "combat forbidden (passive/return/move)";
 			} else if (permission.restrictToTarget) {
 				deny = targetId != static_cast<RE::FormID>(permission.target);
+				reason = "focus-target-only";
+			} else if (a_target && s_aggressionRadius > 0.0f) {
+				// PoE2-style aggression radius (stage M2): an engine-chosen fight only
+				// against actors near the owner. Explicit focus orders never come here.
+				const auto& position = a_target->GetPosition();
+				deny = !core::IsWithinAggressionRadius(s_aggressionCentre, { position.x, position.y, position.z }, s_aggressionRadius);
+				reason = "outside aggression radius";
 			}
 
 			if (deny) {
@@ -282,11 +296,8 @@ namespace scf::engine::combat
 				const auto now = std::chrono::steady_clock::now();
 				if (now - permission.lastDenyLog >= std::chrono::seconds(2)) {
 					permission.lastDenyLog = now;
-					logger::info("[CombatGate] StartCombat refused: summon 0x{:08X} target 0x{:08X} ({} -> {})",
-						a_self,
-						targetId,
-						permission.allowCombat ? "focus-target-only" : "combat forbidden",
-						permission.restrictToTarget ? "policy" : "passive/return/move");
+					logger::info("[CombatGate] StartCombat refused: summon 0x{:08X} target 0x{:08X} ({})",
+						a_self, targetId, reason);
 				}
 			}
 			return deny;
@@ -294,6 +305,13 @@ namespace scf::engine::combat
 			// A seat must never throw into engine code; fail open (let the engine fight).
 			return false;
 		}
+	}
+
+	void PublishAggressionArea(const core::Vec3& a_ownerPosition, float a_radius)
+	{
+		std::lock_guard lock(s_mutex);
+		s_aggressionCentre = a_ownerPosition;
+		s_aggressionRadius = a_radius;
 	}
 
 	bool Install()

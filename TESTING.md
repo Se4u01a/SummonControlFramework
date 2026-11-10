@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **117/117 тестов успешно пройдено (0 failures)**.
+Текущий результат: **121/121 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -143,6 +143,15 @@ xmake run scf_tests
 * `TestFollowLeashReleasedOnlyForAwayOrders`: поводок ванильного `FollowTo` отпускается только для `MoveTo` с точкой, `Attack` и `WaitGuard`; `Follow`/`Return`/`MoveTo` без точки его сохраняют.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
+### Suite P: PoE2 targeting (`Assist`) — 4 tests
+Файл `tests/test_assist.cpp`, правила этапа M2.
+* `TestAssistFollowJoinsPlayersFight`: следующий за игроком призыв переключается на цель удара игрока.
+* `TestAssistAttackSwitchesOnlyOnNewTarget`: в `Attack` переключение только на другую цель, та же не переотдаётся.
+* `TestAssistRespectsPassiveAndExplicitOrders`: `Passive`, `Return`, `MoveTo`, `Guard` и пустая цель — без ассиста.
+* `TestAggressionRadiusAroundOwner`: радиус вокруг игрока по горизонтали, 0 — без ограничения.
+
+Suite G (`Settings`) дополнительно проверяет значения по умолчанию и сохранение `bAssistPlayerAttacks` / `fAggressionRadius`.
+
 ### Suite O: Pass-Through (`PassThrough`) — 5 tests
 Файл `tests/test_pass_through.cpp`, правило `core::ShouldPassThrough` для seat'ов обхода в движении и фильтра коллизий тел.
 * `TestPassThroughSameOwnerSummons`: два призыва игрока игнорируют друг друга (в обе стороны).
@@ -187,7 +196,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 117/117 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 121/121 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -311,6 +320,8 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-4 (Focus engages):** Навестись на врага и нажать `Numpad 1`: в логе `StartCombat(0x...) -> true (dist ..., hostile ..., inCombat yes)`, суммон подходит (`AttackApproach keep-offset ...`) и атакует. Если `StartCombat -> false` — пришлите строку целиком.
 * **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
 * **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
+* **[ ] TEST-M2-1 (Attack what I attack):** призывы в `Follow`; ударить врага (меч/лук/заклинание) — в логе `[Assist] Player hit 0x... : N summon(s) switch focus to it`, призывы атакуют именно его. Ударить другого врага — переключаются. В `Passive` и при `Guard`/`MoveTo`/`Return` — не переключаются.
+* **[ ] TEST-M2-2 (Aggression radius):** стоять вдали (> 1500) от группы врагов: призывы не бегут к ним сами (`StartCombat refused ... outside aggression radius`); подойти ближе — вступают в бой. `fAggressionRadius = 0` (FLICK) — ограничение снято.
 * **[ ] TEST-FF-AOE-1 (Fireball splash):** выстрелить фаерболом в землю рядом с призывами: призывы не получают урона и не загораются; в логе `[MagicHook] Refused friendly AreaEffect effect ...`. Враг рядом получает урон как обычно. Лечение/баффы игрока на призыве продолжают работать.
 * **[ ] TEST-PASS-1 (Seats installed and running):** при загрузке — две строки `[PassThrough] ... hooked`; при движении отряда — `movement avoidance seat OBSERVED running` и `collision filter seat OBSERVED a CharController pair`; во время движения раз в 10 с — `last 10 s: N avoidance checks and M body collisions skipped`. Нули при плотном строе означают, что seat не срабатывает — пришлите лог.
 * **[ ] TEST-PASS-2 (Run through each other):** 3–4 волка, `Return` (Numpad 2) или `MoveTo` (Numpad 4) так, чтобы путь одного проходил через другого: призывы бегут по прямой сквозь друг друга, не огибают, не тормозят и не толкаются.
