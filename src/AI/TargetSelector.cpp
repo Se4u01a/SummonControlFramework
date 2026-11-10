@@ -8,7 +8,8 @@ namespace scf::ai
 	bool TargetSelector::IsCandidateValid(
 		const core::SummonModel& a_summon,
 		const TargetCandidate& a_candidate,
-		const TargetSelectorConfig& a_config) const noexcept
+		const TargetSelectorConfig& a_config,
+		const core::StealthContext& a_stealth) const noexcept
 	{
 		// 1. Never target invalid, dead or disabled actors
 		if (a_candidate.id == core::InvalidEntityID || a_candidate.isDead || a_candidate.isDisabled) {
@@ -26,7 +27,17 @@ namespace scf::ai
 			return false;
 		}
 
-		// 4. Aggression-specific qualification
+		// 4. Stealth policy: if player is sneaking and undetected, do not initiate combat on unaware enemies
+		// unless candidate is actively attacking or an explicit attack order was given
+		if (a_stealth.playerSneaking && !a_stealth.playerDetected) {
+			const bool isThreat = a_candidate.isAttackingOwner || a_candidate.isAttackingSummon;
+			const bool allowedByAggression = (a_summon.aggression == core::AggressionMode::Aggressive);
+			if (!a_stealth.explicitAttackOrder && !isThreat && !allowedByAggression) {
+				return false;
+			}
+		}
+
+		// 5. Aggression-specific qualification
 		switch (a_summon.aggression) {
 		case core::AggressionMode::Passive:
 			return false;
@@ -85,7 +96,8 @@ namespace scf::ai
 		const core::SummonModel& a_summon,
 		const std::vector<TargetCandidate>& a_candidates,
 		core::EntityID a_explicitFocusTarget,
-		const TargetSelectorConfig& a_config) const
+		const TargetSelectorConfig& a_config,
+		const core::StealthContext& a_stealth) const
 	{
 		// 1. Passive mode: no targets allowed
 		if (a_summon.aggression == core::AggressionMode::Passive) {
@@ -128,7 +140,7 @@ namespace scf::ai
 		float bestScore = -std::numeric_limits<float>::infinity();
 
 		for (const auto& candidate : a_candidates) {
-			if (!IsCandidateValid(a_summon, candidate, a_config)) {
+			if (!IsCandidateValid(a_summon, candidate, a_config, a_stealth)) {
 				continue;
 			}
 
@@ -143,7 +155,11 @@ namespace scf::ai
 			if (bestTarget != core::InvalidEntityID) {
 				_logCallback(a_summon.id, bestTarget, "Best scored candidate selected");
 			} else {
-				_logCallback(a_summon.id, core::InvalidEntityID, "No valid target candidates found");
+				if (a_stealth.playerSneaking && !a_stealth.playerDetected) {
+					_logCallback(a_summon.id, core::InvalidEntityID, "Stealth mode: player undetected, holding fire");
+				} else {
+					_logCallback(a_summon.id, core::InvalidEntityID, "No valid target candidates found");
+				}
 			}
 		}
 

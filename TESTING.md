@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **67/67 тестов успешно пройдено (0 failures)**.
+Текущий результат: **75/75 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -95,6 +95,15 @@ xmake run scf_tests
 * `collision_global_bypass_disabled`: Проверяет мгновенный возврат к ванильному поведению при выключении `bEnableCollisionBypass = false` (Safety Gate).
 * `collision_classifier_logging`: Проверяет корректность вызовов диагностического логгера при оценке пар коллизий.
 
+### Suite L: Stealth Coordination (`StealthContext` & AI) — 7 tests
+* `stealth_undetected_defensive_suppresses_unaware_enemy`: Проверяет подавление атаки в режиме Defensive при скрытности игрока (`playerSneaking = true`, `playerDetected = false`) против ненастороженного врага.
+* `stealth_detected_engages_threat`: Проверяет, что при срыве скрытности (`playerDetected = true`) сумон немедленно вступает в бой.
+* `stealth_undetected_enemy_attacks_engages`: Проверяет реакцию на прямую атаку: враг, нанесший удар по игроку или сумону, атакуется немедленно даже при скрытности игрока.
+* `stealth_undetected_explicit_focus_target_overrides`: Проверяет принудительный приказ: указание FocusTarget принудительно переводит сумона в атаку без срыва стелса игрока.
+* `stealth_undetected_aggressive_mode_engages`: Проверяет режим Aggressive: игнорирует скрытность и атакует любого врага в радиусе обнаружения.
+* `stealth_state_machine_holds_follow_when_stealthing`: Проверяет FSM: сумон остается в состоянии `FollowOwner` при скрытном перемещении мимо врагов.
+* `stealth_state_machine_engages_on_explicit_order`: Проверяет FSM: приказ FocusTarget переводит сумона в `AcquireTarget` -> `Approach` -> `Engage`.
+
 ### Suite K: Friendly Fire & Attack Filtering (`FriendlyFireSettings` & `RelationshipClassifier`) — 5 tests
 * `friendly_fire_settings_default_values`: Проверяет соответствие параметров FriendlyFire спецификации по умолчанию (`bEnableSummonProtection = true`, `bMeleePassThrough = true`, `bProjectilePassThrough = true` и др.).
 * `friendly_fire_settings_parse_ini_and_serialization`: Проверяет парсинг секции `[FriendlyFire]` в INI и round-trip сериализацию без потери данных.
@@ -128,7 +137,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 67/67 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 75/75 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -199,3 +208,27 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **Основная тестовая сборка:** `D:\Games\stb\[STB] Mod Organizer` (профиль `SBORKA`). Включает Precision, боевые моды, настроенную физику и графику. Используется для тестов сквозного удара холодным оружием (Melee Pass-Through) и комплексных боёв.
 * **Чистый тестовый профиль:** `D:\Games\stb\[RE2CE TEST] Mod Organizer` (профиль `RE2CE`). Минимальный набор модов без посторонних скриптов. Использовался для верификации базового прохождения акторов, смены локаций и перка парных призывов.
 * **Автоматическое развертывание:** `xmake.lua` собирает DLL и автоматически копирует её в обе сборки MO2.
+
+---
+
+## 6. Приемочные тесты: Приказы игрока, Хоткеи и Скрытность (Stage 3 & 5)
+
+### 6.1. Хоткеи управления отрядом
+* **[ ] TEST-ORDER-1 (Focus Target Hotkey - G):** При наведении перекрестия на враждебного актора и нажатии `G` появляется сообщение `"SCF: Focus Target Set"`, все сумоны переключаются на выбранную цель.
+* **[ ] TEST-ORDER-2 (Focus Target Guard):** Нажатие `G` при наведении на дружественного NPC, сумона или пустую точку игнорируется (не сбрасывает текущие цели и не бьет своих).
+* **[ ] TEST-ORDER-3 (Return Hotkey - H):** Нажатие `H` выводит `"SCF: Summon Return Ordered"`, все сумоны немедленно прекращают бой и бегут к игроку.
+* **[ ] TEST-ORDER-4 (Toggle Aggression Hotkey - J):** Нажатие `J` циклически переключает режимы: `Passive` -> `Defensive` -> `Aggressive` с выводом сообщения на HUD.
+
+### 6.2. Консольные приказы (`scf order`)
+* `scf order return` — приказ отряду вернуться к игроку.
+* `scf order follow` — возобновить следование за игроком.
+* `scf order guard` — занять позицию охраны.
+* `scf order passive` — перевести в пассивный режим (не атакуют).
+* `scf order defensive` — перевести в оборонительный режим (атакуют только при угрозе).
+* `scf order aggressive` — перевести в агрессивный режим (атакуют всех врагов).
+* `scf order focus <FormID>` — указать цель по FormID.
+
+### 6.3. Координация скрытности (Stealth Coordination)
+* **[ ] TEST-STEALTH-1 (Sneak Hold Fire):** Игрок приседает в скрытность (`Ctrl`), сумон в режиме `Defensive`. При приближении к врагу (индикатор скрытности закрыт `[   ]`) сумон спокойно следует за игроком и **не агрится** на спокойного врага.
+* **[ ] TEST-STEALTH-2 (Sneak Detected Engage):** Если враг замечает игрока (индикатор открывается `[ ОБНАРУЖЕНО ]`), сумон немедленно бросается в бой.
+* **[ ] TEST-STEALTH-3 (Sneak Focus Target):** Находясь в скрытности, игрок нажимает `G` на врага: сумон бесшумно срывается вперед и атакует указанную цель.

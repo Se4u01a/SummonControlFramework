@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/EntityID.h"
+#include "Core/StealthContext.h"
 #include "Core/SummonModel.h"
 #include "Core/Types.h"
 
@@ -52,13 +53,15 @@ namespace scf::ai
 			const core::SummonModel& a_summon,
 			const std::vector<TargetCandidate>& a_candidates,
 			core::EntityID a_explicitFocusTarget = core::InvalidEntityID,
-			const TargetSelectorConfig& a_config = {}) const;
+			const TargetSelectorConfig& a_config = {},
+			const core::StealthContext& a_stealth = {}) const;
 
 	private:
 		[[nodiscard]] bool IsCandidateValid(
 			const core::SummonModel& a_summon,
 			const TargetCandidate& a_candidate,
-			const TargetSelectorConfig& a_config) const noexcept;
+			const TargetSelectorConfig& a_config,
+			const core::StealthContext& a_stealth = {}) const noexcept;
 
 		[[nodiscard]] float ScoreCandidate(
 			const core::SummonModel& a_summon,

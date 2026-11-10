@@ -344,3 +344,33 @@ Testing iteration in minimal environment and documentation of system dependencie
        - `Twin Souls` perk / multi-summon mods: Support for >1 concurrent summon vs vanilla engine cap of 1.
        - `SSE Display Tweaks`: Borderless fullscreen and high-FPS Havok physics stability.
        - `Console Font Fix` / `ConsolePlusPlus`: Console readability and Ctrl+V command pasting.
+
+
+---
+
+## 2026-11-10 — Stealth Coordination & Player Orders/Input Subsystem (Stage 3 & 5)
+
+Implementation of tactical stealth behavior and live player input controls (Hotkeys & Console Orders).
+
+* **Stealth Coordination (`StealthContext`):**
+  * Created `src/Core/StealthContext.h` with `playerSneaking`, `playerDetected`, and `explicitAttackOrder`.
+  * Embedded `StealthContext` into `DecisionContext.h`.
+  * **Target Selector Integration:** In `TargetSelector.cpp`, added rule: when `stealth.playerSneaking && !stealth.playerDetected` and aggression mode is `Defensive`, summons suppress attacks against unaware enemies (`candidate.isAttackingOwner == false && candidate.isAttackingSummon == false`). This prevents summons from giving away player position during infiltration.
+  * **FSM Integration:** In `StateMachine.cpp`, updated `CanEngageCombat` to hold `FollowOwner` during sneak unless an explicit focus target or active combat engagement occurs.
+  * **Unit Tests:** Created `tests/test_stealth.cpp` with 7 test cases covering stealth suppression, detected transition, active threat defense, explicit focus target override, aggressive mode override, and FSM follow/engage states.
+* **Engine Input & Crosshair Targeting (`InputHandler`):**
+  * Created `src/Engine/InputHandler.h` and `src/Engine/InputHandler.cpp`.
+  * Registered as `RE::BSTEventSink<RE::InputEvent*>` on `RE::BSInputDeviceManager`.
+  * Resolves crosshair target via `RE::CrosshairPickData::GetSingleton()` (`targetActor[0]` and fallback `target[0]`), extracting `Actor*` via `ref->As<RE::Actor>()`. Validates that the target is alive, not the player, and not a registered summon.
+  * Configurable DirectInput scan codes:
+    * `0x22` (`G`): Focus Target under crosshair.
+    * `0x23` (`H`): Immediate Return to player.
+    * `0x24` (`J`): Cycle aggression mode (`Passive` -> `Defensive` -> `Aggressive`).
+  * Real-time HUD feedback via `RE::SendHUDMessage::ShowHUDMessage`.
+  * Registered `engine::InputHandler::Register()` in `src/Plugin/Messaging.cpp` on `kDataLoaded`.
+* **Console Orders Processor (`ConsoleHandler`):**
+  * Added `scf order <return | follow | guard | passive | defensive | aggressive | focus <FormID>>` in `src/Core/ConsoleHandler.cpp`.
+  * Added unit test suite in `tests/test_console_commands.cpp`.
+* **Verification & Build:**
+  * All 75 automated unit tests pass in < 2 ms (`scf_tests.exe`).
+  * `SummonControlFramework.dll` compiled and deployed cleanly to both `[STB] Mod Organizer` and `[RE2CE TEST] Mod Organizer`.

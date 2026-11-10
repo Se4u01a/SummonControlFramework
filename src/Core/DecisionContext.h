@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Core/EntityID.h"
+#include "Core/StealthContext.h"
 #include "Core/Types.h"
 
 namespace scf::core
@@ -14,6 +15,9 @@ namespace scf::core
 		bool hasTarget{ false };
 		EntityID detectedTargetId{ InvalidEntityID };
 		float distanceToTarget{ 0.0f };
+
+		// Stealth coordination
+		StealthContext stealth{};
 
 		// Configurable thresholds
 		float followDistanceThreshold{ 500.0f };

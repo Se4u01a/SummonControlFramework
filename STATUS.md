@@ -93,12 +93,27 @@
   * **Attack slot arbitration (Anti-dogpiling):** targets have capped engagement slots (default 2 melee, 3 ranged). If an enemy's melee slots are full, additional summons distribute to secondary targets or hold in formation.
   * **Target distribution:** automatically distributes multiple targets across squad members instead of all summons dogpiling on a single enemy.
   * **Formation offsets:** calculates symmetrical, non-overlapping follow/guard offsets around the owner based on squad size and owner yaw.
+* **Stealth Coordination Subsystem (`StealthContext`):**
+  * Pure C++ `StealthContext` (`playerSneaking`, `playerDetected`, `explicitAttackOrder`) integrated cleanly into `DecisionContext`.
+  * **Stealth-aware Target Scoring (`TargetSelector`):** when the player is sneaking and undetected (`playerSneaking && !playerDetected`) in `Defensive` mode, summons suppress attacks against unaware enemies to preserve player concealment.
+  * **Explicit Overrides & Combat Reactions:** unprovoked attacks against the player/summon, explicit `FocusTarget` orders, or `Aggressive` mode override stealth suppression.
+  * **FSM Sneak Preservation (`StateMachine`):** holds `FollowOwner` state during stealth without prematurely engaging distant unalerted enemies.
+  * Covered by 7 comprehensive unit tests in `tests/test_stealth.cpp` (75/75 tests passing).
+* **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
+  * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
+  * **Crosshair Target Pick (`RE::CrosshairPickData`):** queries `targetActor[0]` and fallback `target[0]`, casting through `ref->As<RE::Actor>()`, validating alive/non-player/non-summon status.
+  * **Configurable Hotkeys (DirectX Scan Codes):**
+    * `G` (`0x22` default): **Focus Target** under crosshair with HUD confirmation.
+    * `H` (`0x23` default): **Return** summon to player immediately.
+    * `J` (`0x24` default): **Toggle Aggression** cycling `Passive` -> `Defensive` -> `Aggressive`.
+  * **In-Game HUD Notifications:** top-left alerts via `RE::SendHUDMessage::ShowHUDMessage` for immediate player feedback.
+  * **Console Orders Processor:** `scf order <return | follow | guard | passive | defensive | aggressive | focus <FormID>>` with priority arbitration and input validation.
 * **Observability & Diagnostics:**
   * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, scheduler updates, collision classifications, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **67/67 test cases passing** (0 failures, execution time < 2 ms).
+  * **75/75 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -124,7 +139,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
   * `src/FriendlyFire/RelationshipClassifier.h/.cpp`: classifies sources as `Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, or `Unknown`.
   * Depth-guarded commanding actor traversal (`MaxCommandChainDepth = 4`) with cycle detection.
   * Fail-Safe Gate: `Unknown` and hostile sources are NEVER filtered, protecting combat integrity against true enemies.
-  * 100% covered by 5 new unit tests in `tests/test_friendly_fire.cpp` (all 67/67 tests passing).
+  * 100% covered by 5 new unit tests in `tests/test_friendly_fire.cpp` (all 75/75 tests passing).
 * **FF-Stage B & C (Damage Protection MVP & Precision Melee Pass-Through):**
   * `src/FriendlyFire/FriendlyFireSettings.h`: integrated with `Settings.h/.cpp` with full INI parsing, validation, and round-trip serialization.
   * `src/Integrations/PrecisionBackend.h/.cpp`: dynamically discovers `Precision.dll` (v2.0.4) and installs `PreHitCallback`. When the player swings through a registered summon, returns `bIgnoreHit = true`: weapon physically flies through without hitstop to strike enemies behind!

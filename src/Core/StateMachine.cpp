@@ -24,12 +24,20 @@ namespace scf::core
 			return false;
 		}
 
+		// Stealth coordination: if player is sneaking and undetected, do not engage unless explicit order or aggressive mode
+		if (a_ctx.stealth.playerSneaking && !a_ctx.stealth.playerDetected) {
+			if (!a_ctx.stealth.explicitAttackOrder && a_model.aggression != AggressionMode::Aggressive) {
+				return false;
+			}
+		}
+
 		switch (a_model.aggression) {
 		case AggressionMode::Passive:
 			return false;
 
 		case AggressionMode::Defensive:
 			return a_ctx.isOwnerInCombat ||
+			       a_ctx.stealth.explicitAttackOrder ||
 			       a_model.state == SummonState::Engage ||
 			       a_model.state == SummonState::Approach;
 

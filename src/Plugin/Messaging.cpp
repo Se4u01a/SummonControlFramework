@@ -2,6 +2,7 @@
 #include "Plugin/ConsoleCommands.h"
 #include "Core/FrameworkContext.h"
 #include "Engine/EventAdapter.h"
+#include "Engine/InputHandler.h"
 #include "Engine/UpdateHook.h"
 #include "FriendlyFire/HitHook.h"
 #include "FriendlyFire/ProjectileHook.h"
@@ -35,6 +36,7 @@ namespace scf::plugin
 
 			ConsoleCommands::Register();
 			engine::EventAdapter::RegisterEventSinks();
+			engine::InputHandler::Register();
 			engine::update::Install();
 			friendly_fire::HitHook::Install();
 			friendly_fire::ProjectileHook::Install();

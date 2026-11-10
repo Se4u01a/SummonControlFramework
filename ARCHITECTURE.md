@@ -399,3 +399,71 @@ bSuppressFriendlyHitReactions=false   ; Stagger/recoil (выключено до 
 | **Behavior Data Injector** | Опциональный (Soft) | Зависимость Precision | Precision не может перехватывать события кадров анимации атаки. | Полноценная работа Precision. |
 | **Перк «Парные души» (`000581DE`)** | Опциональный (Игровой) | Vanilla Engine Perk / Multi-summon mods | Движок Skyrim ванильно имеет лимит `commandedActors = 1`. При вызове второго сумона движок принудительно рассеивает первого. | Игрок может одновременно призывать 2 и более существ. SCF регистрирует и координирует отряд целиком. |
 | **SSE Display Tweaks** | Рекомендуемый (Display) | SKSE Plugin | Игра может работать в эксклюзивном полноэкранном режиме с риском зависания при Alt-Tab; при FPS > 60 физика Havok может работать с артефактами. | Идеальный полноэкранный режим без рамки (Borderless Fullscreen), плавный Alt-Tab, адаптивный физический тик. |
+
+
+---
+
+## 17. Архитектура координации скрытности (Stealth Coordination)
+
+### 17.1. Проблема несогласованности скрытности в ванильном Skyrim
+В ванильной игре призванные существа не имеют контекста скрытности игрока. Если игрок крадется мимо группы врагов, сумон в ванильном режиме мгновенно бросается на первого попавшегося противника, демаскируя игрока и срывая стелс.
+
+### 17.2. Модель StealthContext
+Для изоляции логики скрытности в чистом C++ Core введена структура StealthContext ([src/Core/StealthContext.h](file:///D:/projects/Summon_Control_Framework/src/Core/StealthContext.h)):
+
+```cpp
+struct StealthContext {
+    bool playerSneaking{false};      // Игрок находится в режиме скрытности
+    bool playerDetected{false};      // Игрок обнаружен врагами (глаз открыт)
+    bool explicitAttackOrder{false}; // Игрок отдал прямой приказ атаковать (FocusTarget)
+};
+```
+
+### 17.3. Матрица поведения при скрытности
+В подсистемах TargetSelector и StateMachine действуют строгие правила:
+
+| Режим агрессии | Игрок крадется | Игрок обнаружен | Враг спокоен (Unaware) | Враг атакует | Прямой приказ (FocusTarget) | Решение сумона |
+|---|---|---|---|---|---|---|
+| Defensive | Да | Нет | Да | Нет | Нет | **Hold Fire** (Следовать за игроком, не атаковать) |
+| Defensive | Да | Нет | Нет | Да | Нет | **Engage** (Защитить игрока от активной угрозы) |
+| Defensive | Да | Да | Любой | Любой | Нет | **Engage** (Стелс сорван, бой разрешен) |
+| Defensive | Да | Нет | Любой | Любой | Да | **Engage** (Приказ игрока имеет высший приоритет) |
+| Aggressive | Да | Нет | Да | Нет | Нет | **Engage** (Режим Aggressive отключает скрытность) |
+| Passive | Любой | Любой | Любой | Любой | Любой | **Passive** (Полный отказ от боя) |
+
+### 17.4. Реализация в TargetSelector и StateMachine
+- `TargetSelector::IsCandidateValid` проверяет `stealth`: если `playerSneaking && !playerDetected` и режим `Defensive`, ненастороженные враги, не атакующие игрока или сумона, отфильтровываются как недопустимые цели.
+- `StateMachine::CanEngageCombat` удерживает состояние `FollowOwner` при скрытности игрока, пока не зафиксирована реальная боевая тревога или прямой приказ игрока.
+
+---
+
+## 18. Подсистема управления игроком и захват прицелом (Player Input & Controls)
+
+### 18.1. Обработка ввода через RE::BSInputDeviceManager
+Для надежного перехвата клавиш без задержек и конфликтов с Papyrus реализован InputHandler ([src/Engine/InputHandler.h](file:///D:/projects/Summon_Control_Framework/src/Engine/InputHandler.h)), зарегистрированный как sink интерфейса `RE::BSTEventSink<RE::InputEvent*>`:
+- Перехватывает `RE::ButtonEvent` устройств `kKeyboard` и `kMouse`.
+- Реагирует только на фазу нажатия (`event->IsDown()`).
+- Не блокирует ввод других модов (возвращает `BSEventNotifyControl::kContinue`).
+
+### 18.2. Захват цели прицелом (CrosshairPickData)
+При нажатии хоткея Focus Target (G по умолчанию) `InputHandler` мгновенно обращается к синглтону движка `RE::CrosshairPickData::GetSingleton()`:
+1. Запрашивает `targetActor[0]` (основной прицел). Если пусто, использует запасной `target[0]`.
+2. Разрешает хэндл в живой `RE::TESObjectREFR*`, безопасно преобразует его через `ref->As<RE::Actor>()`.
+3. Валидирует актора: отсекает нулевые указатели, мертвых акторов (`actor->IsDead()`), самого игрока (`actor->IsPlayerRef()`) и призывы игрока.
+4. Преобразует `actor->GetFormID()` в `EntityID` и помещает высокоприоритетную команду `SummonOrder::SetFocusTarget` в `CommandQueue`.
+5. Выводит мгновенное подтверждение игроку в верхний левый угол через `RE::SendHUDMessage::ShowHUDMessage("SCF: Focus Target Set")`.
+
+### 18.3. Хоткеи по умолчанию и конфигурация
+- `G` (0x22 DirectX scan code) — **Focus Target**: назначить цель под перекрестием прицела для всех сумонов.
+- `H` (0x23 DirectX scan code) — **Return**: экстренный возврат всех сумонов к игроку.
+- `J` (0x24 DirectX scan code) — **Toggle Aggression**: циклическое переключение режима агрессии (`Passive` -> `Defensive` -> `Aggressive`) с уведомлением на HUD.
+
+### 18.4. Консольные приказы (scf order)
+Для игроков, предпочитающих консоль или скриптовые бинды, реализована команда `scf order`:
+- `scf order return` — приказ возврата отряду.
+- `scf order follow` — приказ следования.
+- `scf order guard` — приказ занять оборону на позиции.
+- `scf order passive` — перевод отряда в пассивный режим.
+- `scf order defensive` — перевод отряда в оборонительный режим.
+- `scf order aggressive` — перевод отряда в агрессивный режим.
+- `scf order focus <FormID>` — ручное указание цели по FormID в шестнадцатеричном формате (например `scf order focus 0001234F`).
