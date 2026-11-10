@@ -6,7 +6,7 @@ Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE
 
 ## 1. Automated (passing)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **38 cases, 0 failures, 0 failed checks**.  
+Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **44 cases, 0 failures, 0 failed checks**.  
 Execution time: ~1-2 ms.
 
 ### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
@@ -59,6 +59,14 @@ Execution time: ~1-2 ms.
 * `TestResetZeroesState`: Verifies that `Reset()` zeroes accumulated time, total elapsed time, and tick counts.
 * `TestSchedulerLogging`: Verifies diagnostic logs for frequency adjustments, immediate tick execution, and reset events.
 
+### Suite G: Configuration & Settings (`Settings`) — 6 tests
+* `settings_default_values`: Verifies all default configuration parameters match framework specifications across all five sections.
+* `settings_load_from_string_prefixed`: Tests parsing of standard Skyrim-prefixed INI keys (`bEnabled`, `sLogLevel`, `uMaxSummonsPerOwner`, etc.).
+* `settings_load_from_string_unprefixed_and_comments`: Tests parsing of lowercase unprefixed keys and stripping of inline comments (`;` and `#`).
+* `settings_validation_and_clamping`: Confirms boundary enforcement and automatic correction for invalid values (summons clamping [1, 32], update frequency [1, 60], return leash adjustment).
+* `settings_serialization_roundtrip`: Verifies serialize-to-string followed by parse roundtrip preserves all values without data loss.
+* `settings_file_save_and_load`: Tests filesystem write, read, and non-existent file handling with clean temporary file teardown.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -81,7 +89,7 @@ Execution time: ~1-2 ms.
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (496 KB, with `.pdb`) |
-| Core unit tests | 38/38 passing via `scf_tests.exe` |
+| Core unit tests | 44/44 passing via `scf_tests.exe` |
 
 ### Waiting for live Skyrim run
 | Feature | Target verification |

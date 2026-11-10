@@ -8,6 +8,12 @@
   * Enums for summon lifecycle and orders: `SummonState`, `SummonOrder`, `AggressionMode`.
   * `SummonModel`: state time tracking, target lost debounce timer, owner and target IDs.
   * `DecisionContext`: snapshot structure capturing distances to owner and target, combat flags, and configurable thresholds.
+* **Configuration & Settings Manager (`Settings`):**
+  * **Categorized configuration:** `GeneralSettings`, `TimingSettings`, `CombatSettings`, `SquadSettings`, and `HotkeySettings`.
+  * **Resilient INI parser:** parses standard INI format with support for both Skyrim prefixes (`bEnabled`, `sLogLevel`, `fUpdateFrequencyHz`, `uMaxSummonsPerOwner`) and unprefixed keys.
+  * **Comment handling:** strips full-line and inline comments delimited by `;` or `#`.
+  * **Sanitization & Clamping:** enforces safety boundaries across all tactical parameters (e.g. summon limits [1, 32], update frequency [1, 60] Hz, return leash threshold strictly greater than follow distance) with diagnostic warning logs.
+  * **Round-trip serialization & file persistence:** full formatting to readable INI file format with clean error handling for missing or unwriteable files.
 * **Update Scheduler & Time-Slicing (`UpdateScheduler`):**
   * **Tick regulation (PLAN.md 1062):** decouples AI decision-making from high render frame rates (60/144+ Hz) down to an optimal tactical rate (default 15 Hz / ~66.7 ms), eliminating CPU cache thrashing.
   * **Anti-drift timing:** preserves fractional leftover delta time between ticks to avoid timing drift over long play sessions.
@@ -55,7 +61,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **38/38 test cases passing** (0 failures, execution time < 2 ms).
+  * **44/44 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Steam AE 1.6.1170 (primary) and SE 1.5.97 via Address Library (`commonlibsse-ng.plugin`).

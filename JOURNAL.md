@@ -136,3 +136,25 @@ Implementation of PLAN.md 1062: decoupled AI tick rate and squad time-slicing.
 * **Verification & Tests:**
   * 6 new test cases added in `tests/test_update_scheduler.cpp`: interval clamping, 60 FPS periodic simulation, immediate wakeup override, round-robin time slicing, state reset, and logging.
   * Total automated test count expanded to **38 test cases**, all passing with 0 failures.
+
+---
+
+## 2026-11-10 — Settings Manager & INI Configuration
+
+Implementation of core configuration parsing, validation, and serialization.
+
+* **Pure C++ INI Parser without External Dependencies:**
+  * Avoiding bloated external parser libraries keeps compile times sub-second and eliminates linking headaches between the main SKSE DLL and the offline unit test binary.
+  * `Settings` implements resilient line-by-line parsing with support for both standard Skyrim-style prefixes (`bEnabled`, `sLogLevel`, `uMaxSummonsPerOwner`, `fUpdateFrequencyHz`, etc.) and clean unprefixed keys.
+  * Strips comments delimited by `;` or `#` and trims whitespace seamlessly.
+* **Defensive Clamping & Sanitization:**
+  * User-edited INI files are prone to typos, negative numbers, or extreme values.
+  * `ValidateAndSanitize()` runs automatically after loading:
+    * Clamps `maxSummonsPerOwner` to [1, 32].
+    * Validates `logLevel` against known strings ("trace", "debug", "info", "warn", "error", "critical"), falling back safely to "info".
+    * Enforces `updateFrequencyHz` in [1.0, 60.0] and `commandTTL` in [0.1, 60.0].
+    * Enforces leash integrity: ensures `returnDistanceThreshold > followDistanceThreshold` to prevent instant leash-break loops.
+    * Clamps attack slots and formation spread radii.
+* **Verification & Tests:**
+  * 6 new test cases added in `tests/test_settings.cpp`: default values verification, prefixed parsing, unprefixed parsing with inline comments, defensive clamping, round-trip serialization, and disk file persistence.
+  * Total automated test count expanded to **44 test cases**, all passing with 0 failures.

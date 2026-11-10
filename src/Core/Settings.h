@@ -1,0 +1,96 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <string_view>
+
+namespace scf::core
+{
+	struct GeneralSettings
+	{
+		bool enabled{ true };
+		std::string logLevel{ "info" };
+		std::size_t maxSummonsPerOwner{ 1 };
+	};
+
+	struct TimingSettings
+	{
+		float updateFrequencyHz{ 15.0f };
+		bool enableTimeSlicing{ true };
+		float commandTTL{ 5.0f };
+	};
+
+	struct CombatSettings
+	{
+		float maxTargetRadius{ 2000.0f };
+		float followDistanceThreshold{ 500.0f };
+		float returnDistanceThreshold{ 2500.0f };
+		float engageDistanceThreshold{ 300.0f };
+		float targetLostDebounceTime{ 1.5f };
+	};
+
+	struct SquadSettings
+	{
+		std::size_t maxMeleeSlotsPerTarget{ 2 };
+		std::size_t maxRangedSlotsPerTarget{ 3 };
+		float formationSpreadRadius{ 160.0f };
+	};
+
+	struct HotkeySettings
+	{
+		std::uint32_t focusTargetKey{ 0 };
+		std::uint32_t commandReturnKey{ 0 };
+		std::uint32_t toggleAggressionKey{ 0 };
+	};
+
+	struct SettingsData
+	{
+		GeneralSettings general{};
+		TimingSettings timing{};
+		CombatSettings combat{};
+		SquadSettings squad{};
+		HotkeySettings hotkeys{};
+	};
+
+	class Settings
+	{
+	public:
+		using LogCallback = std::function<void(const char* a_message)>;
+
+		Settings() = default;
+		explicit Settings(LogCallback a_logCb) : _logCallback(std::move(a_logCb)) {}
+
+		void SetLogCallback(LogCallback a_logCb) noexcept
+		{
+			_logCallback = std::move(a_logCb);
+		}
+
+		[[nodiscard]] const SettingsData& Get() const noexcept
+		{
+			return _data;
+		}
+
+		[[nodiscard]] SettingsData& GetMutable() noexcept
+		{
+			return _data;
+		}
+
+		void ResetToDefaults() noexcept;
+
+		bool LoadFromString(std::string_view a_iniContent);
+
+		bool LoadFromFile(const std::string& a_filePath);
+
+		bool SaveToFile(const std::string& a_filePath) const;
+
+		[[nodiscard]] std::string Serialize() const;
+
+		void ValidateAndSanitize() noexcept;
+
+	private:
+		SettingsData _data{};
+		LogCallback _logCallback{ nullptr };
+	};
+}
