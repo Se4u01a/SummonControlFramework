@@ -6,7 +6,7 @@ Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE
 
 ## 1. Automated (passing)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **26 cases, 0 failures, 0 failed checks**.  
+Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **32 cases, 0 failures, 0 failed checks**.  
 Execution time: ~1-2 ms.
 
 ### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
@@ -43,6 +43,14 @@ Execution time: ~1-2 ms.
 * `TestResetClearsAll`: Verifies that `Reset()` purges all records for safe save-load reloading.
 * `TestRegistryLogging`: Verifies that registration, cell detach/attach, and death events produce formatted diagnostic log lines.
 
+### Suite E: Command Priority & Queue (`CommandQueue`) — 6 tests
+* `TestPriorityArbitrationOrder`: Enqueuing commands in reverse order (`Tactical` -> `PlayerDirect` -> `Lifecycle`) pops them strictly in order of importance: `Lifecycle` first, `PlayerDirect` second, `Tactical` third.
+* `TestCommandCoalescing`: Rapid successive player commands (`Follow` followed by `WaitGuard`) coalesce into a single pending command with the latest order, preventing redundant oscillations.
+* `TestTTLExpiration`: Verifies that commands older than their time-to-live are automatically purged on pump rather than executing stale actions.
+* `TestDrainForSummonIncludesBroadcast`: Verifies that targeted draining extracts both summon-specific commands and squad broadcast commands (`InvalidEntityID`) while preserving commands for unrelated summons.
+* `TestApplyToModelWithFSM`: Verifies that `ApplyToModel` coordinates with `StateMachine`, applying orders, switching aggression, and executing `Dispel` -> `Despawn`.
+* `TestThreadSafeConcurrentEnqueue`: Stress test with 4 concurrent worker threads pushing 50 commands each, verifying zero data race and correct final queue count (200).
+
 ---
 
 ## 2. Static / offline (passing)
@@ -65,7 +73,7 @@ Execution time: ~1-2 ms.
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (496 KB, with `.pdb`) |
-| Core unit tests | 26/26 passing via `scf_tests.exe` |
+| Core unit tests | 32/32 passing via `scf_tests.exe` |
 
 ### Waiting for live Skyrim run
 | Feature | Target verification |
@@ -77,3 +85,4 @@ Execution time: ~1-2 ms.
 | Friendly fire guard in game | Player weapon/spell hitting summon without hostility loop |
 | Collision non-blocking | Player walking through summoned creature |
 | Squad formation | Multiple summons moving in fan/flank formation behind player |
+| Hotkey command execution | Hotkey press dequeuing and executing `Return` / `FocusTarget` |

@@ -93,3 +93,23 @@ Implementation of Stage 1: robust summon lifecycle tracking and capacity managem
 * **Verification & Tests:**
   * 6 new test cases added in `tests/test_summon_registry.cpp`: idempotent registration, cell detach suspension, recast limit displacement, death/dispel lifecycle, stale record sweeping, and registry reset.
   * Total automated test count expanded to **26 test cases**, all passing with 0 failures.
+
+---
+
+## 2026-11-10 — CommandQueue & Priority Arbitration
+
+Implementation of Section 6.3 & Thread Model: thread-safe command queue with strict priority hierarchy.
+
+* **Explicit Priority Ordering (PLAN.md 6.3):**
+  * In combat, direct player intervention (e.g. commanding `Return` or a specific `FocusTarget`) must override automatic tactical positioning without delay, while safety events (`Lifecycle`, `Dispel`) must take precedence over everything.
+  * `CommandQueue` implements four priority tiers: `Lifecycle` (0) > `PlayerDirect` (1) > `ModeChange` (2) > `Tactical` (3).
+  * Dequeuing strictly extracts higher-priority actions first regardless of enqueue arrival order.
+* **Command Coalescing & Anti-Oscillation:**
+  * If a player mashes commands or rapidly toggles orders (e.g. `Follow` -> `WaitGuard`) during a single frame, identical priority commands for the same summon are coalesced in-place, preventing rapid state oscillation.
+* **Time-to-Live (TTL) Safety:**
+  * Commands include a `ttl` field (default 5.0s). If the game pauses, opens an inventory menu, or enters a loading screen, stale queued commands expire automatically rather than executing out-of-context later.
+* **Thread Safety:**
+  * Input handlers (`BSInputDeviceManager`) and background callbacks push commands under `std::mutex` synchronization, ensuring safe delivery to the engine main tick thread.
+* **Verification & Tests:**
+  * 6 new test cases added in `tests/test_command_priority.cpp`, including priority sorting, coalescing, TTL expiration, broadcast draining, FSM integration, and a concurrent 4-thread stress test.
+  * Total automated test count expanded to **32 test cases**, all passing with 0 failures.

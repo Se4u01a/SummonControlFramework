@@ -8,6 +8,16 @@
   * Enums for summon lifecycle and orders: `SummonState`, `SummonOrder`, `AggressionMode`.
   * `SummonModel`: state time tracking, target lost debounce timer, owner and target IDs.
   * `DecisionContext`: snapshot structure capturing distances to owner and target, combat flags, and configurable thresholds.
+* **Command Queue & Priority Arbitration (`CommandQueue`):**
+  * **Strict order priority hierarchy (PLAN.md 6.3):**
+    1. `Lifecycle` (Priority 0: Dispel, death, unbind)
+    2. `PlayerDirect` (Priority 1: Direct hotkeys, FocusTarget, Return, WaitGuard)
+    3. `ModeChange` (Priority 2: Aggression mode toggles)
+    4. `Tactical` (Priority 3: Automated FSM/squad decisions)
+  * **Thread-safe synchronization:** protected by `std::mutex` for safe communication between background/input threads and the engine main thread.
+  * **Command coalescing:** rapid successive player commands for the same summon are automatically coalesced, avoiding redundant sequential order execution.
+  * **TTL expiration:** commands that exceed their time-to-live are purged automatically.
+  * **Targeted and broadcast draining:** supports both per-summon commands and broadcast commands (`InvalidEntityID`) for the whole squad.
 * **Summon Registry (`SummonRegistry`):**
   * **Idempotent registration:** safely handles repeat registrations, duplicate game events, and duration refreshes without duplicating records.
   * **Cell detach / attach lifecycle (`Suspended` state):** prevents premature record deletion during loading doors or cell transitions. Detached references enter `Suspended` state and resume `Active` upon cell attach.
@@ -35,11 +45,11 @@
   * **Target distribution:** automatically distributes multiple targets across squad members instead of all summons dogpiling on a single enemy.
   * **Formation offsets:** calculates symmetrical, non-overlapping follow/guard offsets around the owner based on squad size and owner yaw.
 * **Observability & Diagnostics:**
-  * Pluggable functional callbacks capturing state changes, target scoring, registry events, and squad slot claims with structured reasons.
+  * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **26/26 test cases passing** (0 failures, execution time < 2 ms).
+  * **32/32 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Steam AE 1.6.1170 (primary) and SE 1.5.97 via Address Library (`commonlibsse-ng.plugin`).
