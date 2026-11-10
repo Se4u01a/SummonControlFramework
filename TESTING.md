@@ -6,7 +6,7 @@ Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE
 
 ## 1. Automated (passing)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **32 cases, 0 failures, 0 failed checks**.  
+Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **38 cases, 0 failures, 0 failed checks**.  
 Execution time: ~1-2 ms.
 
 ### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
@@ -51,6 +51,14 @@ Execution time: ~1-2 ms.
 * `TestApplyToModelWithFSM`: Verifies that `ApplyToModel` coordinates with `StateMachine`, applying orders, switching aggression, and executing `Dispel` -> `Despawn`.
 * `TestThreadSafeConcurrentEnqueue`: Stress test with 4 concurrent worker threads pushing 50 commands each, verifying zero data race and correct final queue count (200).
 
+### Suite F: Update Scheduling & Cadence (`UpdateScheduler`) — 6 tests
+* `TestIntervalCalculationAndClamping`: Verifies interval calculation (15 Hz -> ~0.0667s) and boundaries clamping (floor at 5 Hz / 0.2000s, cap at 30 Hz / 0.0333s).
+* `TestPeriodicTickAccurate`: Simulates 60 FPS frames (`dt = 0.01667s`), verifying that 12 frames at 10 Hz produce exactly 2 ticks with zero timing drift.
+* `TestImmediateTickOverride`: Verifies that urgent commands flag `RequestImmediateTick()`, forcing the scheduler to evaluate on the next frame (even at dt = 1 ms) and then cleanly returning to periodic cadence.
+* `TestTimeSlicingInterleavedCadence`: Verifies round-robin load distribution for squads, alternating updates between Member 0 and Member 1 on consecutive ticks.
+* `TestResetZeroesState`: Verifies that `Reset()` zeroes accumulated time, total elapsed time, and tick counts.
+* `TestSchedulerLogging`: Verifies diagnostic logs for frequency adjustments, immediate tick execution, and reset events.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -73,7 +81,7 @@ Execution time: ~1-2 ms.
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (496 KB, with `.pdb`) |
-| Core unit tests | 32/32 passing via `scf_tests.exe` |
+| Core unit tests | 38/38 passing via `scf_tests.exe` |
 
 ### Waiting for live Skyrim run
 | Feature | Target verification |
@@ -86,3 +94,4 @@ Execution time: ~1-2 ms.
 | Collision non-blocking | Player walking through summoned creature |
 | Squad formation | Multiple summons moving in fan/flank formation behind player |
 | Hotkey command execution | Hotkey press dequeuing and executing `Return` / `FocusTarget` |
+| FPS overhead | No frame drops during 60/144 fps gameplay with 15 Hz scheduler tick |

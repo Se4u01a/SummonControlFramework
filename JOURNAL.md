@@ -113,3 +113,26 @@ Implementation of Section 6.3 & Thread Model: thread-safe command queue with str
 * **Verification & Tests:**
   * 6 new test cases added in `tests/test_command_priority.cpp`, including priority sorting, coalescing, TTL expiration, broadcast draining, FSM integration, and a concurrent 4-thread stress test.
   * Total automated test count expanded to **32 test cases**, all passing with 0 failures.
+
+---
+
+## 2026-11-10 — UpdateScheduler & Tick Interleaving
+
+Implementation of PLAN.md 1062: decoupled AI tick rate and squad time-slicing.
+
+* **Decoupled Tick Rate (15 Hz vs Render FPS):**
+  * Running spatial distance evaluations, target scoring, and formation calculations every render frame at 60/144 Hz wastes CPU budget without improving perceived reaction time.
+  * `UpdateScheduler` sets a tactical rate (default 15 Hz / ~66.7 ms), clamped between 30 Hz (0.0333s cap) and 5 Hz (0.2000s floor).
+* **Anti-Drift Accumulator & Spike Protection:**
+  * Rather than discarding delta time, `_accumulatedTime` subtracts `interval`, preserving fractional remainders to eliminate timing drift over hours of gameplay.
+  * If a massive frame spike occurs (e.g. cell load or script stall > 2x interval), accumulated time is clamped to avoid a rapid catch-up spiral-of-death.
+* **Time-Sliced Squad Interleaving:**
+  * In multi-summon squads, running full targeting simultaneously on the same frame produces micro-stutters.
+  * `ShouldUpdateEntity` round-robins evaluation across consecutive ticks (`(index % total) == (tick % total)`), distributing CPU load across frames.
+* **Priority Immediate Wake-up:**
+  * When `CommandQueue` receives an urgent `PlayerDirect` or `Lifecycle` command, `RequestImmediateTick()` forces evaluation on the very next frame regardless of timer accumulator.
+* **Review discovery:**
+  * Constructor called `SetUpdateFrequency(10.0f)` which produced a log entry before test logs were cleared. Test adjusted to clear constructor log before assertions.
+* **Verification & Tests:**
+  * 6 new test cases added in `tests/test_update_scheduler.cpp`: interval clamping, 60 FPS periodic simulation, immediate wakeup override, round-robin time slicing, state reset, and logging.
+  * Total automated test count expanded to **38 test cases**, all passing with 0 failures.
