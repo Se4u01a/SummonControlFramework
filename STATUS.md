@@ -98,13 +98,15 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **62/62 test cases passing** (0 failures, execution time < 2 ms).
+  * **67/67 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
   * `RuntimeGate` module logging runtime environment and validating executable version.
-  * Deployed to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
-  * Mod active in `D:\Games\stb\[STB] Mod Organizer\profiles\SBORKA\modlist.txt`.
+  * Dual-deployment active in `xmake.lua`:
+    * `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`
+    * `D:\Games\stb\[RE2CE TEST] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`
+  * Mod active in `D:\Games\stb\[STB] Mod Organizer\profiles\SBORKA\modlist.txt` as `+Summon Control Framework`.
 
 ## In-Game Verified Functionality (Player Tested in MO2 / Skyrim SE 1.5.97)
 
@@ -112,7 +114,7 @@
 * **Cell Transition Resilience Verified:** Transitioning across load doors correctly preserves summons without crashes or broken registry state (`Active <-> Suspended` transition).
 * **Live Summon Registration & Synchronization:** `UpdateHook` on `PlayerCharacter::Update` correctly polls `commandedActors` at 15 Hz and tracks active summons.
 * **Automatic Garbage Collection Active:** Dispelled or killed summons cleanly transition with 3-second grace period for death/ash-pile fadeout before record purging.
-* **Twin Summons In-Game Verified:** User verified in live gameplay that twin summons (`player.addperk 000581DE`) function correctly simultaneously, and both are tracked cleanly by Summon Control Framework.
+* **Twin Summons In-Game Verified:** User verified in live gameplay with Twin Souls perk (`player.addperk 000581DE`) that 2 summons function concurrently, body passthrough works for both simultaneously, and both are tracked cleanly by Summon Control Framework.
 
 ## Implemented and Deployed to MO2: FF-01 (Friendly Fire Protection & Attack Filtering)
 
@@ -131,14 +133,13 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
   * `src/FriendlyFire/ProjectileHook.h/.cpp`: hooks `ArrowProjectile` (arrows & crossbow bolts) and `MissileProjectile` (spells) at `AddImpact` (vfunc 189) and `HandleHits` (vfunc 190).
   * Skips impact registration on friendly summons and compacts contact points, allowing projectiles to fly cleanly through summons into enemies behind.
 
-## Ready for In-Game Playtesting in MO2 ([RE2CE TEST] Profile RE2CE & [STB] Profile SBORKA)
+## Active Playtesting Environment: [STB] Mod Organizer (Profile SBORKA)
 
-Active clean testing profile configured in `D:\Games\stb\[RE2CE TEST] Mod Organizer` (Profile `RE2CE`).
-Mod automatically deployed and enabled as `+Summon Control Framework`.
+Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active testing environment has transitioned back to `D:\Games\stb\[STB] Mod Organizer` (Profile `SBORKA`), where Precision is installed and active.
 
-1. **Multi-summon unlock test:** In console type `player.addperk 000581DE` (Twin Souls), cast 2 summons, and verify both stay active simultaneously.
-2. **Melee pass-through test:** Stand behind a summon with a sword/axe while an enemy is nearby. Swing at the enemy through the summon — sword should pass through the summon (no hitstop, no damage) and strike the enemy.
-3. **Projectile pass-through test:** Shoot an arrow or spell missile through a summon — projectile should pass through the summon and strike the target behind.
+1. **Melee pass-through test (with Precision):** Stand behind a summon with a sword/axe while an enemy is nearby. Swing at the enemy through the summon — sword physically slices through the summon (no hitstop, no damage) and strikes the enemy behind.
+2. **Fallback test (without Precision):** If Precision is disabled, `HitHook` nullifies damage and hostility reaction, but the weapon swing stops on the summon's vanilla raycast hitbox.
+3. **Projectile pass-through test:** Shoot an arrow, crossbow bolt, or spell missile through a summon — projectile passes cleanly through the summon and strikes the target behind.
 
 ## Known limitations
 

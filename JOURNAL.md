@@ -149,8 +149,9 @@ Implementation of core configuration parsing, validation, and serialization.
   * Strips comments delimited by `;` or `#` and trims whitespace seamlessly.
 * **Defensive Clamping & Sanitization:**
   * User-edited INI files are prone to typos, negative numbers, or extreme values.
-  * `ValidateAndSanitize()` runs automatically after loading:\n    * Clamps `maxSummonsPerOwner` to [1, 32].
-    * Validates `logLevel` against known strings (\"trace\", \"debug\", \"info\", \"warn\", \"error\", \"critical\"), falling back safely to \"info\".
+  * `ValidateAndSanitize()` runs automatically after loading:
+    * Clamps `maxSummonsPerOwner` to [1, 32].
+    * Validates `logLevel` against known strings ("trace", "debug", "info", "warn", "error", "critical"), falling back safely to "info".
     * Enforces `updateFrequencyHz` in [1.0, 60.0] and `commandTTL` in [0.1, 60.0].
     * Enforces leash integrity: ensures `returnDistanceThreshold > followDistanceThreshold` to prevent instant leash-break loops.
     * Clamps attack slots and formation spread radii.
@@ -188,7 +189,8 @@ Implementation of Stage 1: Wiring Skyrim's `BSTEventSink` into `SummonRegistry`.
 
 * **Separation of Engine Sinks and Dispatch Logic:**
   * To preserve the pure decoupled core, `EventDispatcher` resides in `src/Core/` with zero `#include <RE/Skyrim.h>`, processing lightweight `ActiveEffectEvent`, `DeathEvent`, and `CellAttachDetachEvent`.
-  * `EventAdapter` in `src/Engine/` implements `RE::BSTEventSink<T>` for the three target events, safely resolving `FormID` from `NiPointer<TESObjectREFR>` and forwarding to `EventDispatcher`.\n* **Displacement Callback Integration:**
+  * `EventAdapter` in `src/Engine/` implements `RE::BSTEventSink<T>` for the three target events, safely resolving `FormID` from `NiPointer<TESObjectREFR>` and forwarding to `EventDispatcher`.
+* **Displacement Callback Integration:**
   * When a recast event exceeds the owner's limit, `EventDispatcher` fires a `DisplaceCallback` with the oldest summon ID, enabling the engine adapter to initiate in-game dispel.
 * **Self-Buff & Non-Fatal Event Filtering:**
   * Self-buffs where `caster == target` are rejected immediately.
@@ -261,9 +263,9 @@ Resolution of stale summon retention in scf registry after death or dispelling.
   * scf registry displays active summons clearly with duration and ownership.
   * Any dying/fading summons currently undergoing the 3-second ash-pile transition are displayed distinctly as (fading in ash-pile), avoiding confusion.
 * **Verification:**
-  * Added TestGracePeriodGarbageCollection in 	ests/test_summon_registry.cpp.
+  * Added TestGracePeriodGarbageCollection in `tests/test_summon_registry.cpp`.
   * Test suite expanded to **62/62 unit tests passing**.
-  * Deployed fresh DLL and PDB to D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\.
+  * Deployed fresh DLL and PDB to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
 
 ---
 
@@ -280,7 +282,7 @@ Comprehensive milestone following user playtesting in `[STB] Mod Organizer` and 
   * **True Melee Pass-Through (High Viability):** Mod environment audit identified `Precision.dll` (v2.0.4) active in `D:\Games\stb\[STB] Mod Organizer\mods\Precision\`. Integrating `PrecisionAPI.h` and returning `bIgnoreHit = true` in `PreHitCallback` allows weapon swings to physically pass through friendly summons without hitstop and strike enemies behind them.
   * **True Projectile Pass-Through (Viable):** Filtering projectile collidables (`COL_LAYER_ARROW`, `COL_LAYER_MAGIC`) in Havok (`bhkCollisionFilter`) prevents collision generation between player/ally projectiles and registered summons.
 * **Full Documentation & Roadmap Synchronization:**
-  * **`Summon_Control_Framework_PLAN.md`:** Expanded Stage 5 into 5 detailed sub-stages (`FF-Stage A` through `FF-Stage E`) based on `Friendly_Fire_Protection_Addendum.md`. Updated DoD with damage protection, attack pass-through, and regression criteria.
+  * **`PLAN.md`:** Expanded Stage 5 into 5 detailed sub-stages (`FF-Stage A` through `FF-Stage E`) based on `Friendly_Fire_Protection_Addendum.md`. Updated DoD with damage protection, attack pass-through, and regression criteria.
   * **`ARCHITECTURE.md`:** Added Section 16 detailing the architectural separation between Actor body collision (`CollisionPairClassifier`) and combat hit filtering (`AttackFilterManager`), the `RelationshipClassifier` model (`AttackSourceKind`), Precision backend mechanics, and INI configuration schemas.
   * **`STATUS.md`:** Formally recorded in-game verified milestones and activated Workstream FF-01 roadmap tasks.
   * **`TESTING.md`:** Added Section 4 with comprehensive acceptance test suites FF-1 (Damage Protection), FF-2 (Attack Pass-Through), and FF-3 (Compatibility & Regression).
@@ -316,3 +318,29 @@ Implemented and deployed the complete friendly fire and combat pass-through subs
   * Skips impact registration on friendly summons and removes physics contact points from `hkpAllCdPointCollector`, allowing arrows, bolts, and spells to fly directly through summons into targets behind them!
 * **Build & Deployment:**
   * Clean compilation of `SummonControlFramework.dll` (647 KB) and automatic deployment to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
+
+---
+
+## 2026-11-10 — Clean Profile Verification ([RE2CE TEST]), Twin Summons In-Game, and Formalized Dependency Matrix
+
+Testing iteration in minimal environment and documentation of system dependencies and graceful degradation.
+
+* **Testing in `[RE2CE TEST] Mod Organizer` (Profile `RE2CE`):**
+  * Switched testing to clean Skyrim environment to isolate SCF mechanics from complex third-party mod interactions.
+  * Resolved environment issues: fixed Cyrillic console squares (`□□□`) via `fonts_console.swf` and configured borderless display tweaks.
+  * User confirmed:
+    * Twin summons (`player.addperk 000581DE` Twin Souls) work simultaneously in gameplay and are tracked cleanly by SCF.
+    * Physical body passthrough functions seamlessly across multiple concurrent summons.
+    * Cell transitions (`Active <-> Suspended`) cleanly preserve both summons without crashes or memory leakage.
+* **Dual-Deployment Build Automation (`xmake.lua`):**
+  * Updated `xmake.lua` to deploy built DLL and PDB files automatically to both `D:\Games\stb\[STB] Mod Organizer` and `D:\Games\stb\[RE2CE TEST] Mod Organizer`.
+* **Return to `[STB] Mod Organizer` (Profile `SBORKA`):**
+  * Baseline clean tests completed. Transitioning primary testing environment back to `[STB] Mod Organizer`, where `Precision.dll` is installed and active, enabling full live combat verification of Melee Pass-Through (`PreHitCallback` / `bIgnoreHit = true`) and projectile traversal in complex combat scenarios.
+* **Formal Dependency & Fallback Matrix Documented:**
+  * Synchronized all project documentation (`README.md`, `ARCHITECTURE.md`, `STATUS.md`, `TESTING.md`) with explicit separation of:
+    1. **Hard Requirements:** Skyrim SE/AE, SKSE64, Address Library (critical for plugin load).
+    2. **Soft Requirements & Feature Fallback:**
+       - `Precision` + `Behavior Data Injector`: Full melee pass-through without hitstop vs fallback to `HitHook` damage nullification (`damage = 0`).
+       - `Twin Souls` perk / multi-summon mods: Support for >1 concurrent summon vs vanilla engine cap of 1.
+       - `SSE Display Tweaks`: Borderless fullscreen and high-FPS Havok physics stability.
+       - `Console Font Fix` / `ConsolePlusPlus`: Console readability and Ctrl+V command pasting.

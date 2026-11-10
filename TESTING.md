@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **62/62 тестов успешно пройдено (0 failures)**.
+Текущий результат: **67/67 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -95,6 +95,13 @@ xmake run scf_tests
 * `collision_global_bypass_disabled`: Проверяет мгновенный возврат к ванильному поведению при выключении `bEnableCollisionBypass = false` (Safety Gate).
 * `collision_classifier_logging`: Проверяет корректность вызовов диагностического логгера при оценке пар коллизий.
 
+### Suite K: Friendly Fire & Attack Filtering (`FriendlyFireSettings` & `RelationshipClassifier`) — 5 tests
+* `friendly_fire_settings_default_values`: Проверяет соответствие параметров FriendlyFire спецификации по умолчанию (`bEnableSummonProtection = true`, `bMeleePassThrough = true`, `bProjectilePassThrough = true` и др.).
+* `friendly_fire_settings_parse_ini_and_serialization`: Проверяет парсинг секции `[FriendlyFire]` в INI и round-trip сериализацию без потери данных.
+* `relationship_classifier_source_classification`: Проверяет классификацию атакующих: игрок -> `Player`, спутник -> `PlayerAlly`, сумон игрока -> `PlayerOwnedSummon`, сумон спутника -> `AlliedSummon`, враг -> `Hostile`, неизвестный -> `Unknown` с защитой от циклов цепочки командования (глубина 4).
+* `relationship_classifier_target_protection`: Проверяет селектор защиты целей в зависимости от настроек (`bProtectPlayerOwnedSummons`, `bProtectAlliedSummons`).
+* `relationship_classifier_evaluate_attack_matrix`: Проверяет матрицу решений: защита атак ближнего боя, стрел, магии, криков от игрока и союзников, при безусловном пропуске атак от врагов и нейтральных сущностей.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -106,10 +113,11 @@ xmake run scf_tests
   * CommonLibSSE-NG собрана с `ENABLE_SKYRIM_SE=1` и `ENABLE_SKYRIM_AE=1`.
   * Архитектура `windows|x64`.
   * Address Library режим (`SKSE::VersionIndependence::AddressLibrary`).
-* **Развертывание бинарников:**
-  * DLL: `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\SummonControlFramework.dll` (~600 KB).
-  * PDB: `SummonControlFramework.pdb` (полные отладочные символы).
-  * INI: `SummonControlFramework.ini` (конфигурация мода со всеми секциями).
+* **Развертывание бинарников (Dual-Deployment):**
+  * Основная сборка: `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\SummonControlFramework.dll` (~647 KB).
+  * Тестовая сборка: `D:\Games\stb\[RE2CE TEST] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\SummonControlFramework.dll` (~647 KB).
+  * PDB: `SummonControlFramework.pdb` (полные отладочные символы развернуты в обе сборки).
+  * INI: `SummonControlFramework.ini` (конфигурация мода со всеми секциями, включая `[FriendlyFire]`).
   * Профиль MO2: активирован в `D:\Games\stb\[STB] Mod Organizer\profiles\SBORKA\modlist.txt` как `+Summon Control Framework`.
 
 ---
@@ -119,9 +127,9 @@ xmake run scf_tests
 ### Verified
 | Component | Evidence |
 |---|---|
-| Plugin build output | `SummonControlFramework.dll` generated (~600 KB, with `.pdb`) |
-| Core unit tests | 61/61 passing via `scf_tests.exe` |
-| MO2 deployment | Deployed to `mods\Summon Control Framework` and enabled in `SBORKA` |
+| Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
+| Core unit tests | 67/67 passing via `scf_tests.exe` (< 2 ms) |
+| MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
 | Feature | In-Game Observation & Evidence | Status |
@@ -132,7 +140,7 @@ xmake run scf_tests
 | Body Passthrough | Player character walks through summoned familiar without doorway clipping or pushback | PASS |
 | Cell Transitions | Summons transition between locations without memory corruption (`Active <-> Suspended`) | PASS |
 | Auto Garbage Collection | Dead / dispelled summons cleaned up with 3s grace period for ash-pile/death fadeout | PASS |
-| Multi-Summon Limit | Engine requires Twin Souls perk (`player.addperk 000581DE`) for >1 active summon | IDENTIFIED |
+| Multi-Summon Limit | User verified in gameplay with Twin Souls perk (`player.addperk 000581DE`) that 2 summons function concurrently, body passthrough works for both, and both are tracked cleanly | PASS |
 
 ---
 
@@ -164,3 +172,30 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * [ ] **FF-3.3 (Enemy Combat Loop):** Атаки игрока по истинным врагам (`Hostile`) никогда ошибочно не фильтруются.
 * [ ] **FF-3.4 (No Infinite Event Recursion):** Подавление попаданий не вызывает каскадных циклов `TESHitEvent` или утечек памяти.
 * [ ] **FF-3.5 (Precision Compatibility):** Отсутствие конфликтов и взаимных блокировок с `Precision.dll` и сопутствующими боевыми модами (MCO/True Directional Movement).
+
+---
+
+## 5. Внешние зависимости и окружение тестирования (Dependency & Fallback Matrix)
+
+Для корректной работы всех подсистем и проведения полного цикла тестирования используется следующая матрица зависимостей:
+
+### 5.1. Обязательные зависимости рантайма (Hard Requirements)
+Без этих компонентов `SummonControlFramework.dll` не будет загружен SKSE:
+1. **Skyrim Special Edition (1.5.97.0)** или **Skyrim Anniversary Edition (1.6.x)**.
+2. **SKSE64** (v2.0.20 для SE 1.5.97, v2.2.6+ для AE).
+3. **Address Library for SKSE Plugins** (`version-1-5-97-0.bin`).
+
+### 5.2. Опциональные зависимости и архитектурная деградация (Soft Requirements & Fallback)
+
+| Компонент / Мод | Затрагиваемый функционал | Поведение при ОТСУТСТВИИ зависимости (Fallback) | Поведение при НАЛИЧИИ зависимости |
+|---|---|---|---|
+| **[Precision](https://www.nexusmods.com/skyrimspecialedition/mods/72347) (v2.0.4+)** | **Melee Pass-Through** (прохождение холодного оружия) | `PrecisionBackend` деактивируется. Работает `HitHook` на функции `ProcessHit`: урон обнуляется (`damage = 0`), агро/stagger подавляются, но ванильный хитбокс рейкаста вызывает хитстоп/остановку замаха на теле сумона. | Активируется `PreHitCallback` с `bIgnoreHit = true`. Оружие физически со свистом пролетает сквозь тело сумона без задержек и хитстопа, поражая противника позади него. |
+| **Behavior Data Injector** | Интеграция Precision | Precision не может перехватывать события кадров анимации атаки. | Precision полноценно перехватывает траектории коллизий оружия. |
+| **Перк «Парные души» (`000581DE`)** | Мультипризыв (2+ существ) | Ванильный движок имеет лимит `commandedActors = 1`. При касте 2-го сумона 1-й мгновенно рассеивается. | Игрок может одновременно призывать 2 и более существ. SCF регистрирует и координирует отряд целиком. |
+| **SSE Display Tweaks** | Режим окна без рамки и физика | Эксклюзивный полноэкранный режим с риском зависания при Alt-Tab; при FPS > 60 физика Havok может сбоить. | Настоящее окно без рамки (Borderless Fullscreen), мгновенный Alt-Tab, адаптивный физический тик. |
+| **Console Font Fix & ConsolePlusPlus** | Диагностика через консоль | При русской раскладке консоль выводит квадраты `□□□`, невозможно вставить текст через Ctrl+V. | Корректный ввод на русском/английском, поддержка вставки команд через Ctrl+V, история команд по стрелкам. |
+
+### 5.3. Окружения тестирования
+* **Основная тестовая сборка:** `D:\Games\stb\[STB] Mod Organizer` (профиль `SBORKA`). Включает Precision, боевые моды, настроенную физику и графику. Используется для тестов сквозного удара холодным оружием (Melee Pass-Through) и комплексных боёв.
+* **Чистый тестовый профиль:** `D:\Games\stb\[RE2CE TEST] Mod Organizer` (профиль `RE2CE`). Минимальный набор модов без посторонних скриптов. Использовался для верификации базового прохождения акторов, смены локаций и перка парных призывов.
+* **Автоматическое развертывание:** `xmake.lua` собирает DLL и автоматически копирует её в обе сборки MO2.
