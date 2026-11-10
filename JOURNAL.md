@@ -74,3 +74,22 @@ Implementation of Stage 6: multi-summon coordination, formation management, and 
 * **Verification & Tests:**
   * 5 new test cases added in `tests/test_squad_coordinator.cpp`, bringing total automated coverage to 20 tests.
   * All 20 tests pass cleanly with 0 failures.
+
+---
+
+## 2026-11-10 — SummonRegistry & Lifecycle State Tracking
+
+Implementation of Stage 1: robust summon lifecycle tracking and capacity management.
+
+* **Idempotent Registration & Dispel Tracking:**
+  * Spells and active effects in Skyrim can fire duplicate events or refresh durations while the summon actor is alive.
+  * `SummonRegistry::RegisterSummon` is strictly idempotent: re-registering an existing `EntityID` updates duration and restores `Active` status without creating duplicate entries or corrupting squad lists.
+* **Preventing Premature Deletion on Cell Detach:**
+  * PLAN.md sections 1.4 and 4.3 emphasize that passing through doors or cell transitions causes `TESCellAttachDetachEvent(detach)`. Deleting records on detach causes lost summons when the cell loads.
+  * Introduced `SummonLifecycleState::Suspended`: detach marks the entity suspended without deleting its metadata. Re-entering cell attach cleanly restores `Active` status.
+* **Capacity Limits & Oldest-Summon Displacement:**
+  * When a player recasts a summon beyond their perk limit (e.g. 1 by default, 2 with Twin Souls), Skyrim's game engine dispels the oldest summon.
+  * `SummonRegistry` mimics this contract: it identifies the oldest active summon by `registrationTimestamp`, marks it `Displaced`, and outputs its `EntityID` so the engine adapter can initiate the in-game dispel/kill.
+* **Verification & Tests:**
+  * 6 new test cases added in `tests/test_summon_registry.cpp`: idempotent registration, cell detach suspension, recast limit displacement, death/dispel lifecycle, stale record sweeping, and registry reset.
+  * Total automated test count expanded to **26 test cases**, all passing with 0 failures.

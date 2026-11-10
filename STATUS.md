@@ -8,6 +8,11 @@
   * Enums for summon lifecycle and orders: `SummonState`, `SummonOrder`, `AggressionMode`.
   * `SummonModel`: state time tracking, target lost debounce timer, owner and target IDs.
   * `DecisionContext`: snapshot structure capturing distances to owner and target, combat flags, and configurable thresholds.
+* **Summon Registry (`SummonRegistry`):**
+  * **Idempotent registration:** safely handles repeat registrations, duplicate game events, and duration refreshes without duplicating records.
+  * **Cell detach / attach lifecycle (`Suspended` state):** prevents premature record deletion during loading doors or cell transitions. Detached references enter `Suspended` state and resume `Active` upon cell attach.
+  * **Owner limits and displacement:** tracks active summon count against per-owner limits (e.g. 1 default, 2 with Twin Souls). Automatically identifies the oldest active summon, marks it `Displaced`, and outputs its ID for engine-level dispel.
+  * **Death & Dispel handling:** marks records `Dead` on death events and `Dispatched` on effect removal. Provides `ClearStaleRecords()` for garbage collection and `Reset()` for save-load reloads.
 * **Gameplay FSM (`StateMachine`):**
   * States implemented: `Idle`, `FollowOwner`, `Guard`, `AcquireTarget`, `Approach`, `Engage`, `Return`, `Despawn`.
   * Direct orders processing (`Follow`, `WaitGuard`, `Return`) overriding automated combat.
@@ -30,11 +35,11 @@
   * **Target distribution:** automatically distributes multiple targets across squad members instead of all summons dogpiling on a single enemy.
   * **Formation offsets:** calculates symmetrical, non-overlapping follow/guard offsets around the owner based on squad size and owner yaw.
 * **Observability & Diagnostics:**
-  * Pluggable functional callbacks capturing state changes, target scoring, and squad slot claims with structured reasons.
+  * Pluggable functional callbacks capturing state changes, target scoring, registry events, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\My Games\Skyrim Special Edition\SKSE\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **20/20 test cases passing** (0 failures, execution time < 2 ms).
+  * **26/26 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Steam AE 1.6.1170 (primary) and SE 1.5.97 via Address Library (`commonlibsse-ng.plugin`).
@@ -51,10 +56,8 @@
 
 ## Up next (Plan Roadmap)
 
-* **Stage 1 (SummonRegistry PoC):**
-  * Subscribe to `TESActiveEffectApplyRemoveEvent` to detect summon spell cast and expiration.
-  * Hook `TESDeathEvent` and `TESCellAttachDetachEvent` for lifecycle management.
-  * Map `ActorHandle` to internal `EntityID`.
+* **Stage 1 (SummonRegistry Engine Wiring):**
+  * Connect `SummonRegistry` to engine `BSTEventSink` handlers for `TESActiveEffectApplyRemoveEvent`, `TESDeathEvent`, and `TESCellAttachDetachEvent`.
   * Add in-game console commands: `scf_status`, `scf_registry`.
 * **Stage 2 (Collision PoC - Key Technical Risk):**
   * Passive observation hook for Havok collision filter callbacks.

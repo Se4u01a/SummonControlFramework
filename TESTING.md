@@ -6,7 +6,7 @@ Three levels, kept strictly separate. Level 3 tracks in-game checks in Skyrim SE
 
 ## 1. Automated (passing)
 
-Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **20 cases, 0 failures, 0 failed checks**.  
+Executable: `build\windows\x64\releasedbg\scf_tests.exe` — **26 cases, 0 failures, 0 failed checks**.  
 Execution time: ~1-2 ms.
 
 ### Suite A: Gameplay FSM (`StateMachine`) — 8 tests
@@ -35,6 +35,14 @@ Execution time: ~1-2 ms.
 * `TestRangedAndMeleeIndependentSlots`: Verifies that melee and ranged attack slots are tracked independently on the same target.
 * `TestSquadCoordinatorLogging`: Verifies that slot assignments are logged with summon ID, combat role, target ID, and current slot claim counts.
 
+### Suite D: Summon Registry (`SummonRegistry`) — 6 tests
+* `TestIdempotentRegistration`: Re-registering the same summon ID updates remaining duration and un-suspends without creating duplicate registry records.
+* `TestCellDetachSuspendsWithoutDeleting`: Verifies that `NotifyCellDetach` switches lifecycle to `Suspended` without removing the record. Suspended summons are excluded from active squad queries. `NotifyCellAttach` cleanly restores `Active` status.
+* `TestReCastExceedingLimitDisplacesOldest`: With owner limit set to 2, summoning a 3rd entity automatically detects the oldest registered entity, marks it `Displaced`, and outputs its ID for engine-level dispel, leaving the 2 newer summons active.
+* `TestDeathAndDispelLifecycle`: Verifies `NotifyDeath` marks record `Dead`, `NotifyEffectRemoved` marks record `Dispatched`, and `ClearStaleRecords` purges all dead/dispatched entities.
+* `TestResetClearsAll`: Verifies that `Reset()` purges all records for safe save-load reloading.
+* `TestRegistryLogging`: Verifies that registration, cell detach/attach, and death events produce formatted diagnostic log lines.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -57,7 +65,7 @@ Execution time: ~1-2 ms.
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (496 KB, with `.pdb`) |
-| Core unit tests | 20/20 passing via `scf_tests.exe` |
+| Core unit tests | 26/26 passing via `scf_tests.exe` |
 
 ### Waiting for live Skyrim run
 | Feature | Target verification |
