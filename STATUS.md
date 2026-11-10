@@ -126,6 +126,7 @@
   * Field: summons passed through each other but could land on top of one another (their controller stood on the other's body bones, layer Biped 8 / BipedNoCC 33, which the seat did not cover).
   * The body seat now also disables controller (30) ↔ the other actor's Biped/BipedNoCC bones for the same pass-through pairs (`core::IsPassThroughLayerPair`, 1 test); separate counter in the 10 s summary. Field: still "micro-collisions", the bones counter stayed 0 (Skyrim.esm COLL: the controller never collides with Biped 8).
   * Follow-up: pairs Havok accepted before the table knew both actors keep colliding while they overlap. Every publish now re-filters the existing pairs of new / regrouped / removed actors through `bhkWorld::UpdateCollisionFilter` (id 76091) (`core::RowsToRefilter`, 3 tests — **125/125 passing**).
+  * Field (screenshot): wolves still pile into a column; re-filter ran (26 bodies). Same rule added on the shape-collection (id 76677) and ray-collidable (id 76679) filter slots (controller ray vs partner controller only), plus `diag:` log lines naming what our controllers still touch (1 test — **126/126 passing**).
   * **Field status:** built and deployed, NOT tested in game (TEST-PASS-4).
 * **PoE2 stage M2: attack what I attack + aggression radius — 2026-11-11:**
   * `TESHitEvent` sink: when the player hits an enemy, summons in `Follow` (or `Attack` on another target) get a FocusTarget on it; never in `Passive`, never over `Return`/`MoveTo`/`Guard` (`core::ShouldAssistPlayerHit`). INI `[Combat] bAssistPlayerAttacks`.

@@ -15,6 +15,11 @@ namespace scf::core
 		return (a_layerA == kCharController && isBody(a_layerB)) || (a_layerB == kCharController && isBody(a_layerA));
 	}
 
+	bool IsPassThroughRayPair(std::uint32_t a_rayLayer, std::uint32_t a_targetLayer) noexcept
+	{
+		return a_rayLayer == 30 && a_targetLayer == 30;
+	}
+
 	bool ShouldPassThrough(const PassThroughParty& a_lhs, const PassThroughParty& a_rhs, const CollisionSettings& a_settings) noexcept
 	{
 		if (!a_settings.enableCollisionBypass) {

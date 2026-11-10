@@ -79,6 +79,23 @@ TEST(TestPassThroughLayerPairs)
 	CHECK(!IsPassThroughLayerPair(30, 13));
 }
 
+// Given a controller probe ray (30) cast by a wolf, it stops hitting only another own
+// wolf's controller (30); bones, dead bodies and the world stay hittable, and the
+// player's crosshair / activation (40), camera (39), LOS (41) and pick (43) rays still
+// hit own summons.
+TEST(TestPassThroughRayPairs)
+{
+	CHECK(IsPassThroughRayPair(30, 30));
+	CHECK(!IsPassThroughRayPair(30, 8));
+	CHECK(!IsPassThroughRayPair(30, 33));
+	CHECK(!IsPassThroughRayPair(30, 32));
+	CHECK(!IsPassThroughRayPair(30, 13));
+	CHECK(!IsPassThroughRayPair(40, 30));
+	CHECK(!IsPassThroughRayPair(39, 30));
+	CHECK(!IsPassThroughRayPair(41, 30));
+	CHECK(!IsPassThroughRayPair(43, 30));
+}
+
 // Given a wolf whose pairs Havok already accepted before SCF knew it (spawned against
 // another wolf, or its controller had no group yet)
 // When the next table carries it with a system group

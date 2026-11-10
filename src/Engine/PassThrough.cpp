@@ -10,6 +10,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <format>
+#include <string>
 #include <shared_mutex>
 #include <vector>
 
@@ -39,6 +41,9 @@ namespace scf::engine::passthrough
 		std::atomic<std::uint64_t> s_collisionSkipped{ 0 };
 		std::atomic<std::uint64_t> s_bonesSkipped{ 0 };
 		std::atomic<bool> s_bonesObserved{ false };
+		std::atomic<std::uint64_t> s_unmatchedLayersSeen{ 0 };  // diagnostic, one bit per "other" layer < 64
+		std::atomic<std::uint32_t> s_keptPairLogs{ 0 };         // diagnostic, capped
+		std::atomic<std::uint64_t> s_rayLayersSeen{ 0 };        // diagnostic, kept ray layers
 		std::uint64_t s_lastBonesReported{ 0 };
 		std::atomic<bool> s_avoidObserved{ false };
 		std::atomic<bool> s_filterObserved{ false };
@@ -110,6 +115,27 @@ namespace scf::engine::passthrough
 				const auto layerL = infoL & 0x7F;
 				const auto layerR = infoR & 0x7F;
 				if (!core::IsPassThroughLayerPair(layerL, layerR)) {
+					// Diagnostic: once per layer, what else one of our controllers can still
+					// touch besides the static world (field: wolves still pile up).
+					const bool ourL = layerL == kCharControllerLayer;
+					const bool ourR = layerR == kCharControllerLayer;
+					if (ourL != ourR) {
+						const auto other = ourL ? layerR : layerL;
+						constexpr std::uint64_t kWorldLayers = (1ull << 1) | (1ull << 2) | (1ull << 9) | (1ull << 13) | (1ull << 17);
+						const auto bit = other < 64 ? (1ull << other) : 0ull;
+						if (bit && !(bit & kWorldLayers) && !(s_unmatchedLayersSeen.fetch_or(bit, std::memory_order_relaxed) & bit)) {
+							std::shared_lock lock(s_tableLock);
+							const auto* ours = FindByGroup((ourL ? infoL : infoR) >> 16);
+							const auto* theirs = FindByGroup((ourL ? infoR : infoL) >> 16);
+							if (ours) {
+								logger::info("[PassThrough] diag: controller of 0x{:08X} collides with layer {} (group {}, {}).",
+									ours->party.id, other, (ourL ? infoR : infoL) >> 16,
+									theirs ? std::format("owned by table actor 0x{:08X}", theirs->party.id) : std::string("not a table actor"));
+							} else {
+								s_unmatchedLayersSeen.fetch_and(~bit, std::memory_order_relaxed);  // not ours: keep watching
+							}
+						}
+					}
 					return result;
 				}
 				// Controller vs controller, or controller vs the other actor's body bones
@@ -126,6 +152,16 @@ namespace scf::engine::passthrough
 					const auto* lhs = FindByGroup(infoL >> 16);
 					const auto* rhs = lhs ? FindByGroup(infoR >> 16) : nullptr;
 					pass = rhs && core::ShouldPassThrough(lhs->party, rhs->party, s_settings);
+					// Diagnostic: a body pair kept enabled although one side is ours and the
+					// other side is a controller/body we do not recognise by group.
+					if (!pass && (lhs || FindByGroup(infoR >> 16))) {
+						const auto* ours = lhs ? lhs : FindByGroup(infoR >> 16);
+						const auto* other = lhs ? rhs : nullptr;
+						if (!other && s_keptPairLogs.fetch_add(1, std::memory_order_relaxed) < 12) {
+							logger::info("[PassThrough] diag: kept body pair layers {}/{}: table actor 0x{:08X} vs unknown group {} (infos 0x{:08X} / 0x{:08X}).",
+								layerL, layerR, ours->party.id, (lhs ? infoR : infoL) >> 16, infoL, infoR);
+						}
+					}
 				}
 				if (pass) {
 					*result = 0;
@@ -138,6 +174,91 @@ namespace scf::engine::passthrough
 					} else {
 						s_collisionSkipped.fetch_add(1, std::memory_order_relaxed);
 					}
+				}
+				return result;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// Both filter infos belong to a pass-through pair (matched by system group).
+		bool PassByGroups(std::uint32_t a_infoA, std::uint32_t a_infoB)
+		{
+			std::shared_lock lock(s_tableLock);
+			const auto* a = FindByGroup(a_infoA >> 16);
+			const auto* b = a ? FindByGroup(a_infoB >> 16) : nullptr;
+			return b && core::ShouldPassThrough(a->party, b->party, s_settings);
+		}
+
+		std::uint32_t RootFilterInfo(const void* a_cdBody)
+		{
+			// hkpCdBody: m_parent at +0x18; the root body is the hkpCollidable, whose
+			// broad-phase filter info sits at +0x2C (same walk as id 76677).
+			auto body = reinterpret_cast<std::uintptr_t>(a_cdBody);
+			for (auto parent = *reinterpret_cast<const std::uintptr_t*>(body + 0x18); parent; parent = *reinterpret_cast<const std::uintptr_t*>(parent + 0x18)) {
+				body = parent;
+			}
+			return *reinterpret_cast<const std::uint32_t*>(body + kCollidableFilterInfo);
+		}
+
+		std::atomic<std::uint64_t> s_shapeSkipped{ 0 };
+		std::atomic<std::uint64_t> s_raySkipped{ 0 };
+		std::uint64_t s_lastShapeReported{ 0 };
+		std::uint64_t s_lastRayReported{ 0 };
+
+		// ---------------------------------------------------------------- seat 2b
+		// hkpShapeCollectionFilter sub-vtable (VTABLE_bhkCollisionFilter[2], id 289510)
+		// slot 1 = id 76677 (+DD67B0), read 2026-11-11: `hkBool* (this, hkBool* out,
+		// const hkpCollisionInput*, const hkpCdBody* a, const hkpCdBody* b,
+		// const hkpShapeContainer* bContainer, hkpShapeKey key)`. It walks both bodies to
+		// their root collidables (+0x18 parent, +0x2C info) and has a dedicated branch for
+		// a character-controller (layer 30) collection - the narrow phase of a controller
+		// against another body's sub-shapes. Same rule as seat 2 on the root infos.
+		struct ShapeCollectionFilterHook
+		{
+			static std::uint8_t* thunk(void* a_this, std::uint8_t* a_out, const void* a_input, const void* a_bodyA, const void* a_bodyB, const void* a_container, std::uint32_t a_key)
+			{
+				std::uint8_t* result = func(a_this, a_out, a_input, a_bodyA, a_bodyB, a_container, a_key);
+				if (!result || *result == 0 || !a_bodyA || !a_bodyB || !s_hasSummons.load(std::memory_order_relaxed)) {
+					return result;
+				}
+				const auto infoA = RootFilterInfo(a_bodyA);
+				const auto infoB = RootFilterInfo(a_bodyB);
+				if (core::IsPassThroughLayerPair(infoA & 0x7F, infoB & 0x7F) && PassByGroups(infoA, infoB)) {
+					*result = 0;
+					s_shapeSkipped.fetch_add(1, std::memory_order_relaxed);
+				}
+				return result;
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		// ---------------------------------------------------------------- seat 2c
+		// hkpRayCollidableFilter sub-vtable (VTABLE_bhkCollisionFilter[4], id 289512) slot 1
+		// = id 76679 (+DD6900), read 2026-11-11: `hkBool* (this, hkBool* out,
+		// const hkpWorldRayCastInput* in, const hkpCollidable* b)`; it tests in+0x24 (the
+		// ray's filter info, carrying the caster's system group) against b+0x2C. A ray cast
+		// by one of our actors' controllers (layer 30: ground / step probes) no longer hits
+		// the controller of its pass-through partner, so a wolf cannot find support on one;
+		// other ray layers (crosshair, camera, LOS) are kept and logged once per layer.
+		struct RayCollidableFilterHook
+		{
+			static std::uint8_t* thunk(void* a_this, std::uint8_t* a_out, const void* a_input, const RE::hkpCollidable* a_collidable)
+			{
+				std::uint8_t* result = func(a_this, a_out, a_input, a_collidable);
+				if (!result || *result == 0 || !a_input || !a_collidable || !s_hasSummons.load(std::memory_order_relaxed)) {
+					return result;
+				}
+				const auto rayInfo = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(a_input) + 0x24);
+				const auto targetInfo = *reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uintptr_t>(a_collidable) + kCollidableFilterInfo);
+				if ((targetInfo & 0x7F) != kCharControllerLayer || !PassByGroups(rayInfo, targetInfo)) {
+					return result;
+				}
+				const auto rayLayer = rayInfo & 0x7F;
+				if (core::IsPassThroughRayPair(rayLayer, targetInfo & 0x7F)) {
+					*result = 0;
+					s_raySkipped.fetch_add(1, std::memory_order_relaxed);
+				} else if (rayLayer < 64 && !(s_rayLayersSeen.fetch_or(1ull << rayLayer, std::memory_order_relaxed) & (1ull << rayLayer))) {
+					logger::info("[PassThrough] diag: a layer-{} ray of a pass-through partner hits a partner's controller (kept).", rayLayer);
 				}
 				return result;
 			}
@@ -279,6 +400,20 @@ namespace scf::engine::passthrough
 			any = true;
 		}
 
+		REL::Relocation<std::uintptr_t> shapeVtable{ RE::VTABLE_bhkCollisionFilter[2] };
+		if (SlotLooksRight(shapeVtable.address(), kIsCollisionEnabledSlot, REL::ID(76677).address(), "hkpShapeCollectionFilter::IsCollisionEnabled")) {
+			ShapeCollectionFilterHook::func = shapeVtable.write_vfunc(kIsCollisionEnabledSlot, ShapeCollectionFilterHook::thunk);
+			logger::info("[PassThrough] bhkCollisionFilter shape-collection IsCollisionEnabled (id 76677) hooked, chaining.");
+			any = true;
+		}
+
+		REL::Relocation<std::uintptr_t> rayVtable{ RE::VTABLE_bhkCollisionFilter[4] };
+		if (SlotLooksRight(rayVtable.address(), kIsCollisionEnabledSlot, REL::ID(76679).address(), "hkpRayCollidableFilter::IsCollisionEnabled")) {
+			RayCollidableFilterHook::func = rayVtable.write_vfunc(kIsCollisionEnabledSlot, RayCollidableFilterHook::thunk);
+			logger::info("[PassThrough] bhkCollisionFilter ray-collidable IsCollisionEnabled (id 76679) hooked, chaining.");
+			any = true;
+		}
+
 		const auto update = REL::ID(76091).address();
 		if (std::memcmp(reinterpret_cast<const void*>(update), kUpdateFilterPrologue, sizeof(kUpdateFilterPrologue)) == 0) {
 			s_updateCollisionFilter = reinterpret_cast<UpdateCollisionFilter_t>(update);
@@ -344,10 +479,15 @@ namespace scf::engine::passthrough
 			const auto avoid = s_avoidSkipped.load(std::memory_order_relaxed);
 			const auto collision = s_collisionSkipped.load(std::memory_order_relaxed);
 			const auto bones = s_bonesSkipped.load(std::memory_order_relaxed);
-			if (avoid != s_lastAvoidReported || collision != s_lastCollisionReported || bones != s_lastBonesReported || s_refiltered != s_lastRefilteredReported) {
-				logger::info("[PassThrough] last 10 s: {} avoidance checks, {} controller collisions and {} controller<->bones collisions skipped between own summons/owner, {} bodies re-filtered (totals {} / {} / {} / {}).",
-					avoid - s_lastAvoidReported, collision - s_lastCollisionReported, bones - s_lastBonesReported, s_refiltered - s_lastRefilteredReported,
-					avoid, collision, bones, s_refiltered);
+			const auto shape = s_shapeSkipped.load(std::memory_order_relaxed);
+			const auto ray = s_raySkipped.load(std::memory_order_relaxed);
+			if (avoid != s_lastAvoidReported || collision != s_lastCollisionReported || bones != s_lastBonesReported || s_refiltered != s_lastRefilteredReported ||
+				shape != s_lastShapeReported || ray != s_lastRayReported) {
+				logger::info("[PassThrough] last 10 s: {} avoidance checks, {} controller collisions, {} controller<->bones, {} sub-shape and {} ray hits skipped between own summons/owner, {} bodies re-filtered (totals {} / {} / {} / {} / {} / {}).",
+					avoid - s_lastAvoidReported, collision - s_lastCollisionReported, bones - s_lastBonesReported, shape - s_lastShapeReported, ray - s_lastRayReported,
+					s_refiltered - s_lastRefilteredReported, avoid, collision, bones, shape, ray, s_refiltered);
+				s_lastShapeReported = shape;
+				s_lastRayReported = ray;
 				s_lastAvoidReported = avoid;
 				s_lastCollisionReported = collision;
 				s_lastBonesReported = bones;

@@ -40,6 +40,13 @@ namespace scf::core
 	// bodies) is never touched, so hits and ragdolls stay vanilla.
 	bool IsPassThroughLayerPair(std::uint32_t a_layerA, std::uint32_t a_layerB) noexcept;
 
+	// Which ray hits between pass-through partners are dropped (the ray's filter info
+	// carries the caster's system group): only a character-controller ray (layer 30, a
+	// controller's own ground/step probe) against the partner's controller (30) - the
+	// body such a probe would stand a wolf on. Crosshair / activation (ItemPicker 40),
+	// camera, LOS and pick rays keep hitting own summons, so they stay targetable.
+	bool IsPassThroughRayPair(std::uint32_t a_rayLayer, std::uint32_t a_targetLayer) noexcept;
+
 	// One published row of the pass-through table: who, and the system group of its
 	// character controller (0 = no controller loaded yet).
 	struct PassThroughRow
