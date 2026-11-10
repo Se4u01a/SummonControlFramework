@@ -14,6 +14,7 @@
 #include <RE/N/NiPoint3.h>
 #include <RE/P/PlayerCharacter.h>
 #include <RE/P/ProcessLists.h>
+#include <RE/T/TESObjectREFR.h>
 #include <RE/U/UI.h>
 
 #include <unordered_map>
@@ -113,6 +114,7 @@ namespace scf::engine::update
 						}
 
 						RE::NiPoint3 dest{ a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z + 5.0f };
+						static_cast<RE::TESObjectREFR*>(a_summon)->SetPosition(dest);
 						a_summon->SetPosition(dest, true);
 						a_summon->MoveToNearestNavmesh(0.0f);
 						a_summon->EvaluatePackage(true, true);
@@ -213,6 +215,9 @@ namespace scf::engine::update
 			// 4. Drain pending commands from CommandQueue and dispatch to engine actors
 			core::Command cmd{};
 			while (cmdQueue.PopNext(a_timestamp, cmd)) {
+				logger::info("[UpdateHook] Popped command (Type: {}, SummonId: 0x{:08X}, Priority: {})",
+					core::ToString(cmd.type), cmd.summonId, core::ToString(cmd.priority));
+
 				std::vector<core::EntityID> targetSummonIds;
 				if (cmd.summonId != core::InvalidEntityID) {
 					targetSummonIds.push_back(cmd.summonId);
@@ -238,14 +243,14 @@ namespace scf::engine::update
 				}
 			}
 
-			// 5. Per-tick continuous AI enforcement for all active live summons
+			// 5. Per-tick continuous AI enforcement for active summons
 			for (const auto& [summonId, summonActor] : liveActors) {
 				auto* model = registry.GetModel(summonId);
 				if (!model || !summonActor) {
 					continue;
 				}
 
-				// A. Passive mode enforcement
+				// Passive mode enforcement
 				if (model->aggression == core::AggressionMode::Passive) {
 					if (summonActor->IsInCombat()) {
 						summonActor->StopCombat();
@@ -256,7 +261,7 @@ namespace scf::engine::update
 						}
 					}
 				}
-				// B. Return order enforcement: keep combat disengaged until arriving near owner
+				// Return order enforcement: keep combat disengaged until arriving near owner
 				else if (model->order == core::SummonOrder::Return) {
 					if (summonActor->IsInCombat()) {
 						summonActor->StopCombat();
@@ -272,67 +277,6 @@ namespace scf::engine::update
 						model->order = core::SummonOrder::Follow;
 						ctx.GetStateMachine().TransitionTo(*model, core::SummonState::FollowOwner, "Returned to owner range");
 						summonActor->EvaluatePackage(true, true);
-					}
-				}
-				// C. Aggressive mode: scan for hostiles if out of combat
-				else if (model->aggression == core::AggressionMode::Aggressive) {
-					if (!summonActor->IsInCombat()) {
-						RE::Actor* targetEnemy = nullptr;
-
-						// Check owner's combat target first
-						if (auto playerCombatTarget = a_player->GetActorRuntimeData().currentCombatTarget.get()) {
-							if (!playerCombatTarget->IsDead() && !playerCombatTarget->IsDisabled()) {
-								targetEnemy = playerCombatTarget.get();
-							}
-						}
-
-						// Scan high actors in loaded area if no owner combat target
-						if (!targetEnemy) {
-							float bestDistSq = 1500.0f * 1500.0f;
-							auto* processLists = RE::ProcessLists::GetSingleton();
-							if (processLists) {
-								processLists->ForEachHighActor([&](RE::Actor* a_candidate) -> RE::BSContainer::ForEachResult {
-									if (a_candidate && !a_candidate->IsDead() && !a_candidate->IsDisabled() &&
-									    a_candidate != a_player && a_candidate != summonActor) {
-										if (a_candidate->IsHostileToActor(a_player) || a_candidate->IsHostileToActor(summonActor)) {
-											const float dSq = a_candidate->GetPosition().GetSquaredDistance(summonActor->GetPosition());
-											if (dSq < bestDistSq) {
-												bestDistSq = dSq;
-												targetEnemy = a_candidate;
-											}
-										}
-									}
-									return RE::BSContainer::ForEachResult::kContinue;
-								});
-							}
-						}
-
-						if (targetEnemy) {
-							summonActor->StartCombat(targetEnemy);
-							summonActor->GetActorRuntimeData().currentCombatTarget = targetEnemy->GetHandle();
-							if (auto* cc = summonActor->GetActorRuntimeData().combatController) {
-								cc->targetHandle = targetEnemy->GetHandle();
-								cc->startedCombat = true;
-							}
-							summonActor->EvaluatePackage(true, true);
-							ctx.GetStateMachine().TransitionTo(*model, core::SummonState::Engage, "Aggressive auto-engage");
-						}
-					}
-				}
-
-				// D. Leash constraint: reposition summon if stuck or drifted too far
-				const float maxLeash = ctx.GetSettings().Get().combat.returnDistanceThreshold;
-				if (maxLeash > 500.0f) {
-					const float distSq = summonActor->GetPosition().GetSquaredDistance(a_player->GetPosition());
-					if (distSq > maxLeash * maxLeash) {
-						summonActor->StopCombat();
-						summonActor->GetActorRuntimeData().currentCombatTarget.reset();
-						model->order = core::SummonOrder::Follow;
-						const auto pPos = a_player->GetPosition();
-						summonActor->SetPosition(RE::NiPoint3(pPos.x - 100.0f, pPos.y - 100.0f, pPos.z), true);
-						summonActor->MoveToNearestNavmesh(0.0f);
-						summonActor->EvaluatePackage(true, true);
-						logger::info("[Execution] Leash break: repositioned summon 0x{:08X} near owner", summonId);
 					}
 				}
 			}

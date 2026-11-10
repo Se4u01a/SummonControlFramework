@@ -47,25 +47,9 @@ namespace scf::engine
 		}
 
 		RE::Actor* targetActor = nullptr;
-#if defined(EXCLUSIVE_SKYRIM_FLAT)
-		if (auto ref = crosshair->targetActor.get()) {
+		if (auto ref = crosshair->GetActiveTarget().get()) {
 			targetActor = ref->As<RE::Actor>();
 		}
-		if (!targetActor) {
-			if (auto ref = crosshair->target.get()) {
-				targetActor = ref->As<RE::Actor>();
-			}
-		}
-#else
-		if (auto ref = crosshair->targetActor[0].get()) {
-			targetActor = ref->As<RE::Actor>();
-		}
-		if (!targetActor) {
-			if (auto ref = crosshair->target[0].get()) {
-				targetActor = ref->As<RE::Actor>();
-			}
-		}
-#endif
 
 		if (targetActor) {
 			if (targetActor->IsDead()) {
@@ -85,6 +69,7 @@ namespace scf::engine
 			cmd.priority = core::CommandPriority::PlayerDirect;
 			cmd.summonId = core::InvalidEntityID;
 			cmd.focusTargetId = targetId;
+			cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
 
 			core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 			core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
@@ -105,6 +90,7 @@ namespace scf::engine
 		cmd.order = core::SummonOrder::Return;
 		cmd.priority = core::CommandPriority::PlayerDirect;
 		cmd.summonId = core::InvalidEntityID;
+		cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
 
 		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
@@ -133,6 +119,7 @@ namespace scf::engine
 		cmd.aggression = currentMode;
 		cmd.priority = core::CommandPriority::ModeChange;
 		cmd.summonId = core::InvalidEntityID;
+		cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
 
 		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
@@ -154,23 +141,22 @@ namespace scf::engine
 		bool foundPos = false;
 
 		if (crosshair) {
-#if defined(EXCLUSIVE_SKYRIM_FLAT)
-			const auto& pt = crosshair->collisionPoint;
-#else
-			const auto& pt = crosshair->collisionPoint[0];
-#endif
-			if (std::abs(pt.x) > 0.1f || std::abs(pt.y) > 0.1f || std::abs(pt.z) > 0.1f) {
-				targetPos = { pt.x, pt.y, pt.z };
-				foundPos = true;
+			if (auto ref = crosshair->GetActiveTarget().get()) {
+				const auto pos = ref->GetPosition();
+				if (std::isfinite(pos.x) && std::isfinite(pos.y) && std::isfinite(pos.z) &&
+				    std::abs(pos.x) < 200000.0f && std::abs(pos.y) < 200000.0f) {
+					targetPos = { pos.x, pos.y, pos.z };
+					foundPos = true;
+				}
 			}
 		}
 
 		if (!foundPos) {
-			// Fallback: 600 units ahead of player in facing yaw direction
+			// 500 units ahead of player in facing yaw direction
 			const float angle = player->GetAngleZ();
 			const auto pPos = player->GetPosition();
-			targetPos.x = pPos.x + 600.0f * std::sin(angle);
-			targetPos.y = pPos.y + 600.0f * std::cos(angle);
+			targetPos.x = pPos.x + 500.0f * std::sin(angle);
+			targetPos.y = pPos.y + 500.0f * std::cos(angle);
 			targetPos.z = pPos.z;
 		}
 
@@ -180,6 +166,7 @@ namespace scf::engine
 		cmd.priority = core::CommandPriority::PlayerDirect;
 		cmd.summonId = core::InvalidEntityID;
 		cmd.targetPosition = targetPos;
+		cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
 
 		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
@@ -196,6 +183,7 @@ namespace scf::engine
 		cmd.order = core::SummonOrder::WaitGuard;
 		cmd.priority = core::CommandPriority::PlayerDirect;
 		cmd.summonId = core::InvalidEntityID;
+		cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
 
 		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
@@ -210,6 +198,7 @@ namespace scf::engine
 		cmd.order = core::SummonOrder::Follow;
 		cmd.priority = core::CommandPriority::PlayerDirect;
 		cmd.summonId = core::InvalidEntityID;
+		cmd.timestamp = core::FrameworkContext::GetSingleton().GetScheduler().GetTotalElapsedTime();
 
 		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
@@ -235,14 +224,6 @@ namespace scf::engine
 			return RE::BSEventNotifyControl::kContinue;
 		}
 
-		// Defaults: Numpad 1=0x4F, Numpad 2=0x50, Numpad 3=0x51, Numpad 4=0x4B, Numpad 5=0x4C, Numpad 6=0x4D
-		const std::uint32_t keyFocus = settings.hotkeys.focusTargetKey != 0 ? settings.hotkeys.focusTargetKey : 0x4F;
-		const std::uint32_t keyReturn = settings.hotkeys.commandReturnKey != 0 ? settings.hotkeys.commandReturnKey : 0x50;
-		const std::uint32_t keyAggression = settings.hotkeys.toggleAggressionKey != 0 ? settings.hotkeys.toggleAggressionKey : 0x51;
-		const std::uint32_t keyMoveTo = settings.hotkeys.moveToKey != 0 ? settings.hotkeys.moveToKey : 0x4B;
-		const std::uint32_t keyWaitGuard = settings.hotkeys.waitGuardKey != 0 ? settings.hotkeys.waitGuardKey : 0x4C;
-		const std::uint32_t keyFollow = settings.hotkeys.followKey != 0 ? settings.hotkeys.followKey : 0x4D;
-
 		for (auto* event = *a_event; event; event = event->next) {
 			if (event->eventType != RE::INPUT_EVENT_TYPE::kButton) {
 				continue;
@@ -253,23 +234,24 @@ namespace scf::engine
 				continue;
 			}
 
-			const auto idCode = button->GetIDCode();
-			const auto device = button->GetDevice();
+			if (button->device != RE::INPUT_DEVICE::kKeyboard) {
+				continue;
+			}
 
-			if (device == RE::INPUT_DEVICE::kKeyboard) {
-				if (idCode == keyFocus) {
-					HandleFocusTarget();
-				} else if (idCode == keyReturn) {
-					HandleReturnOrder();
-				} else if (idCode == keyAggression) {
-					HandleToggleAggression();
-				} else if (idCode == keyMoveTo) {
-					HandleMoveTo();
-				} else if (idCode == keyWaitGuard) {
-					HandleWaitGuard();
-				} else if (idCode == keyFollow) {
-					HandleFollow();
-				}
+			const auto key = button->GetIDCode();
+
+			if (key == settings.hotkeys.focusTargetKey) {
+				HandleFocusTarget();
+			} else if (key == settings.hotkeys.commandReturnKey) {
+				HandleReturnOrder();
+			} else if (key == settings.hotkeys.toggleAggressionKey) {
+				HandleToggleAggression();
+			} else if (key == settings.hotkeys.moveToKey) {
+				HandleMoveTo();
+			} else if (key == settings.hotkeys.waitGuardKey) {
+				HandleWaitGuard();
+			} else if (key == settings.hotkeys.followKey) {
+				HandleFollow();
 			}
 		}
 

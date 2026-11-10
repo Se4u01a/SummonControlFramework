@@ -8,6 +8,9 @@ namespace scf::core
 {
 	bool CommandQueue::IsExpired(const Command& a_cmd, float a_currentTimestamp) const noexcept
 	{
+		if (a_cmd.timestamp <= 0.0f) {
+			return false;
+		}
 		return a_cmd.ttl > 0.0f && (a_currentTimestamp - a_cmd.timestamp) > a_cmd.ttl;
 	}
 
