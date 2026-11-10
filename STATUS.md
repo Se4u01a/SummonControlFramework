@@ -112,7 +112,7 @@
 * **Cell Transition Resilience Verified:** Transitioning across load doors correctly preserves summons without crashes or broken registry state (`Active <-> Suspended` transition).
 * **Live Summon Registration & Synchronization:** `UpdateHook` on `PlayerCharacter::Update` correctly polls `commandedActors` at 15 Hz and tracks active summons.
 * **Automatic Garbage Collection Active:** Dispelled or killed summons cleanly transition with 3-second grace period for death/ash-pile fadeout before record purging.
-* **Multi-Summon Engine Limitation Identified:** In vanilla Skyrim engine, `commandedActors` default limit is 1 unless the player has the *Twin Souls* perk (FormID `000581DE`) or a multi-summon mod. Command `player.addperk 000581DE` enables summoning 2 creatures simultaneously.
+* **Twin Summons In-Game Verified:** User verified in live gameplay that twin summons (`player.addperk 000581DE`) function correctly simultaneously, and both are tracked cleanly by Summon Control Framework.
 
 ## Implemented and Deployed to MO2: FF-01 (Friendly Fire Protection & Attack Filtering)
 
