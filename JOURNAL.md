@@ -464,3 +464,27 @@ Diagnosis of the "binds do nothing" report and a new physical execution layer fo
 * **Build:** `SummonControlFramework.dll` compiled with zero warnings and auto-deployed to both MO2 instances.
 * **NOT verified in game yet:** whether a *summoned creature* honours `KeepOffsetFromActor` (the vanilla summoned-creature follow may fight it), whether `SetDontMove(true)` still allows in-place attacks, and the warp thresholds. The user tests in game; the log now has `[Movement]` lines that say what was applied and why.
 
+---
+
+## 2026-11-10 — Field diagnosis of the movement layer (backwards wolf, Focus / MoveTo)
+
+First in-game session with `SummonMovement` (STB/SBORKA, log 13:31–13:38). The user reported: the wolf walks backwards, Focus Target (Numpad 1) and Move To Point (Numpad 4) do not work, the rest works.
+
+* **What the log proved:**
+  * Keys arrive and execute: 25 × Return, 22 × MoveTo, 41 × Focus presses all reached `[Execution]`.
+  * `Follow`, `Return` and `Guard` are real: `KeepOffsetFromActor` moves a summoned wolf, `reached owner (199) -> Follow` fired, `SetDontMove(true)` freezes it in place, and the 3 s stuck-warp fired twice (878 and 459 units) when walking made no progress. So the primitive choice is correct.
+  * **Backwards walking = facing lock.** `KeepOffsetFromActor` also holds the actor's *rotation*: with the offset-angle at 0 it faces where the player faces. Whenever the goal lay behind or beside the player (formation slot, a MoveTo point the player had walked past) the wolf moonwalked. The axis convention is confirmed by the log: while the player spun, the local X/Y of a fixed world point swung while Z stayed constant, so X/Y are horizontal and Z is vertical.
+  * **Focus was executed but ignored.** `SetFocusTarget` ran `StartCombat` (e.g. 0x000F31C0 "Воин Серебряной руки"), but the model order was still `MoveTo`, and the intent matrix only suppressed movement for `Follow` — so the keep-offset goal kept dragging the wolf away from the fight until the 45 s MoveTo timeout. The same applied to a parked `Guard`.
+  * **MoveTo always used the 500-units-ahead fallback.** Every order began with a local offset of exactly `(0, 500, 0)`: `CrosshairPickData::collisionPoint` is never filled when the crosshair is over terrain (the interaction pick fills it for references only).
+  * **Focus only resolved `target`.** 33 of 41 presses logged `No target under crosshair`; the 8 successes were enemies close enough for the interaction pick. `CrosshairPickData::targetActor` (the aim actor) is never read by CommonLib's `GetActiveTarget()`.
+  * After a teleport/cell change with a live MoveTo order the owner-relative offset became absurd (60404, -42954, ...) because the stored destination was 74k units away — it kept the wolf chasing a stale point until the 45 s timeout.
+* **Fixes:**
+  * `core::FacingOffsetDegrees` (Owner body-space geometry + tests) computes the direction of travel relative to the owner's heading; it is passed as the offset-angle Z so the actor faces where it walks. Standing on the goal resets it to 0 (formation look) within 100 units. Re-issued when the offset or facing changes (8 units / 10°).
+  * `SummonOrder::Attack`: `CommandQueue::ApplyToModel` turns an explicit FocusTarget into it (and drops any move destination); the intent matrix returns `None` for it, so it clears `SetDontMove` and lets the combat AI own locomotion. It reverts to `Follow` when the target dies/disappears or combat never starts within 2 s.
+  * `MoveTo` destinations farther than 8000 units from the owner are abandoned (`abandoned -> Follow`), which kills the stale-point chases after a teleport.
+  * `InputHandler` resolves the crosshair actor from `targetActor` first, then `target`; MoveTo tries `collisionPoint`, then the crosshair reference position, then an **aim projection** (player yaw + `|Actor::GetAimAngle()|`, distance `110 / tan(pitch)` clamped to [200, 2500]) so aiming at the ground produces a nearby point instead of "500 straight ahead". Every press logs its source (`MoveTo destination from ...`), and a failed Focus dumps `[Crosshair] target=... targetActor=... point=...`.
+* **Tests:** 20 pure unit tests in `tests/test_movement_intent.cpp` (6 new: facing cardinals, facing relative to owner heading, degenerate facing, Attack outranking movement, follow-facing while away from the slot, stale MoveTo). `scf_tests.exe`: **95/95 passing**.
+* **Build:** clean, auto-deployed to both MO2 instances.
+* **Pending:** re-test in game (TEST-ORDER-1/4/8/10/11/12/13/14 in TESTING.md). The remaining unknown is whether the offset-angle really controls facing on this runtime — if the wolf now turns correctly but goes to a rotated spot, the angle rotates the offset instead and the facing has to be handled differently (logged facing values make that diagnosable from one session).
+
+

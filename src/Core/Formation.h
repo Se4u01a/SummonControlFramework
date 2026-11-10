@@ -30,4 +30,11 @@ namespace scf::core
 	// Body space <-> world space for an absolute world point (round-trips exactly).
 	Vec3 OwnerLocalToWorldPoint(const Vec3& a_localOffset, const Vec3& a_ownerPosition, float a_ownerYawRadians) noexcept;
 	Vec3 WorldPointToOwnerLocal(const Vec3& a_worldPoint, const Vec3& a_ownerPosition, float a_ownerYawRadians) noexcept;
+
+	// Heading (degrees, -180..180) an actor standing at a_from must face to move toward
+	// a_to, expressed relative to the owner's heading. That is the value
+	// Actor::KeepOffsetFromActor takes in its offset-angle Z argument ("the offset angle
+	// from the target actor ... Z (degrees)"), so the actor faces where it walks instead
+	// of moonwalking with the owner's heading.
+	float FacingOffsetDegrees(const Vec3& a_from, const Vec3& a_to, float a_ownerYawRadians) noexcept;
 }

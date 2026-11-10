@@ -85,10 +85,15 @@ namespace scf::engine::movement
 		// ------------------------------------------------------------------
 		constexpr float kOffsetEpsilon = 8.0f;
 		constexpr float kOffsetEpsilonSq = kOffsetEpsilon * kOffsetEpsilon;
+		constexpr float kFacingEpsilonDegrees = 10.0f;
 		constexpr float kReassertSeconds = 2.0f;
 		constexpr float kStuckSeconds = 3.0f;
 		constexpr float kMoveToTimeoutSeconds = 45.0f;
 		constexpr float kProgressEpsilon = 50.0f;
+
+		// How long an explicit FocusTarget order is given to put the summon into combat
+		// before the driver decides the engagement never started.
+		constexpr float kAttackGraceSeconds = 2.0f;
 
 		// Radius the position of a "parked" summon is held inside (APMF's proven
 		// full stand-still values: catchUp 20, follow 10).
@@ -98,7 +103,9 @@ namespace scf::engine::movement
 		struct AppliedMovement
 		{
 			core::MovementMode mode{ core::MovementMode::None };
+			core::SummonOrder lastOrder{ core::SummonOrder::Follow };
 			core::Vec3 localOffset{};
+			float facingOffsetDegrees{ 0.0f };
 			bool keepOffsetActive{ false };
 			bool keepOffsetOnOwner{ true };
 			bool translationLocked{ false };
@@ -107,6 +114,7 @@ namespace scf::engine::movement
 			// happens to equal the default `false`.
 			bool translationKnown{ false };
 			float modeEnteredAt{ 0.0f };
+			float orderEnteredAt{ 0.0f };
 			float lastIssuedAt{ 0.0f };
 			float bestDistance{ std::numeric_limits<float>::max() };
 			float lastProgressAt{ 0.0f };
@@ -161,7 +169,8 @@ namespace scf::engine::movement
 		{
 			const bool sameGoal = a_state.keepOffsetActive &&
 			                      a_state.keepOffsetOnOwner == a_targetIsOwner &&
-			                      a_state.localOffset.DistanceSquaredTo(a_intent.localOffset) <= kOffsetEpsilonSq;
+			                      a_state.localOffset.DistanceSquaredTo(a_intent.localOffset) <= kOffsetEpsilonSq &&
+			                      std::abs(a_state.facingOffsetDegrees - a_intent.facingOffsetDegrees) <= kFacingEpsilonDegrees;
 			const bool reassert = a_state.keepOffsetActive && (a_now - a_state.lastIssuedAt) >= kReassertSeconds;
 
 			if (sameGoal && !reassert) {
@@ -169,21 +178,23 @@ namespace scf::engine::movement
 			}
 
 			const RE::NiPoint3 offset{ a_intent.localOffset.x, a_intent.localOffset.y, a_intent.localOffset.z };
-			const RE::NiPoint3 angles{ 0.0f, 0.0f, 0.0f };
+			const RE::NiPoint3 angles{ 0.0f, 0.0f, a_intent.facingOffsetDegrees };
 			native::KeepOffsetFromActor(a_summon, a_target, offset, angles, a_intent.catchUpRadius, a_intent.followRadius);
 
 			a_state.keepOffsetActive = true;
 			a_state.keepOffsetOnOwner = a_targetIsOwner;
 			a_state.localOffset = a_intent.localOffset;
+			a_state.facingOffsetDegrees = a_intent.facingOffsetDegrees;
 			a_state.lastIssuedAt = a_now;
 
 			if (!sameGoal) {
-				logger::info("[Movement] Summon 0x{:08X} {} keep-offset ({:.0f}, {:.0f}, {:.0f}) follow={:.0f} catchUp={:.0f} target={}",
+				logger::info("[Movement] Summon 0x{:08X} {} keep-offset ({:.0f}, {:.0f}, {:.0f}) facing={:.0f} follow={:.0f} catchUp={:.0f} target={}",
 					a_id,
 					core::ToString(a_intent.mode),
 					a_intent.localOffset.x,
 					a_intent.localOffset.y,
 					a_intent.localOffset.z,
+					a_intent.facingOffsetDegrees,
 					a_intent.followRadius,
 					a_intent.catchUpRadius,
 					a_targetIsOwner ? "owner" : "self");
@@ -303,8 +314,26 @@ namespace scf::engine::movement
 		const core::Vec3 ownerPosition = ToCore(a_owner->GetPosition());
 		const float distanceToOwner = std::sqrt(HorizontalDistanceSq(summonPosition, ownerPosition));
 
+		// Order changes start the clock for the time-based rules below.
+		if (a_model.order != state.lastOrder) {
+			state.lastOrder = a_model.order;
+			state.orderEnteredAt = a_now;
+		}
+
 		// 1. Order transitions that need engine distances.
-		if (a_model.order == core::SummonOrder::Return) {
+		if (a_model.order == core::SummonOrder::Attack) {
+			// An explicit FocusTarget that no longer exists (dead, unloaded, or never put
+			// the summon into combat) must not pin the summon to "attack" forever: hand
+			// it back to the follow order.
+			const bool targetGone = a_model.currentTargetId == core::InvalidEntityID;
+			const bool neverEngaged = (a_now - state.orderEnteredAt) >= kAttackGraceSeconds && !a_summon->IsInCombat();
+			if (targetGone || neverEngaged) {
+				a_model.order = core::SummonOrder::Follow;
+				a_fsm.TransitionTo(a_model, core::SummonState::FollowOwner, "Attack order finished");
+				logger::info("[Movement] Summon 0x{:08X} attack order finished ({}) -> Follow",
+					id, targetGone ? "target gone" : "combat never started");
+			}
+		} else if (a_model.order == core::SummonOrder::Return) {
 			TrackProgress(state, distanceToOwner, a_now);
 
 			if (distanceToOwner <= a_settings.movement.followMinDistance) {
@@ -315,12 +344,22 @@ namespace scf::engine::movement
 				TryCatchUpWarp(a_summon, a_owner, id, distanceToOwner, a_settings, state, a_now);
 			}
 		} else if (a_model.order == core::SummonOrder::MoveTo && a_model.hasMoveTarget) {
+			const float toDestination = std::sqrt(HorizontalDistanceSq(a_model.moveTargetPosition, ownerPosition));
+
 			if (core::IsWithinArrivalRadius(summonPosition, a_model.moveTargetPosition)) {
 				a_model.order = core::SummonOrder::WaitGuard;
 				a_model.hasMoveTarget = false;
 				a_fsm.TransitionTo(a_model, core::SummonState::Guard, "Arrived at move point");
 				logger::info("[Movement] Summon 0x{:08X} arrived at MoveTo point ({:.0f}, {:.0f}, {:.0f}) -> Guard",
 					id, a_model.moveTargetPosition.x, a_model.moveTargetPosition.y, a_model.moveTargetPosition.z);
+			} else if (toDestination > core::kMaxMoveToDistance) {
+				// The destination was left behind by a cell change or a teleport; walking to
+				// it is meaningless (and used to generate absurd keep-offset goals).
+				a_model.order = core::SummonOrder::Follow;
+				a_model.hasMoveTarget = false;
+				a_fsm.TransitionTo(a_model, core::SummonState::FollowOwner, "MoveTo destination abandoned");
+				logger::warn("[Movement] Summon 0x{:08X} MoveTo destination is {:.0f} units from the owner (limit {:.0f}); abandoned -> Follow",
+					id, toDestination, core::kMaxMoveToDistance);
 			} else if (state.mode == core::MovementMode::MoveToPoint && (a_now - state.modeEnteredAt) >= kMoveToTimeoutSeconds) {
 				a_model.order = core::SummonOrder::WaitGuard;
 				a_model.hasMoveTarget = false;
@@ -336,6 +375,7 @@ namespace scf::engine::movement
 			a_summon->IsInCombat(),
 			a_settings,
 			ownerPosition,
+			summonPosition,
 			a_owner->GetAngleZ(),
 			a_slotIndex,
 			a_squadSize);

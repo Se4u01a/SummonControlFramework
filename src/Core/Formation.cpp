@@ -86,4 +86,25 @@ namespace scf::core
 		const Vec3 worldOffset{ a_worldPoint.x - a_ownerPosition.x, a_worldPoint.y - a_ownerPosition.y, a_worldPoint.z - a_ownerPosition.z };
 		return WorldToOwnerLocalOffset(worldOffset, a_ownerYawRadians);
 	}
+
+	float FacingOffsetDegrees(const Vec3& a_from, const Vec3& a_to, float a_ownerYawRadians) noexcept
+	{
+		const float dx = a_to.x - a_from.x;
+		const float dy = a_to.y - a_from.y;
+		if (dx * dx + dy * dy < 1.0f) {
+			return 0.0f; // standing on the goal: keep the owner's heading
+		}
+
+		const float worldDeg = std::atan2(dx, dy) * (180.0f / static_cast<float>(std::numbers::pi));
+		const float ownerDeg = a_ownerYawRadians * (180.0f / static_cast<float>(std::numbers::pi));
+
+		float relative = worldDeg - ownerDeg;
+		while (relative > 180.0f) {
+			relative -= 360.0f;
+		}
+		while (relative < -180.0f) {
+			relative += 360.0f;
+		}
+		return relative;
+	}
 }

@@ -145,8 +145,14 @@ namespace scf::core
 
 		case CommandType::SetFocusTarget:
 			a_model.currentTargetId = a_cmd.focusTargetId;
-			if (a_fsm && a_cmd.focusTargetId != InvalidEntityID) {
-				a_fsm->TransitionTo(a_model, SummonState::AcquireTarget, "Command: FocusTarget acquired");
+			if (a_model.currentTargetId != InvalidEntityID) {
+				// An explicit target outranks any movement order (guard hold, return,
+				// move-to point): the combat AI must own locomotion for this.
+				a_model.order = SummonOrder::Attack;
+				a_model.hasMoveTarget = false;
+				if (a_fsm) {
+					a_fsm->TransitionTo(a_model, SummonState::AcquireTarget, "Command: FocusTarget acquired");
+				}
 			}
 			break;
 

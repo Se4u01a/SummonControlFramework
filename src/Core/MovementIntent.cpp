@@ -2,21 +2,45 @@
 #include "Core/Formation.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace scf::core
 {
+	namespace
+	{
+		// Direction of travel, relative to the owner's heading, for a goal world point.
+		// Zero while the actor is effectively standing on the goal (it then faces the
+		// owner's heading, which is the formation look).
+		float TravelFacingDegrees(const Vec3& a_from, const Vec3& a_to, float a_ownerYawRadians) noexcept
+		{
+			const float dx = a_to.x - a_from.x;
+			const float dy = a_to.y - a_from.y;
+			if (dx * dx + dy * dy < kFacingMinDistance * kFacingMinDistance) {
+				return 0.0f;
+			}
+			return FacingOffsetDegrees(a_from, a_to, a_ownerYawRadians);
+		}
+	}
+
 	MovementIntent BuildMovementIntent(
 		const SummonModel& a_model,
 		bool a_inCombat,
 		const SettingsData& a_settings,
 		const Vec3& a_ownerPosition,
+		const Vec3& a_summonPosition,
 		float a_ownerYawRadians,
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize) noexcept
 	{
 		const auto& movement = a_settings.movement;
 
-		// 1. Guard / wait: hold the current position, regardless of combat.
+		// 1. Attack (explicit FocusTarget): the player asked for a kill. It outranks
+		//    every movement order, including a parked guard, so combat AI drives.
+		if (a_model.order == SummonOrder::Attack) {
+			return MovementIntent{};
+		}
+
+		// 2. Guard / wait: hold the current position, regardless of combat.
 		if (a_model.order == SummonOrder::WaitGuard) {
 			MovementIntent intent{};
 			intent.mode = MovementMode::HoldPosition;
@@ -24,7 +48,7 @@ namespace scf::core
 			return intent;
 		}
 
-		// 2. Return: run back to the owner, then the order flips to Follow.
+		// 3. Return: run back to the owner, then the order flips to Follow.
 		if (a_model.order == SummonOrder::Return) {
 			MovementIntent intent{};
 			const float followRadius = std::max(movement.followMinDistance, 150.0f);
@@ -32,23 +56,30 @@ namespace scf::core
 			intent.mode = MovementMode::ReturnToOwner;
 			intent.followRadius = followRadius;
 			intent.catchUpRadius = catchUpRadius;
+			intent.facingOffsetDegrees = TravelFacingDegrees(a_summonPosition, a_ownerPosition, a_ownerYawRadians);
 			return intent;
 		}
 
-		// 3. MoveTo: the destination is a world point, but the primitive consumes an
+		// 4. MoveTo: the destination is a world point, but the primitive consumes an
 		//    owner body-space offset, so the offset is recomputed from where the owner
 		//    is standing right now. Recomputing every tick keeps the world destination
-		//    fixed while the owner moves.
+		//    fixed while the owner moves. A destination left over from another cell or
+		//    a teleport (unreachable by walking) is ignored.
 		if (a_model.order == SummonOrder::MoveTo && a_model.hasMoveTarget) {
-			MovementIntent intent{};
-			intent.mode = MovementMode::MoveToPoint;
-			intent.localOffset = WorldPointToOwnerLocal(a_model.moveTargetPosition, a_ownerPosition, a_ownerYawRadians);
-			intent.followRadius = kMoveToArrivalRadius;
-			intent.catchUpRadius = std::max(movement.followMaxDistance, kMoveToArrivalRadius * 4.0f);
-			return intent;
+			const float dx = a_model.moveTargetPosition.x - a_ownerPosition.x;
+			const float dy = a_model.moveTargetPosition.y - a_ownerPosition.y;
+			if (dx * dx + dy * dy <= kMaxMoveToDistance * kMaxMoveToDistance) {
+				MovementIntent intent{};
+				intent.mode = MovementMode::MoveToPoint;
+				intent.localOffset = WorldPointToOwnerLocal(a_model.moveTargetPosition, a_ownerPosition, a_ownerYawRadians);
+				intent.followRadius = kMoveToArrivalRadius;
+				intent.catchUpRadius = std::max(movement.followMaxDistance, kMoveToArrivalRadius * 4.0f);
+				intent.facingOffsetDegrees = TravelFacingDegrees(a_summonPosition, a_model.moveTargetPosition, a_ownerYawRadians);
+				return intent;
+			}
 		}
 
-		// 4. Follow: an engaged summon fights; the engine owns its locomotion then.
+		// 5. Follow: an engaged summon fights; the engine owns its locomotion then.
 		//    Only the engine combat flag is authoritative here: a stale model target
 		//    (e.g. a focus command whose enemy disengaged) must not freeze the order.
 		if (a_inCombat) {
@@ -60,6 +91,10 @@ namespace scf::core
 		intent.localOffset = FormationSlotOffsetLocal(a_slotIndex, a_squadSize, movement.followMinDistance);
 		intent.followRadius = std::max(kMinFollowRadius, movement.followMinDistance * 0.5f);
 		intent.catchUpRadius = std::max(movement.followMaxDistance, intent.followRadius * 2.0f);
+		intent.facingOffsetDegrees = TravelFacingDegrees(
+			a_summonPosition,
+			OwnerLocalToWorldPoint(intent.localOffset, a_ownerPosition, a_ownerYawRadians),
+			a_ownerYawRadians);
 		return intent;
 	}
 

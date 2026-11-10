@@ -98,17 +98,19 @@
   * **Stealth-aware Target Scoring (`TargetSelector`):** when the player is sneaking and undetected (`playerSneaking && !playerDetected`) in `Defensive` mode, summons suppress attacks against unaware enemies to preserve player concealment.
   * **Explicit Overrides & Combat Reactions:** unprovoked attacks against the player/summon, explicit `FocusTarget` orders, or `Aggressive` mode override stealth suppression.
   * **FSM Sneak Preservation (`StateMachine`):** holds `FollowOwner` state during stealth without prematurely engaging distant unalerted enemies.
-  * Covered by 7 comprehensive unit tests in `tests/test_stealth.cpp` (89/89 tests passing).
+  * Covered by 7 comprehensive unit tests in `tests/test_stealth.cpp` (95/95 tests passing).
 * **Physical Order Execution (`SummonMovement`):**
   * New engine layer `src/Engine/SummonMovement.{h,cpp}` executes the order stored on `SummonModel` every tactical tick (15 Hz, main thread via the existing `PlayerCharacter::Update` hook): no new hooks, threads, spawned actors or borrowed AI packages.
   * Engine primitives (not bound by the pinned CommonLibSSE-NG, resolved via Address Library and verified against the unpacked 1.5.97 image): `Actor::KeepOffsetFromActor` (`SE 36870 / AE 37894`), `Actor::ClearKeepOffsetFromActor` (`36871 / 37895`), `Actor::SetDontMove` (`36490 / 37489`).
-  * Order → intent matrix: `Follow` holds the formation slot around the player (suppressed while fighting so combat AI keeps locomotion), `Return` runs to the player and flips to `Follow` on arrival, `MoveTo` walks to the world point (owner-relative offset recomputed every tick), `WaitGuard` parks the movement goal on the summon and locks translation.
-  * Pure geometry/rules split: `src/Core/Formation.{h,cpp}` (slot table now shared with `SquadCoordinator`) and `src/Core/MovementIntent.{h,cpp}` (intent matrix, arrival radius).
+  * Order → intent matrix: `Attack` (explicit FocusTarget) outranks every movement order, `Follow` holds the formation slot around the player (suppressed while fighting so combat AI keeps locomotion), `Return` runs to the player and flips to `Follow` on arrival, `MoveTo` walks to the world point (owner-relative offset recomputed every tick; a destination farther than 8000 units, e.g. left behind by a cell change, is abandoned), `WaitGuard` parks the movement goal on the summon and locks translation.
+  * **Facing control:** `KeepOffsetFromActor` also holds the actor's rotation (angle 0 = face where the owner faces), which made the wolf walk backwards whenever its goal was behind or beside the player. `core::FacingOffsetDegrees` now feeds the direction of travel into the angle-Z argument; standing on the slot/point resets it to the owner's heading.
+  * **Focus is not overridden by movement:** `CommandQueue::ApplyToModel` turns a `SetFocusTarget` into `SummonOrder::Attack` (drops any move destination), the intent matrix yields `None` for it, and the order reverts to `Follow` when the target dies/vanishes or combat never starts within 2 s.
+  * Pure geometry/rules split: `src/Core/Formation.{h,cpp}` (slot table and body-space/facing math, shared with `SquadCoordinator`) and `src/Core/MovementIntent.{h,cpp}` (intent matrix, arrival radius, move-distance limit).
   * Emergency catch-up warp (only beyond `[Recovery] fCatchUpDistance` or after 3 s without progress, same-cell only, always logged; at most one warp per Return order).
-  * Primitive state bookkeeping (`AppliedMovement`): re-issue only on change, keep-offset re-assert every 2 s, `SetDontMove(false)` forced on first discovery so a stale save/load flag cannot freeze a summon; state dropped on dispel/death/detach and on `kPreLoadGame`/`kNewGame`.
+  * Primitive state bookkeeping (`AppliedMovement`): re-issue only on change (8 units / 10°), keep-offset re-assert every 2 s, `SetDontMove(false)` forced on first discovery so a stale save/load flag cannot freeze a summon; state dropped on dispel/death/detach and on `kPreLoadGame`/`kNewGame`.
   * `SetRunOncePackage(nullptr)` / `EvaluatePackage()` removed from Return/Guard/Follow execution: they created no movement intent and competed with the new one.
-  * Covered by 14 new pure unit tests in `tests/test_movement_intent.cpp` (89/89 tests passing).
-  * **Field-verification pending:** whether a summoned creature honours the keep-offset, whether `SetDontMove(true)` still allows in-place attacks, and the warp thresholds. Log lines are prefixed `[Movement]`.
+  * Covered by 20 new pure unit tests in `tests/test_movement_intent.cpp` (95/95 tests passing).
+  * **Field status:** the 2026-11-10 session confirmed that a summoned wolf *does* follow the keep-offset goal, that `Return` works (walking and the 3 s stuck-warp), and that `Guard` freezes it in place. The backwards walking (facing lock) and Focus being ignored while a move/guard order was live were diagnosed from that log and fixed; a re-test is pending.
 * **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
   * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
   * **Crosshair Target Pick & Move-To-Point (`RE::CrosshairPickData`):**
@@ -137,7 +139,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **89/89 test cases passing** (0 failures, execution time < 2 ms).
+  * **95/95 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -163,7 +165,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
   * `src/FriendlyFire/RelationshipClassifier.h/.cpp`: classifies sources as `Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, or `Unknown`.
   * Depth-guarded commanding actor traversal (`MaxCommandChainDepth = 4`) with cycle detection.
   * Fail-Safe Gate: `Unknown` and hostile sources are NEVER filtered, protecting combat integrity against true enemies.
-  * 100% covered by 5 new unit tests in `tests/test_friendly_fire.cpp` (all 89/89 tests passing).
+  * 100% covered by 5 new unit tests in `tests/test_friendly_fire.cpp` (all 95/95 tests passing).
 * **FF-Stage B & C (Damage Protection MVP & Precision Melee Pass-Through):**
   * `src/FriendlyFire/FriendlyFireSettings.h`: integrated with `Settings.h/.cpp` with full INI parsing, validation, and round-trip serialization.
   * `src/Integrations/PrecisionBackend.h/.cpp`: dynamically discovers `Precision.dll` (v2.0.4) and installs `PreHitCallback`. When the player swings through a registered summon, returns `bIgnoreHit = true`: weapon physically flies through without hitstop to strike enemies behind!
@@ -184,6 +186,8 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 
 * Engine adapters (`ActorAdapter`, `CombatAdapter`) are currently decoupled; test execution uses synthetic `DecisionContext` snapshots until the `SummonRegistry` hook is active.
 * Raycast / Line-of-sight checks currently depend on snapshot inputs and will be connected to engine raycasts in the adapter layer.
-* `SummonMovement` has not been verified in game yet. Two assumptions need a field pass: a summoned creature honours `KeepOffsetFromActor` (the vanilla summoned-creature follow may rewrite the goal; the driver re-asserts every 2 s), and `SetDontMove(true)` preserves in-place attacks while guarding.
+* `SummonMovement` is field-confirmed for `Follow` / `Return` / `Guard` (the keep-offset moves a summoned wolf, warp fires when stuck, `SetDontMove` holds it). Still unconfirmed after the facing / Attack / MoveTo fixes: that the offset-angle really controls the actor's facing on 1.5.97, that `SetDontMove(true)` preserves in-place attacks, and that the Move To Point aim sources land where the player aimed.
 * Catch-up warp is same-cell only; cross-cell recall relies on the engine's vanilla summon snap (`fSummonedCreatureMaxFollowDist`, patched from `[Recovery] fCatchUpDistance`).
+* A summon in a different cell than the player receives no movement orders (its AI process is suspended); the drift `MoveTo` destination is abandoned when the owner is more than 8000 units away.
+* Focus Target is resolved from `targetActor`/`target`; if `CrosshairPickData` is empty in a user's setup (HUD mods hiding the crosshair), only the diagnostic `[Crosshair]` line can tell, and there is no fallback target selection yet.
 * `SetDontMove` is actor state, not framework state: turning the framework off with `[General] bEnabled = false` (or disabling the plugin) does not release a hold that was already applied. Use any other order before disabling, or reload the save.

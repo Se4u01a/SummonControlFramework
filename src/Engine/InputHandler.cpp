@@ -3,6 +3,7 @@
 #include "Core/FrameworkContext.h"
 #include "PCH.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -20,12 +21,105 @@ namespace scf::engine
 {
 	namespace
 	{
+		// Aim-projection fallback for MoveTo: when the crosshair is over terrain the
+		// interaction pick leaves `collisionPoint` at zero, so project the aim onto the
+		// ground plane instead. |aim angle| keeps this independent of the pitch sign.
+		constexpr float kEyeHeight = 110.0f;
+		constexpr float kAimFlatDistance = 500.0f;
+		constexpr float kAimMinDistance = 200.0f;
+		constexpr float kAimMaxDistance = 2500.0f;
+
 		void Notify(const char* a_msg)
 		{
 			if (a_msg && a_msg[0]) {
 				RE::SendHUDMessage::ShowHUDMessage(a_msg);
 				logger::info("[InputHandler] {}", a_msg);
 			}
+		}
+
+		bool IsSaneWorldPoint(const RE::NiPoint3& a_point) noexcept
+		{
+			return std::isfinite(a_point.x) && std::isfinite(a_point.y) && std::isfinite(a_point.z) &&
+			       !(a_point.x == 0.0f && a_point.y == 0.0f && a_point.z == 0.0f) &&
+			       std::abs(a_point.x) < 200000.0f && std::abs(a_point.y) < 200000.0f;
+		}
+
+		// CrosshairPickData carries two handles: `target` is what the interaction
+		// (activate) pick found, `targetActor` is what the aim pick found. CommonLib's
+		// GetActiveTarget() only exposes the first, which is why an enemy across the
+		// room read as "no target". Resolve the actor first, then the plain reference.
+		RE::TESObjectREFR* ResolveCrosshairRef()
+		{
+			auto* pick = RE::CrosshairPickData::GetSingleton();
+			if (!pick) {
+				return nullptr;
+			}
+
+		#if defined(EXCLUSIVE_SKYRIM_FLAT)
+			const RE::ObjectRefHandle handles[]{ pick->targetActor, pick->target };
+		#else
+			const RE::ObjectRefHandle handles[]{ pick->targetActor[0], pick->target[0] };
+		#endif
+			for (const auto& handle : handles) {
+				auto ref = handle.get();
+				if (ref) {
+					return ref.get();
+				}
+			}
+			return nullptr;
+		}
+
+		RE::Actor* ResolveCrosshairActor()
+		{
+			if (auto* ref = ResolveCrosshairRef()) {
+				return ref->As<RE::Actor>();
+			}
+			return nullptr;
+		}
+
+		bool ResolveCrosshairPoint(RE::NiPoint3& a_outPoint)
+		{
+			auto* pick = RE::CrosshairPickData::GetSingleton();
+			if (!pick) {
+				return false;
+			}
+
+		#if defined(EXCLUSIVE_SKYRIM_FLAT)
+			const auto& point = pick->collisionPoint;
+		#else
+			const auto& point = pick->collisionPoint[0];
+		#endif
+			if (!IsSaneWorldPoint(point)) {
+				return false;
+			}
+
+			a_outPoint = point;
+			return true;
+		}
+
+		void LogCrosshairState(const char* a_action)
+		{
+			auto* pick = RE::CrosshairPickData::GetSingleton();
+			if (!pick) {
+				logger::warn("[Crosshair] {}: CrosshairPickData singleton is null", a_action);
+				return;
+			}
+
+		#if defined(EXCLUSIVE_SKYRIM_FLAT)
+			const auto target = pick->target.get();
+			const auto targetActor = pick->targetActor.get();
+			const auto& point = pick->collisionPoint;
+			const auto* resolved = ResolveCrosshairRef();
+
+			logger::info("[Crosshair] {}: target=0x{:08X} targetActor=0x{:08X} ref=0x{:08X} point=({:.1f}, {:.1f}, {:.1f})",
+				a_action,
+				target ? target->GetFormID() : 0u,
+				targetActor ? targetActor->GetFormID() : 0u,
+				resolved ? resolved->GetFormID() : 0u,
+				point.x, point.y, point.z);
+		#else
+			logger::info("[Crosshair] {}: non-flat build, raw dump omitted", a_action);
+		#endif
 		}
 	}
 
@@ -42,15 +136,11 @@ namespace scf::engine
 
 	void InputHandler::HandleFocusTarget()
 	{
-		auto* crosshair = RE::CrosshairPickData::GetSingleton();
-		if (!crosshair) {
+		if (!RE::CrosshairPickData::GetSingleton()) {
 			return;
 		}
 
-		RE::Actor* targetActor = nullptr;
-		if (auto ref = crosshair->GetActiveTarget().get()) {
-			targetActor = ref->As<RE::Actor>();
-		}
+		auto* targetActor = ResolveCrosshairActor();
 
 		if (targetActor) {
 			if (targetActor->IsDead()) {
@@ -81,6 +171,7 @@ namespace scf::engine
 			Notify(msg.c_str());
 		} else {
 			Notify("SCF: No target under crosshair");
+			LogCrosshairState("FocusTarget");
 		}
 	}
 
@@ -132,44 +223,54 @@ namespace scf::engine
 
 	void InputHandler::HandleMoveTo()
 	{
-		auto* crosshair = RE::CrosshairPickData::GetSingleton();
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		if (!player) {
 			return;
 		}
 
 		core::Vec3 targetPos{};
-		bool foundPos = false;
+		const char* source = "none";
+		bool found = false;
 
-		if (crosshair) {
-#if defined(EXCLUSIVE_SKYRIM_FLAT)
-			const auto& pt = crosshair->collisionPoint;
-#else
-			const auto& pt = crosshair->collisionPoint[0];
-#endif
-			if (std::isfinite(pt.x) && std::isfinite(pt.y) && std::isfinite(pt.z) &&
-			    (pt.x != 0.0f || pt.y != 0.0f || pt.z != 0.0f) &&
-			    std::abs(pt.x) < 200000.0f && std::abs(pt.y) < 200000.0f) {
-				targetPos = { pt.x, pt.y, pt.z };
-				foundPos = true;
-			} else if (auto ref = crosshair->GetActiveTarget().get()) {
-				const auto pos = ref->GetPosition();
-				if (std::isfinite(pos.x) && std::isfinite(pos.y) && std::isfinite(pos.z) &&
-				    std::abs(pos.x) < 200000.0f && std::abs(pos.y) < 200000.0f) {
-					targetPos = { pos.x, pos.y, pos.z };
-					foundPos = true;
-				}
+		RE::NiPoint3 point{};
+		if (ResolveCrosshairPoint(point)) {
+			targetPos = { point.x, point.y, point.z };
+			source = "crosshair collision point";
+			found = true;
+		} else if (auto* ref = ResolveCrosshairRef()) {
+			const auto refPos = ref->GetPosition();
+			if (IsSaneWorldPoint(refPos)) {
+				targetPos = { refPos.x, refPos.y, refPos.z };
+				source = "crosshair reference";
+				found = true;
 			}
 		}
 
-		if (!foundPos) {
-			// 500 units ahead of player in facing yaw direction
-			const float angle = player->GetAngleZ();
-			const auto pPos = player->GetPosition();
-			targetPos.x = pPos.x + 500.0f * std::sin(angle);
-			targetPos.y = pPos.y + 500.0f * std::cos(angle);
-			targetPos.z = pPos.z;
+		if (!found) {
+			// Terrain under the crosshair leaves the pick data without a collision point
+			// (the interaction pick fills it only for references), so project the aim
+			// onto the ground plane instead of guessing "straight ahead".
+			const float yaw = player->GetAngleZ();
+			const float pitch = std::abs(player->GetAimAngle());
+
+			float distance = kAimFlatDistance;
+			if (pitch > 0.05f) {
+				distance = kEyeHeight / std::tan(pitch);
+			}
+			distance = std::clamp(distance, kAimMinDistance, kAimMaxDistance);
+
+			const auto playerPos = player->GetPosition();
+			targetPos = {
+				playerPos.x + std::sin(yaw) * distance,
+				playerPos.y + std::cos(yaw) * distance,
+				playerPos.z
+			};
+			source = "aim projection";
 		}
+
+		logger::info("[InputHandler] MoveTo destination from {}: ({:.0f}, {:.0f}, {:.0f}) [aimAngle={:.2f} rad, distance-to-player={:.0f}]",
+			source, targetPos.x, targetPos.y, targetPos.z, player->GetAimAngle(),
+			core::Vec3{ player->GetPosition().x, player->GetPosition().y, player->GetPosition().z }.DistanceTo(targetPos));
 
 		core::Command cmd{};
 		cmd.type = core::CommandType::SetOrder;
@@ -182,7 +283,7 @@ namespace scf::engine
 		core::FrameworkContext::GetSingleton().GetCommandQueue().Enqueue(cmd);
 		core::FrameworkContext::GetSingleton().GetScheduler().RequestImmediateTick();
 
-		char buf[128];
+		char buf[160];
 		std::snprintf(buf, sizeof(buf), "SCF: Move To Point (%.0f, %.0f, %.0f)", targetPos.x, targetPos.y, targetPos.z);
 		Notify(buf);
 	}

@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **89/89 тестов успешно пройдено (0 failures)**.
+Текущий результат: **95/95 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -111,7 +111,7 @@ xmake run scf_tests
 * `relationship_classifier_target_protection`: Проверяет селектор защиты целей в зависимости от настроек (`bProtectPlayerOwnedSummons`, `bProtectAlliedSummons`).
 * `relationship_classifier_evaluate_attack_matrix`: Проверяет матрицу решений: защита атак ближнего боя, стрел, магии, криков от игрока и союзников, при безусловном пропуске атак от врагов и нейтральных сущностей.
 
-### Suite M: Formation Geometry & Movement Intent (`Formation` & `MovementIntent`) — 14 tests
+### Suite M: Formation Geometry, Facing & Movement Intent (`Formation` & `MovementIntent`) — 20 tests
 * `TestFormationSlotOffsetsSitOnRadius`: Проверяет, что смещение любого слота строя лежит ровно на заданном радиусе (50..1000) и не имеет вертикального сдвига.
 * `TestFormationSlotsAreDistinct`: Проверяет непересечение слотов отряда: для 2..6 существ позиции разнесены более чем на 50 единиц.
 * `TestFormationDefaultSlotIsBehindOwner`: Проверяет, что одиночный сумон и замыкающий тройки стоят позади владельца.
@@ -119,11 +119,17 @@ xmake run scf_tests
 * `TestOwnerLocalWorldOffsetRoundTrip`: Проверяет обратимость перевода смещения из body space владельца в мир и обратно на нескольких углах поворота.
 * `TestOwnerWorldPointRoundTrip`: Проверяет обратимость перевода абсолютной мировой точки в offset владельца и обратно.
 * `TestOwnerLocalWorldOffsetMatchesSquadConvention`: Фиксирует соглашение `SquadCoordinator` (мир = yaw владельца + пеленг слота, sin -> X, cos -> Y), чтобы общий модуль не изменил поведение строя.
+* `TestFacingOffsetDegreesCardinalDirections`: Проверяет угол поворота на цель для четырёх направлений (вперёд 0, вправо +90, назад 180, влево -90) — это значение уходит в `afOffsetAngleZ`, чтобы сумон не «ходил задом».
+* `TestFacingOffsetDegreesIsRelativeToOwnerHeading`: Проверяет, что угол считается относительно текущего heading владельца (при yaw 90° цель на восток = 0°, на север = -90°).
+* `TestFacingOffsetDegreesDegenerateIsZero`: Проверяет вырожденный случай (цель совпала с позицией актора) — угол 0, без «дрожания» ориентации.
 * `TestMovementIntentGuardHoldsPositionEvenInCombat`: Проверяет, что приказ `WaitGuard` даёт `HoldPosition` с блокировкой транслокации даже в бою.
-* `TestMovementIntentReturnRunsToOwner`: Проверяет `ReturnToOwner` с нулевым смещением и корректными радиусами (follow < catchUp).
-* `TestMovementIntentFollowUsesFormationSlot`: Проверяет `FollowSlot` с дистанцией строя `fFollowMinDistance`.
+* `TestMovementIntentAttackOverridesEveryMovementOrder`: Проверяет, что явный `FocusTarget` (`Attack`) отменяет любой приказ движения: примитивы не применяются, локомоция у боевого AI.
+* `TestMovementIntentReturnRunsToOwner`: Проверяет `ReturnToOwner` с нулевым смещением, корректными радиусами (follow < catchUp) и разворотом лицом к игроку.
+* `TestMovementIntentFollowUsesFormationSlot`: Проверяет `FollowSlot` с дистанцией строя `fFollowMinDistance` и нулевым facing на самом слоте.
+* `TestMovementIntentFollowFacesTravelWhenAwayFromSlot`: Проверяет, что смещённый от слота сумон смотрит по направлению к слоту, а не туда же, куда игрок.
 * `TestMovementIntentFollowYieldsToCombat`: Проверяет, что в бою `Follow` не навязывает движение (локомоция остаётся боевому AI), а устаревшая цель модели не блокирует приказ.
 * `TestMovementIntentMoveToKeepsWorldDestination`: Ключевой тест: при смещении и повороте владельца пересчитанный offset всё равно указывает на ту же мировую точку.
+* `TestMovementIntentMoveToIgnoresStaleDestination`: Проверяет отмену `MoveTo` с точкой дальше 8000 единиц (осталась в другой ячейке после телепорта) — иначе получались абсурдные offset-цели из полевого лога.
 * `TestMovementIntentMoveToWithoutDestinationFallsBackToFollow`: Проверяет безопасный откат `MoveTo` без сохранённой точки в обычное следование.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
@@ -153,7 +159,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 89/89 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 95/95 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -239,6 +245,11 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-ORDER-7 (Movement log evidence):** В `SummonControlFramework.log` после нажатия хоткея должны появляться строки `[Movement] Summon 0x... <Mode> keep-offset (...)`, `[Movement] Summon 0x... SetDontMove(true|false)` и (для `Return`) `[Movement] Summon 0x... reached owner (...) -> Follow`. Отсутствие строки `keep-offset` означает, что приказ не дошёл до движка.
 * **[ ] TEST-ORDER-8 (Guard in place):** После `Numpad 5` сумон стоит на месте, не бежит за игроком даже когда игрок уходит; при этом он должен поворачиваться и наносить удары по подошедшему врагу (проверка того, что `SetDontMove(true)` не блокирует атаки). Нажатие `Numpad 6` снимает блокировку.
 * **[ ] TEST-ORDER-9 (Catch-up warp):** Уйти от отряда дальше `fCatchUpDistance` (3500) и нажать `Numpad 2`: в логе должно появиться `catch-up warp applied (beyond catch-up distance ...)`, а сумон — оказаться за спиной игрока. Внутри одной ячейки.
+* **[ ] TEST-ORDER-10 (No backwards walking):** Сумон должен бежать/идти головой вперёд при любом приказе (Follow из позиции перед игроком, Return, MoveTo с точкой позади/сбоку). В логе у `keep-offset` появляется поле `facing=...`, отличное от 0, когда цель сбоку/позади.
+* **[ ] TEST-ORDER-11 (Focus overrides guard / move-to):** Поставить отряд в `Guard` (Numpad 5) или отправить `MoveTo` (Numpad 4), затем навестись на врага и нажать `Numpad 1`. В логе: `[Movement] ... Attack` не появляется как keep-offset (приказ `Attack` даёт `None`), но должен появиться `SetDontMove(false)` (если был guard), сумон бросается на цель; при смерти цели — `attack order finished (...) -> Follow`.
+* **[ ] TEST-ORDER-12 (MoveTo aim sources):** Нажатие `Numpad 4` при прицеле на землю пишет в лог `MoveTo destination from aim projection`, при прицеле на актора/ссылку — `from crosshair reference`, при попадании пика в объект — `from crosshair collision point`. Точка назначения при этом совпадает с тем, куда смотрит прицел.
+* **[ ] TEST-ORDER-13 (Crosshair diagnostics):** При промахе Focus (надпись `No target under crosshair`) в логе появляется строка `[Crosshair] FocusTarget: target=0x... targetActor=0x... ref=0x... point=(... , ... , ...)` — по ней видно, какое из полей прицела пустое.
+* **[ ] TEST-ORDER-14 (Stale MoveTo cancelled):** Отправить отряд в `MoveTo`, затем быстро сменить ячейку (дверь/быстрое перемещение/`coc`): в логе должно появиться `MoveTo destination is ... units from the owner (limit 8000); abandoned -> Follow`, а сумон не должен бежать к старой точке.
 
 ### 6.2. Внутриигровое меню FLICK Menu (FUCK.dll — клавиша F7)
 * **[ ] TEST-FLICK-1 (Меню настроек):** Нажать `F7` для открытия оверлея FLICK. В категории `Gameplay` выбрать вкладку **Summon Control Framework**.
