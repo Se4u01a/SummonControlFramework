@@ -29,7 +29,10 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	const auto* plugin = SKSE::PluginDeclaration::GetSingleton();
 	logger::info("{} v{} is loading...", plugin->GetName(), plugin->GetVersion());
 
-	SKSE::Init(a_skse, { .log = false, .trampoline = true, .trampolineSize = 64 });
+	// The trampoline pool backs every 5-byte site patch (14-byte stub per unique target:
+	// the HitHook thunk and the CombatGate StartCombat thunk), so keep real headroom
+	// instead of the old 64 bytes.
+	SKSE::Init(a_skse, { .log = false, .trampoline = true, .trampolineSize = 1024 });
 
 	if (!scf::plugin::RuntimeGate::ValidateRuntime()) {
 		logger::error("RuntimeGate validation failed, disabling plugin hooks.");

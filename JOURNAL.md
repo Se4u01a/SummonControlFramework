@@ -510,5 +510,21 @@ Second field session (STB/SBORKA, log 19:32–19:35) after the facing / aim fixe
 * **Build:** clean, auto-deployed to both MO2 instances.
 * **Not verified in game.** Open question: whether refusing `StartCombat` is enough to stop the vanilla commanded-actor combat, or whether the summon will still try (the `AttackApproach` assist guarantees the charge for a focused target). The next session's `[CombatGate]`/`[Execution] StartCombat` lines decide the follow-up.
 
+---
+
+## 2026-11-10 — Crash postmortem: `StartCombat` entry hook replaced by call-site patches
+
+The first field run of the `CombatGate` ended in an access violation ~75 seconds into the session (log `Crashlogs/2026-11-10-19-53-29.log`). Recorded here because the mistake is one this project could repeat.
+
+* **Symptom.**`EXCEPTION_ACCESS_VIOLATION at 0x7FF778072E40`, on a `BSJobs__JobThread` (non-render-safe AI) thread, inside the probable stack `FUN_140688270 (+0x688493) <- ActorProcess::unk_Assault <- ActorKnowledge <- StandardDetectionListener`. Our own log had 11 lines earlier:
+  `[CombatGate] StartCombat denial seat installed at 0x7FF720B051B0 (original 0x7FF778072E40).`
+  The "original" we called was exactly the fault address. The crash caller `0x68848E` is one of the ten engine call sites of `Actor::StartCombat` (it calls `StartCombat` with `mov r8,r15; mov rdx,rsi; mov rcx,rdi; call 0x6251B0`).
+* **Root cause.** In this CommonLibSSE-NG revision, `Trampoline::write_branch<N>` is a **site patcher, not a trampoline factory**: `write_5branch` overwrites the site with `E8/E9 rel32` pointing at a near stub (`jmp [rip]; dq dst`), and the private `write_branch` returns `func = site + N + *disp` — the *previous branch target computed from the overwritten bytes*. On a call site that is the old callee (correct, and why `HitHook`'s `write_call<5>` has always worked); on a **function entry** those bytes are a prologue (`mov r11, rsp; push rsi; ...`), so the "original" is garbage. Patching `StartCombat`'s entry and calling that garbage crashed the first AI thread that started a fight.
+* **Fix.** `CombatGate::Install` no longer touches the function entry. It scans the `.text` segment for direct branches whose rel32 resolves exactly to `Actor::StartCombat` and patches each one: 9 `E8` call sites via `write_call<5>` and the one `E9` argument-shuffling wrapper at `0x64776C` (`mov rax,r8; mov rcx,rdx; mov rdx,rax; mov r8,r9; jmp StartCombat`) via `write_branch<5>`, because that site must stay a jump (it is a tail call and has no fall-through epilogue). The thunk calls the real function by its verified address (the entry is unpatched, so there is no recursion). Offline verification against the unpacked 1.5.97 image: exactly 10 sites (9 calls + 1 tail call), matching APMF's "ten StartCombat callers" research, and the crash's caller `0x68848E` is one of them.
+* **Hardening.** `SKSE::Init` trampoline raised from 64 to 1024 bytes: every patched site needs a 14-byte stub in that pool (one per unique destination, shared by all sites).
+* **Checked.** Build clean, deployed; `scf_tests` 102/102. The install line now reads `StartCombat denial seat installed on 10 site(s) (1 tail call(s)) of 0x...; function entry untouched.` — the next session's log confirms it on the real image.
+* **Rule learned.** In this fork `write_branch`/`write_call` return the previous *branch target*, never a callable copy of the original. Only call-site patches keep the original callable; a function-entry hook needs a real trampoline (copied prologue + jump back), which this fork does not provide.
+
+
 
 

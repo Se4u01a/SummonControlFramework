@@ -6,8 +6,10 @@
 #include <RE/C/CombatGroup.h>
 
 #include <chrono>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 namespace scf::engine::combat
 {
@@ -15,11 +17,25 @@ namespace scf::engine::combat
 	{
 		// Actor::StartCombat(Actor* target, CombatGroup* group) -> bool.
 		// VERIFIED 1.5.97: id 37608 -> SkyrimSE.exe+6251B0 (addrlib.py; the same id
-		// CommonLib's Actor.cpp binds). The function starts with a relocatable
-		// `mov r11, rsp; push rsi; push rdi; ...` prologue, so a 5-byte branch through the
-		// SKSE trampoline is safe. The AI enters combat through this function; refusing
-		// here (returning false, exactly like the engine does for a dead self) keeps the
-		// actor out of combat without touching the combat controller.
+		// CommonLib's Actor.cpp binds).
+		//
+		// HOW THE SEAT IS INSTALLED, AND HOW IT IS *NOT* (field crash 2026-11-10):
+		// this CommonLibSSE-NG revision's `Trampoline::write_branch<N>` does NOT build a
+		// callable copy of the original function. It patches the site with E8/E9 to a near
+		// stub and RETURNS THE PREVIOUS BRANCH TARGET computed from the overwritten bytes
+		// (`write_5branch` + the private `write_branch` in src/SKSE/Trampoline.cpp). Patching
+		// StartCombat's function ENTRY with it and calling the returned value jumps to
+		// garbage: the game died at 0x7FF778072E40, exactly the value the install line
+		// logged as "original".
+		//
+		// The seat therefore patches the DIRECT CALL SITES of StartCombat instead. Each
+		// site is a normal `E8 rel32` call, so our thunk is entered with an ordinary call
+		// frame and returns the bool to the engine; the thunk forwards to the real function
+		// by its verified address (the entry itself is untouched, so no recursion).
+		// The scan is a byte scan for `E8` whose rel32 resolves exactly to StartCombat:
+		// 9 clean sites on 1.5.97 (matches the crash stack's caller 0x68848E and APMF's
+		// "ten StartCombat callers" research), and only sites that still point at the real
+		// function are patched (a site another mod already rerouted is logged and skipped).
 		using StartCombat_t = bool (*)(RE::Actor*, RE::Actor*, RE::CombatGroup*);
 
 		StartCombat_t s_originalStartCombat{ nullptr };
@@ -33,8 +49,8 @@ namespace scf::engine::combat
 			std::chrono::steady_clock::time_point lastDenyLog{};
 		};
 
-		// Shared with the StartCombat seat (any thread).
-		std::mutex                                s_mutex;
+		// Shared with the StartCombat call sites (any thread).
+		std::mutex                                 s_mutex;
 		std::unordered_map<RE::FormID, Permission> s_permissions;
 
 		// Main-thread only.
@@ -46,7 +62,7 @@ namespace scf::engine::combat
 		};
 		std::unordered_map<RE::FormID, AppliedGate> s_applied;
 
-		bool StartCombatThunk(RE::Actor* a_self, RE::Actor* a_target, RE::CombatGroup* a_group)
+		bool StartCombatGateThunk(RE::Actor* a_self, RE::Actor* a_target, RE::CombatGroup* a_group)
 		{
 			if (!s_originalStartCombat) {
 				return false;
@@ -103,21 +119,69 @@ namespace scf::engine::combat
 			return true;
 		}
 
+		// The real function is never patched, so this address stays callable.
 		REL::Relocation<std::uintptr_t> function{ REL::RelocationID(37608, 38561) };
 		if (!function.address()) {
 			logger::error("[CombatGate] Actor::StartCombat did not resolve; combat denial disabled.");
 			return false;
 		}
+		s_originalStartCombat = reinterpret_cast<StartCombat_t>(function.address());
 
-		const auto trampoline = function.write_branch<5>(&StartCombatThunk);
-		s_originalStartCombat = reinterpret_cast<StartCombat_t>(trampoline);
-		s_installed = s_originalStartCombat != nullptr;
+		const auto text = REL::Module::get().segment(REL::Segment::textx);
+		if (!text.address() || text.size() < 8) {
+			logger::error("[CombatGate] .text segment is not available; combat denial disabled.");
+			return false;
+		}
 
+		const auto* bytes = text.pointer<std::uint8_t>();
+		struct Site
+		{
+			std::size_t offset;
+			bool        tailCall; // E9: the caller tail-jumps, so it must stay a jmp
+		};
+		std::vector<Site> sites;
+
+		// Collect first: patching changes the bytes the scan reads.
+		for (std::size_t i = 0; i + 5 <= text.size(); ++i) {
+			const auto opcode = bytes[i];
+			if (opcode != 0xE8 && opcode != 0xE9) {
+				continue;
+			}
+
+			std::int32_t displacement = 0;
+			std::memcpy(&displacement, bytes + i + 1, sizeof(displacement));
+			const auto previous = static_cast<std::uintptr_t>(
+				static_cast<std::intptr_t>(text.address() + i + 5) + displacement);
+			if (previous == function.address()) {
+				sites.push_back({ i, opcode == 0xE9 });
+			}
+		}
+
+		if (sites.empty()) {
+			logger::error("[CombatGate] no direct call sites of Actor::StartCombat found; combat denial disabled.");
+			return false;
+		}
+
+		std::size_t patched = 0;
+		std::size_t tailCalls = 0;
+		for (const auto& site : sites) {
+			REL::Relocation<std::uintptr_t> callSite{ text.address() + site.offset };
+			const auto previous = site.tailCall ? callSite.write_branch<5>(&StartCombatGateThunk)
+			                                    : callSite.write_call<5>(&StartCombatGateThunk);
+			if (previous != function.address()) {
+				logger::warn("[CombatGate] StartCombat site 0x{:X} changed between scan and patch (previous 0x{:X}); chained.",
+					text.address() + site.offset, previous);
+			}
+			++patched;
+			tailCalls += site.tailCall ? 1 : 0;
+		}
+
+		s_installed = patched > 0;
 		if (s_installed) {
-			logger::info("[CombatGate] StartCombat denial seat installed at 0x{:X} (original 0x{:X}).",
-				function.address(), reinterpret_cast<std::uintptr_t>(s_originalStartCombat));
+			logger::info("[CombatGate] StartCombat denial seat installed on {} site(s) ({} tail call(s)) of 0x{:X}; function entry untouched.",
+				patched, tailCalls, function.address());
 		} else {
-			logger::error("[CombatGate] Trampoline for Actor::StartCombat failed; combat denial disabled.");
+			logger::error("[CombatGate] no StartCombat call site could be patched; combat denial disabled.");
 		}
 		return s_installed;
 	}

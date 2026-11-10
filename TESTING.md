@@ -280,7 +280,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 
 ### 6.5. Полный контроль боя (`CombatGate`)
 
-Проверка в логе: при загрузке должна быть строка `[CombatGate] StartCombat denial seat installed ...`. Если вместо неё `did not resolve`/`disabled` — остаётся только второй слой (биты + StopCombat), `Passive`/`Return` всё равно работают.
+Проверка в логе: при загрузке должна быть строка `[CombatGate] StartCombat denial seat installed on 10 site(s) (1 tail call(s)) of 0x...; function entry untouched.`. Если вместо неё `did not resolve`/`no direct call sites`/`disabled` — остаётся только второй слой (биты + StopCombat), `Passive`/`Return` всё равно работают.
 
 * **[ ] TEST-COMBAT-1 (Passive absolute):** Переключить режим на `Passive` (Numpad 3 до `SCF: Aggression Mode -> Passive`). Суммон не атакует ни при каких обстоятельствах: не входит в бой, не машет, не кастует, даже если враг бьёт его первым. В логе: `[CombatGate] attacks/casts disabled=true` и, при попытках движка, `StartCombat refused ... (combat forbidden)`.
 * **[ ] TEST-COMBAT-2 (Passive blocks Focus):** Нажать `Numpad 1` в `Passive`: HUD `SCF: Passive mode - attack suppressed`, приказа нет, суммон продолжает следовать. (Приказ `FocusTarget` не должен доходить до движка.)
