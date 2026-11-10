@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **95/95 тестов успешно пройдено (0 failures)**.
+Текущий результат: **102/102 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -111,7 +111,7 @@ xmake run scf_tests
 * `relationship_classifier_target_protection`: Проверяет селектор защиты целей в зависимости от настроек (`bProtectPlayerOwnedSummons`, `bProtectAlliedSummons`).
 * `relationship_classifier_evaluate_attack_matrix`: Проверяет матрицу решений: защита атак ближнего боя, стрел, магии, криков от игрока и союзников, при безусловном пропуске атак от врагов и нейтральных сущностей.
 
-### Suite M: Formation Geometry, Facing & Movement Intent (`Formation` & `MovementIntent`) — 20 tests
+### Suite M: Formation Geometry, Facing, Movement Intent & Combat Policy (`Formation`, `MovementIntent`, `CombatPolicy`) — 27 tests
 * `TestFormationSlotOffsetsSitOnRadius`: Проверяет, что смещение любого слота строя лежит ровно на заданном радиусе (50..1000) и не имеет вертикального сдвига.
 * `TestFormationSlotsAreDistinct`: Проверяет непересечение слотов отряда: для 2..6 существ позиции разнесены более чем на 50 единиц.
 * `TestFormationDefaultSlotIsBehindOwner`: Проверяет, что одиночный сумон и замыкающий тройки стоят позади владельца.
@@ -128,6 +128,13 @@ xmake run scf_tests
 * `TestMovementIntentFollowUsesFormationSlot`: Проверяет `FollowSlot` с дистанцией строя `fFollowMinDistance` и нулевым facing на самом слоте.
 * `TestMovementIntentFollowFacesTravelWhenAwayFromSlot`: Проверяет, что смещённый от слота сумон смотрит по направлению к слоту, а не туда же, куда игрок.
 * `TestMovementIntentFollowYieldsToCombat`: Проверяет, что в бою `Follow` не навязывает движение (локомоция остаётся боевому AI), а устаревшая цель модели не блокирует приказ.
+* `TestMovementIntentAttackFallsBackToFollowWhenCombatForbidden`: Проверяет, что при запрещённом бое (`Passive`) приказ `Attack` не оставляет суммона без управления движением — он продолжает следовать.
+* `TestMovementIntentFollowKeepsSlotWhenCombatForbidden`: Проверяет, что при `Passive`/`Return`/`MoveTo` формация выигрывает даже если движок ещё сообщает бой (иначе суммон стоит, пока его утаскивает AI).
+* `TestCombatPolicyPassiveNeverFights`: Проверяет, что `Passive` запрещает бой при любом приказе (Follow/Guard/Return/MoveTo/Attack) и включает нативный запрет атак/кастов.
+* `TestCombatPolicyReturnForbidsCombatUntilArrival`: Проверяет, что `Return` запрещает бой до прибытия к игроку.
+* `TestCombatPolicyMoveToForbidsCombatWhileMoving`: Проверяет, что `MoveTo` с точкой запрещает бой, а без точки (откат в Follow) — разрешает.
+* `TestCombatPolicyAttackRestrictsToFocusedTarget`: Проверяет, что `Attack` разрешает бой ровно с назначенной целью, а без живой цели запрещает.
+* `TestCombatPolicyFollowAndGuardAllowCombat`: Проверяет, что `Follow`/`WaitGuard`/`Aggressive` разрешают бой (управление целью — за движком/агрессией).
 * `TestMovementIntentMoveToKeepsWorldDestination`: Ключевой тест: при смещении и повороте владельца пересчитанный offset всё равно указывает на ту же мировую точку.
 * `TestMovementIntentMoveToIgnoresStaleDestination`: Проверяет отмену `MoveTo` с точкой дальше 8000 единиц (осталась в другой ячейке после телепорта) — иначе получались абсурдные offset-цели из полевого лога.
 * `TestMovementIntentMoveToWithoutDestinationFallsBackToFollow`: Проверяет безопасный откат `MoveTo` без сохранённой точки в обычное следование.
@@ -159,7 +166,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 95/95 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 102/102 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -270,3 +277,16 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-STEALTH-1 (Sneak Hold Fire):** Игрок приседает в скрытность (`Ctrl`), сумон в режиме `Defensive`. При приближении к врагу (индикатор скрытности закрыт `[   ]`) сумон спокойно следует за игроком и **не агрится** на спокойного врага.
 * **[ ] TEST-STEALTH-2 (Sneak Detected Engage):** Если враг замечает игрока (индикатор открывается `[ ОБНАРУЖЕНО ]`), сумон немедленно бросается в бой.
 * **[ ] TEST-STEALTH-3 (Sneak Focus Target):** Находясь в скрытности, игрок нажимает `Numpad 1` на врага: сумон бесшумно срывается вперед и атакует указанную цель.
+
+### 6.5. Полный контроль боя (`CombatGate`)
+
+Проверка в логе: при загрузке должна быть строка `[CombatGate] StartCombat denial seat installed ...`. Если вместо неё `did not resolve`/`disabled` — остаётся только второй слой (биты + StopCombat), `Passive`/`Return` всё равно работают.
+
+* **[ ] TEST-COMBAT-1 (Passive absolute):** Переключить режим на `Passive` (Numpad 3 до `SCF: Aggression Mode -> Passive`). Суммон не атакует ни при каких обстоятельствах: не входит в бой, не машет, не кастует, даже если враг бьёт его первым. В логе: `[CombatGate] attacks/casts disabled=true` и, при попытках движка, `StartCombat refused ... (combat forbidden)`.
+* **[ ] TEST-COMBAT-2 (Passive blocks Focus):** Нажать `Numpad 1` в `Passive`: HUD `SCF: Passive mode - attack suppressed`, приказа нет, суммон продолжает следовать. (Приказ `FocusTarget` не должен доходить до движка.)
+* **[ ] TEST-COMBAT-3 (Return exits combat):** В бою нажать `Numpad 2`: суммон сразу выходит из боя (`[CombatGate] Summon ... combat broken by policy`), бежит к игроку, **не вступая** в новые драки по дороге; только добежав (в логе `reached owner (...) -> Follow`) снова может воевать.
+* **[ ] TEST-COMBAT-4 (Focus engages):** Навестись на врага и нажать `Numpad 1`: в логе `StartCombat(0x...) -> true (dist ..., hostile ..., inCombat yes)`, суммон подходит (`AttackApproach keep-offset ...`) и атакует. Если `StartCombat -> false` — пришлите строку целиком.
+* **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
+* **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
+* **[ ] TEST-COMBAT-7 (MoveTo does not fight):** Отправить отряд в `MoveTo` мимо врага: пока идёт переход, суммон не вступает в бой (биты включены), после прибытия (`-> Guard`) снова может обороняться.
+

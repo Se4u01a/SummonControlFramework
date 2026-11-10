@@ -25,6 +25,7 @@ namespace scf::core
 	MovementIntent BuildMovementIntent(
 		const SummonModel& a_model,
 		bool a_inCombat,
+		bool a_combatPermitted,
 		const SettingsData& a_settings,
 		const Vec3& a_ownerPosition,
 		const Vec3& a_summonPosition,
@@ -36,7 +37,9 @@ namespace scf::core
 
 		// 1. Attack (explicit FocusTarget): the player asked for a kill. It outranks
 		//    every movement order, including a parked guard, so combat AI drives.
-		if (a_model.order == SummonOrder::Attack) {
+		//    When the CombatPolicy forbids combat (Passive), the order falls through to
+		//    the follow rules instead: a passive summon keeps following and never charges.
+		if (a_model.order == SummonOrder::Attack && a_combatPermitted) {
 			return MovementIntent{};
 		}
 
@@ -82,7 +85,9 @@ namespace scf::core
 		// 5. Follow: an engaged summon fights; the engine owns its locomotion then.
 		//    Only the engine combat flag is authoritative here: a stale model target
 		//    (e.g. a focus command whose enemy disengaged) must not freeze the order.
-		if (a_inCombat) {
+		//    When the CombatPolicy forbids combat (Passive / Return / MoveTo) the engine
+		//    may still report combat for a moment; the formation must win anyway.
+		if (a_inCombat && a_combatPermitted) {
 			return MovementIntent{};
 		}
 

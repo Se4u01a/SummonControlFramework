@@ -36,7 +36,8 @@ namespace scf::engine::movement
 		const core::SettingsData& a_settings,
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize,
-		float a_now);
+		float a_now,
+		bool a_combatPermitted);
 
 	// Forget bookkeeping for summons that are no longer engine-commanded (dispel,
 	// death, cell detach / displacement). Keeps SetDontMove / keep-offset state from

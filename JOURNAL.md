@@ -487,4 +487,28 @@ First in-game session with `SummonMovement` (STB/SBORKA, log 13:31–13:38). The
 * **Build:** clean, auto-deployed to both MO2 instances.
 * **Pending:** re-test in game (TEST-ORDER-1/4/8/10/11/12/13/14 in TESTING.md). The remaining unknown is whether the offset-angle really controls facing on this runtime — if the wolf now turns correctly but goes to a rotated spot, the angle rotates the offset instead and the facing has to be handled differently (logged facing values make that diagnosable from one session).
 
+---
+
+## 2026-11-10 — Full combat control: `CombatGate` seat, `CombatPolicy`, AttackApproach
+
+Second field session (STB/SBORKA, log 19:32–19:35) after the facing / aim fixes. Report: Move To Point works, Focus Target does not; the summon still behaves as if it were running two behaviour patterns at once. The player's requirement is explicit: the summon must abandon its own AI patterns, live by the FSM states, never attack in `Passive` under any circumstances, and on `Return` it must leave combat and only re-enter after reaching the player.
+
+* **What the log proved:**
+  * `FollowSlot` now logs a real `facing=` value (e.g. -167, then the travel direction), and Move To Point works from the aim projection (`aimAngle=0.05 rad → 2020 units`, `0.17 → 646`) — both previous defects fixed.
+  * Focus *was* executed: `[Execution] Summon ... switching focus to 0x000F31C0`, `SetDontMove(false)`, `keep-offset cleared (HoldPosition)`, FSM `Guard -> AcquireTarget`, and no `attack order finished` reversion — i.e. `StartCombat` apparently left the summon "in combat", yet it did not attack. The vanilla commanded-actor logic kept the behaviour.
+  * The crosshair collided with terrain: `collisionPoint` holds uninitialised garbage (≈FLT_MAX) when the interaction pick has no reference, so `IsSaneWorldPoint` rejected it; that is why the aim projection fallback is needed. Focus presses still failed 12 times for every success — the interaction pick is not reliable for far actors.
+* **Research decision (Combat_Override_Package_List_Research.md §13):** CK `Combat Override Package List` + `HoldPosition` is a *soft* leash: it keeps the combat AI and Combat Style, cannot forbid fighting in `Passive`, cannot force a break on `Return`, cannot restrict to one target, and needs an ESP/ESL with packages, a quest and an alias pool. Rejected for SCF; the document keeps it as the description of a discarded alternative.
+* **Implemented — combat denial at the engine seat:**
+  * `src/Engine/CombatGate.{h,cpp}`: a hook on `Actor::StartCombat` (`RELOCATION_ID(37608, 38561)`, SE 1.5.97 → `SkyrimSE.exe+6251B0`, `write_branch<5>` through the SKSE trampoline; prologue `mov r11, rsp; push rsi; push rdi; ...` verified relocatable). For a registered summon it returns `false` — the same answer the engine gives for a dead self — unless the published `CombatPolicy` allows the fight. A focus order is restricted to exactly one actor. Thunk is thread-safe (mutex-protected table, log throttled to one refusal per 2 s per summon); the main thread publishes policies.
+  * Second layer: `Actor::BOOL_FLAGS::kAttackingDisabled | kCastingDisabled` while combat is forbidden (the native wholesale deny APMF documents), plus an immediate `StopCombat` + cleared `currentCombatTarget`/`CombatController` when the policy flips.
+  * `src/Core/CombatPolicy.{h,cpp}`: `Passive` never fights (even `FocusTarget`), `Return` and `MoveTo` forbid combat until the order ends, `Attack` restricts to the focused target, `Guard`/`Follow` allow it.
+  * `BuildMovementIntent(..., a_combatPermitted, ...)`: with combat forbidden, `Follow` keeps the formation (previously it stood still while the engine dragged it), and a forbidden `Attack` falls through to the follow rules.
+  * `MovementMode::AttackApproach`: outside 150 units the summon is driven to the focused actor by keep-offset (facing the target), inside it the goal is released to the combat AI; `StartCombat` is retried once a second through the same seat.
+  * Focus resolution: `targetActor` → `target` → **aim-cone fallback** (closest hostile actor within 25° and 2500 units, `IsHostileToActor(player)`); in `Passive` the order is refused with `SCF: Passive mode - attack suppressed` instead of a false confirmation.
+  * `[Execution] ... StartCombat(0x...) -> true|false (dist ..., hostile ..., inCombat ...)` and `[CombatGate] StartCombat refused ...` lines make the next field session diagnostic instead of guesswork.
+* **Tests:** 7 new pure cases (CombatPolicy matrix + movement under forbidden combat); `tests/test_movement_intent.cpp` now 27 cases, `scf_tests.exe` **102/102 passing**.
+* **Build:** clean, auto-deployed to both MO2 instances.
+* **Not verified in game.** Open question: whether refusing `StartCombat` is enough to stop the vanilla commanded-actor combat, or whether the summon will still try (the `AttackApproach` assist guarantees the charge for a focused target). The next session's `[CombatGate]`/`[Execution] StartCombat` lines decide the follow-up.
+
+
 

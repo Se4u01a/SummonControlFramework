@@ -1,4 +1,5 @@
 #include "check.h"
+#include "Core/CombatPolicy.h"
 #include "Core/Formation.h"
 #include "Core/MovementIntent.h"
 #include "Core/Settings.h"
@@ -20,13 +21,29 @@ namespace
 		return data;
 	}
 
-	SummonModel OrderModel(SummonOrder a_order)
+	SummonModel OrderModel(SummonOrder a_order, AggressionMode a_aggression = AggressionMode::Defensive)
 	{
 		SummonModel model{};
 		model.id = 0x10000;
 		model.ownerId = 0x14;
 		model.order = a_order;
+		model.aggression = a_aggression;
 		return model;
+	}
+
+	// Movement tests below are about geometry and order rules; combat is permitted
+	// unless a test asks otherwise.
+	MovementIntent IntentWithCombat(
+		const SummonModel& a_model,
+		bool a_inCombat,
+		const SettingsData& a_settings,
+		const Vec3& a_owner,
+		const Vec3& a_summon,
+		float a_yaw,
+		std::size_t a_slot,
+		std::size_t a_total)
+	{
+		return BuildMovementIntent(a_model, a_inCombat, true, a_settings, a_owner, a_summon, a_yaw, a_slot, a_total);
 	}
 }
 
@@ -56,9 +73,6 @@ TEST(TestFormationSlotsAreDistinct)
 
 TEST(TestFormationDefaultSlotIsBehindOwner)
 {
-	// Single summon and the third of a trio are rear slots (the flank slots of a
-	// four-summon squad sit slightly forward by design, so this is asserted only for
-	// the slots that are documented as rear positions).
 	const auto single = FormationSlotOffsetLocal(0, 1, 200.0f);
 	CHECK(single.y < 0.0f);
 
@@ -113,8 +127,6 @@ TEST(TestOwnerWorldPointRoundTrip)
 
 TEST(TestOwnerLocalWorldOffsetMatchesSquadConvention)
 {
-	// SquadCoordinator historically produced world = (sin(yaw + bearing), cos(yaw + bearing))
-	// for a bearing measured from "in front" towards the owner's right.
 	const float yawDeg = 35.0f;
 	const float yawRad = yawDeg * kPi / 180.0f;
 	const float bearingDeg = -130.0f;
@@ -131,7 +143,6 @@ TEST(TestOwnerLocalWorldOffsetMatchesSquadConvention)
 
 TEST(TestFacingOffsetDegreesCardinalDirections)
 {
-	// Owner facing north (yaw 0): goal straight ahead -> 0, right -> +90, behind -> 180.
 	const Vec3 actor{ 0.0f, 0.0f, 0.0f };
 	CHECK_NEAR(FacingOffsetDegrees(actor, { 0.0f, 500.0f, 0.0f }, 0.0f), 0.0f, 0.1f);
 	CHECK_NEAR(FacingOffsetDegrees(actor, { 500.0f, 0.0f, 0.0f }, 0.0f), 90.0f, 0.1f);
@@ -141,8 +152,6 @@ TEST(TestFacingOffsetDegreesCardinalDirections)
 
 TEST(TestFacingOffsetDegreesIsRelativeToOwnerHeading)
 {
-	// Owner facing east (yaw 90 degrees): a goal straight east is "ahead" (0 degrees),
-	// a goal straight north is to the owner's left (-90).
 	const float yaw = kPi / 2.0f;
 	const Vec3 actor{ 0.0f, 0.0f, 0.0f };
 	CHECK_NEAR(FacingOffsetDegrees(actor, { 500.0f, 0.0f, 0.0f }, yaw), 0.0f, 0.1f);
@@ -158,7 +167,7 @@ TEST(TestMovementIntentGuardHoldsPositionEvenInCombat)
 {
 	auto model = OrderModel(SummonOrder::WaitGuard);
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
-	const auto intent = BuildMovementIntent(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 
 	CHECK(intent.mode == MovementMode::HoldPosition);
 	CHECK(intent.lockTranslation == true);
@@ -171,29 +180,51 @@ TEST(TestMovementIntentAttackOverridesEveryMovementOrder)
 	model.currentTargetId = 0xBEEF;
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
 
-	// Even with a guard hold and an explicit combat target, Attack means "combat AI drives".
-	const auto intent = BuildMovementIntent(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 	CHECK(intent.mode == MovementMode::None);
 	CHECK(intent.lockTranslation == false);
 
-	// ... and it is not turned into a follow order when not in combat yet (the engine
-	// reports combat one tick later).
-	const auto fresh = BuildMovementIntent(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto fresh = IntentWithCombat(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 	CHECK(fresh.mode == MovementMode::None);
+}
+
+TEST(TestMovementIntentAttackFallsBackToFollowWhenCombatForbidden)
+{
+	// Passive aggression: the CombatPolicy forbids combat, so an Attack order must not
+	// leave the summon standing with no movement authority (it keeps following).
+	auto model = OrderModel(SummonOrder::Attack, AggressionMode::Passive);
+	model.currentTargetId = 0xBEEF;
+	const auto settings = SettingsWithDistances(200.0f, 450.0f);
+
+	const auto intent = BuildMovementIntent(model, true, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	CHECK(intent.mode == MovementMode::FollowSlot);
+}
+
+TEST(TestMovementIntentFollowKeepsSlotWhenCombatForbidden)
+{
+	// Passive / Return / MoveTo policy: even if the engine still reports combat, the
+	// formation must win (otherwise a passive summon stands and lets the engine drag it).
+	auto model = OrderModel(SummonOrder::Follow);
+	const auto settings = SettingsWithDistances(200.0f, 450.0f);
+
+	const auto forbidden = BuildMovementIntent(model, true, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	CHECK(forbidden.mode == MovementMode::FollowSlot);
+
+	const auto permitted = IntentWithCombat(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	CHECK(permitted.mode == MovementMode::None);
 }
 
 TEST(TestMovementIntentReturnRunsToOwner)
 {
 	auto model = OrderModel(SummonOrder::Return);
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
-	const auto intent = BuildMovementIntent(model, false, settings, { 0, 0, 0 }, { 600.0f, 0.0f, 0.0f }, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, false, settings, { 0, 0, 0 }, { 600.0f, 0.0f, 0.0f }, 0.0f, 0, 1);
 
 	CHECK(intent.mode == MovementMode::ReturnToOwner);
 	CHECK(intent.lockTranslation == false);
 	CHECK_NEAR(intent.localOffset.Length(), 0.0f, 0.001f);
 	CHECK(intent.followRadius >= 150.0f);
 	CHECK(intent.catchUpRadius > intent.followRadius);
-	// The summon stands east of the owner and must face west to walk home: -90 degrees.
 	CHECK_NEAR(intent.facingOffsetDegrees, -90.0f, 0.5f);
 }
 
@@ -203,16 +234,15 @@ TEST(TestMovementIntentFollowUsesFormationSlot)
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
 
 	const Vec3 owner{ 0.0f, 0.0f, 0.0f };
-	const auto probe = BuildMovementIntent(model, false, settings, owner, owner, 0.0f, 0, 1);
+	const auto probe = IntentWithCombat(model, false, settings, owner, owner, 0.0f, 0, 1);
 	CHECK(probe.mode == MovementMode::FollowSlot);
 	CHECK(probe.lockTranslation == false);
 	CHECK_NEAR(probe.localOffset.Length(), 200.0f, 0.01f);
 	CHECK(probe.followRadius > 0.0f);
 	CHECK(probe.catchUpRadius > probe.followRadius);
 
-	// Standing on the slot itself: face where the owner faces (no moonwalking).
 	const auto slotWorld = OwnerLocalToWorldPoint(probe.localOffset, owner, 0.0f);
-	const auto intent = BuildMovementIntent(model, false, settings, owner, slotWorld, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, false, settings, owner, slotWorld, 0.0f, 0, 1);
 	CHECK_NEAR(intent.facingOffsetDegrees, 0.0f, 0.5f);
 }
 
@@ -221,16 +251,12 @@ TEST(TestMovementIntentFollowFacesTravelWhenAwayFromSlot)
 	auto model = OrderModel(SummonOrder::Follow);
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
 
-	// Slot for a single summon is left-rear of the owner at 200 units: offset
-	// (-128.6, -153.2). A summon standing 400 units east of the owner must face
-	// towards that slot, i.e. roughly west-south-west, not the owner's heading.
 	const Vec3 owner{ 0.0f, 0.0f, 0.0f };
 	const Vec3 summon{ 400.0f, 0.0f, 0.0f };
-	const auto intent = BuildMovementIntent(model, false, settings, owner, summon, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, false, settings, owner, summon, 0.0f, 0, 1);
 
 	const auto slotWorld = OwnerLocalToWorldPoint(intent.localOffset, owner, 0.0f);
 	CHECK(std::abs(intent.facingOffsetDegrees) > 60.0f);
-	// Sanity: the facing points at the slot (world heading of the direction from the summon).
 	const float expected = std::atan2(slotWorld.x - summon.x, slotWorld.y - summon.y) * 180.0f / kPi;
 	float delta = expected - intent.facingOffsetDegrees;
 	while (delta > 180.0f) delta -= 360.0f;
@@ -243,12 +269,11 @@ TEST(TestMovementIntentFollowYieldsToCombat)
 	auto model = OrderModel(SummonOrder::Follow);
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
 
-	const auto inCombat = BuildMovementIntent(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto inCombat = IntentWithCombat(model, true, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 	CHECK(inCombat.mode == MovementMode::None);
 
-	// A model target that is no longer in combat must not freeze the follow order.
 	model.currentTargetId = 0xDEAD;
-	const auto withStaleTarget = BuildMovementIntent(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto withStaleTarget = IntentWithCombat(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 	CHECK(withStaleTarget.mode == MovementMode::FollowSlot);
 }
 
@@ -261,7 +286,7 @@ TEST(TestMovementIntentMoveToKeepsWorldDestination)
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
 
 	const Vec3 firstOwner{ 100.0f, 100.0f, 0.0f };
-	const auto firstIntent = BuildMovementIntent(model, false, settings, firstOwner, firstOwner, 0.3f, 0, 1);
+	const auto firstIntent = IntentWithCombat(model, false, settings, firstOwner, firstOwner, 0.3f, 0, 1);
 	CHECK(firstIntent.mode == MovementMode::MoveToPoint);
 	CHECK(firstIntent.localOffset.Length() > 0.0f);
 
@@ -269,9 +294,8 @@ TEST(TestMovementIntentMoveToKeepsWorldDestination)
 	CHECK_NEAR(firstWorld.x, model.moveTargetPosition.x, 0.05f);
 	CHECK_NEAR(firstWorld.y, model.moveTargetPosition.y, 0.05f);
 
-	// The owner moved and turned: the recomputed offset must still name the same point.
 	const Vec3 secondOwner{ 500.0f, -300.0f, 0.0f };
-	const auto secondIntent = BuildMovementIntent(model, false, settings, secondOwner, secondOwner, 2.4f, 0, 1);
+	const auto secondIntent = IntentWithCombat(model, false, settings, secondOwner, secondOwner, 2.4f, 0, 1);
 	const auto secondWorld = OwnerLocalToWorldPoint(secondIntent.localOffset, secondOwner, 2.4f);
 	CHECK_NEAR(secondWorld.x, model.moveTargetPosition.x, 0.05f);
 	CHECK_NEAR(secondWorld.y, model.moveTargetPosition.y, 0.05f);
@@ -279,14 +303,12 @@ TEST(TestMovementIntentMoveToKeepsWorldDestination)
 
 TEST(TestMovementIntentMoveToIgnoresStaleDestination)
 {
-	// A destination left behind in another cell / by a teleport must not produce a
-	// huge keep-offset goal; the order falls back to following the owner.
 	auto model = OrderModel(SummonOrder::MoveTo);
 	model.hasMoveTarget = true;
 	model.moveTargetPosition = { 70000.0f, -40000.0f, 0.0f };
 
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
-	const auto intent = BuildMovementIntent(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 
 	CHECK(intent.mode == MovementMode::FollowSlot);
 }
@@ -297,7 +319,7 @@ TEST(TestMovementIntentMoveToWithoutDestinationFallsBackToFollow)
 	model.hasMoveTarget = false;
 
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
-	const auto intent = BuildMovementIntent(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
+	const auto intent = IntentWithCombat(model, false, settings, { 0, 0, 0 }, { 0, 0, 0 }, 0.0f, 0, 1);
 
 	CHECK(intent.mode == MovementMode::FollowSlot);
 }
@@ -307,6 +329,79 @@ TEST(TestMoveToArrivalRadiusIsHorizontal)
 	const Vec3 summon{ 100.0f, 100.0f, 0.0f };
 	CHECK(IsWithinArrivalRadius(summon, { 240.0f, 100.0f, 0.0f }));
 	CHECK(!IsWithinArrivalRadius(summon, { 300.0f, 100.0f, 0.0f }));
-	// Height difference does not keep a summon "not arrived" on stairs or slopes.
 	CHECK(IsWithinArrivalRadius(summon, { 240.0f, 100.0f, 900.0f }));
+}
+
+// ---------------------------------------------------------------------------
+// CombatPolicy: the "no second behaviour pattern" contract.
+// ---------------------------------------------------------------------------
+
+TEST(TestCombatPolicyPassiveNeverFights)
+{
+	const auto settings = SettingsWithDistances(200.0f, 450.0f);
+	(void)settings;
+
+	for (const auto order : { SummonOrder::Follow, SummonOrder::WaitGuard, SummonOrder::Return, SummonOrder::MoveTo, SummonOrder::Attack }) {
+		auto model = OrderModel(order, AggressionMode::Passive);
+		model.currentTargetId = 0x1234;
+		model.hasMoveTarget = true;
+
+		const auto policy = BuildCombatPolicy(model, true);
+		CHECK(policy.allowCombat == false);
+		CHECK(policy.disableAttacks == true);
+		CHECK(policy.restrictToTarget == false);
+	}
+}
+
+TEST(TestCombatPolicyReturnForbidsCombatUntilArrival)
+{
+	auto model = OrderModel(SummonOrder::Return);
+	model.currentTargetId = 0x1234;
+
+	const auto policy = BuildCombatPolicy(model, true);
+	CHECK(policy.allowCombat == false);
+	CHECK(policy.disableAttacks == true);
+}
+
+TEST(TestCombatPolicyMoveToForbidsCombatWhileMoving)
+{
+	auto model = OrderModel(SummonOrder::MoveTo);
+	model.hasMoveTarget = true;
+
+	CHECK(BuildCombatPolicy(model, false).allowCombat == false);
+	CHECK(BuildCombatPolicy(model, false).disableAttacks == true);
+
+	// No destination stored: the order falls back to following, so combat is allowed.
+	model.hasMoveTarget = false;
+	CHECK(BuildCombatPolicy(model, false).allowCombat == true);
+}
+
+TEST(TestCombatPolicyAttackRestrictsToFocusedTarget)
+{
+	auto model = OrderModel(SummonOrder::Attack);
+	model.currentTargetId = 0xABC;
+
+	const auto policy = BuildCombatPolicy(model, true);
+	CHECK(policy.allowCombat == true);
+	CHECK(policy.restrictToTarget == true);
+	CHECK(policy.target == 0xABC);
+	CHECK(policy.disableAttacks == false);
+
+	// No live target: combat stays forbidden until the order reverts.
+	const auto noTarget = BuildCombatPolicy(model, false);
+	CHECK(noTarget.allowCombat == false);
+	CHECK(noTarget.disableAttacks == true);
+}
+
+TEST(TestCombatPolicyFollowAndGuardAllowCombat)
+{
+	auto follow = OrderModel(SummonOrder::Follow);
+	CHECK(BuildCombatPolicy(follow, false).allowCombat == true);
+	CHECK(BuildCombatPolicy(follow, false).restrictToTarget == false);
+
+	auto guard = OrderModel(SummonOrder::WaitGuard);
+	CHECK(BuildCombatPolicy(guard, false).allowCombat == true);
+
+	auto aggressive = OrderModel(SummonOrder::Follow, AggressionMode::Aggressive);
+	CHECK(BuildCombatPolicy(aggressive, false).allowCombat == true);
 }

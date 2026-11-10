@@ -12,6 +12,7 @@
 #include <RE/B/ButtonEvent.h>
 #include <RE/C/CrosshairPickData.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/P/ProcessLists.h>
 #include <RE/S/SendHUDMessage.h>
 #include <RE/T/TESObjectREFR.h>
 #include <RE/U/UI.h>
@@ -121,6 +122,80 @@ namespace scf::engine
 			logger::info("[Crosshair] {}: non-flat build, raw dump omitted", a_action);
 		#endif
 		}
+
+		// Passive is absolute (CombatPolicy denies every fight), so a Focus order would
+		// charge a summon that is forbidden to swing. Say so instead of a false success.
+		bool SquadIsPassive(RE::PlayerCharacter* a_player)
+		{
+			if (!a_player) {
+				return false;
+			}
+
+			auto& registry = core::FrameworkContext::GetSingleton().GetRegistry();
+			for (const auto summonId : registry.GetActiveSummonsForOwner(a_player->GetFormID())) {
+				if (auto* model = registry.GetModel(summonId); model && model->aggression == core::AggressionMode::Passive) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Crosshair data is empty whenever the pick has not produced a reference (the
+		// interaction pick only fills it for references, and it can lag a frame behind
+		// fast aiming). Fall back to the closest hostile actor inside a narrow cone in
+		// front of the player, so Focus Target stays usable.
+		RE::Actor* FindAimConeTarget(RE::PlayerCharacter* a_player)
+		{
+			auto* lists = RE::ProcessLists::GetSingleton();
+			if (!lists || !a_player) {
+				return nullptr;
+			}
+
+			const auto playerPos = a_player->GetPosition();
+			const float yaw = a_player->GetAngleZ();
+			const float forwardX = std::sin(yaw);
+			const float forwardY = std::cos(yaw);
+			constexpr float kMinDot = 0.9063f; // cos(25 degrees): narrow aim cone
+			constexpr float kMaxDistance = 2500.0f;
+			constexpr float kMaxHeightDelta = 600.0f;
+
+			RE::Actor* best = nullptr;
+			float bestScore = 1.0e30f;
+
+			for (const auto& handle : lists->highActorHandles) {
+				auto actorPtr = handle.get();
+				if (!actorPtr || actorPtr.get() == a_player) {
+					continue;
+				}
+
+				auto* actor = actorPtr.get();
+				if (!actor || actor->IsDead() || !actor->Is3DLoaded() || !actor->IsHostileToActor(a_player)) {
+					continue;
+				}
+
+				const auto pos = actor->GetPosition();
+				const float dx = pos.x - playerPos.x;
+				const float dy = pos.y - playerPos.y;
+				const float dz = pos.z - playerPos.z;
+				const float horizontal = std::sqrt(dx * dx + dy * dy);
+				if (horizontal < 1.0f || horizontal > kMaxDistance || std::abs(dz) > kMaxHeightDelta) {
+					continue;
+				}
+
+				const float dot = (dx * forwardX + dy * forwardY) / horizontal;
+				if (dot < kMinDot) {
+					continue;
+				}
+
+				const float score = horizontal * (2.0f - dot); // closer and better centred wins
+				if (score < bestScore) {
+					bestScore = score;
+					best = actor;
+				}
+			}
+
+			return best;
+		}
 	}
 
 	void InputHandler::Register()
@@ -136,11 +211,24 @@ namespace scf::engine
 
 	void InputHandler::HandleFocusTarget()
 	{
-		if (!RE::CrosshairPickData::GetSingleton()) {
+		auto* player = RE::PlayerCharacter::GetSingleton();
+		if (!player) {
+			return;
+		}
+
+		if (SquadIsPassive(player)) {
+			Notify("SCF: Passive mode - attack suppressed");
 			return;
 		}
 
 		auto* targetActor = ResolveCrosshairActor();
+		if (!targetActor) {
+			targetActor = FindAimConeTarget(player);
+			if (targetActor) {
+				logger::info("[Crosshair] crosshair empty; aim-cone fallback selected 0x{:08X} ({})",
+					targetActor->GetFormID(), targetActor->GetName());
+			}
+		}
 
 		if (targetActor) {
 			if (targetActor->IsDead()) {
@@ -148,7 +236,6 @@ namespace scf::engine
 				return;
 			}
 
-			auto* player = RE::PlayerCharacter::GetSingleton();
 			if (targetActor == player) {
 				Notify("SCF: Cannot target owner");
 				return;

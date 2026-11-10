@@ -1,8 +1,10 @@
 #include "Engine/UpdateHook.h"
 #include "Core/CommandQueue.h"
+#include "Core/CombatPolicy.h"
 #include "Core/FrameworkContext.h"
 #include "Core/SummonModel.h"
 #include "Core/SummonRegistry.h"
+#include "Engine/CombatGate.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
 
@@ -48,8 +50,15 @@ namespace scf::engine::update
 						logger::info("[Execution] Summon 0x{:08X} switching focus to 0x{:08X} ({})",
 							a_summon->GetFormID(), target->GetFormID(), target->GetName());
 
+						// Publish the new policy first: the StartCombat seat must already know
+						// that this one target is permitted (a previous Attack order may have
+						// restricted combat to a different actor).
+						if (a_model) {
+							combat::UpdateForSummon(a_summon, core::BuildCombatPolicy(*a_model, true));
+						}
+
 						a_summon->StopCombat();
-						a_summon->StartCombat(target);
+						const bool started = a_summon->StartCombat(target, nullptr);
 						a_summon->GetActorRuntimeData().currentCombatTarget = target->GetHandle();
 
 						if (auto* cc = a_summon->GetActorRuntimeData().combatController) {
@@ -58,6 +67,19 @@ namespace scf::engine::update
 						}
 
 						a_summon->EvaluatePackage(true, false);
+
+						const float distance = a_summon->GetPosition().GetDistance(target->GetPosition());
+						logger::info("[Execution] Summon 0x{:08X} StartCombat(0x{:08X}) -> {} (dist {:.0f}, hostile {}, inCombat {})",
+							a_summon->GetFormID(),
+							target->GetFormID(),
+							started ? "true" : "false",
+							distance,
+							target->IsHostileToActor(a_summon) ? "yes" : "no",
+							a_summon->IsInCombat() ? "yes" : "no");
+						if (!started) {
+							logger::warn("[Execution] Summon 0x{:08X} could not start combat with 0x{:08X} (combat policy or engine refusal)",
+								a_summon->GetFormID(), target->GetFormID());
+						}
 					}
 				}
 				break;
@@ -257,31 +279,25 @@ namespace scf::engine::update
 					continue;
 				}
 
-				// Passive mode enforcement
-				if (model->aggression == core::AggressionMode::Passive) {
-					if (summonActor->IsInCombat()) {
-						summonActor->StopCombat();
-						summonActor->GetActorRuntimeData().currentCombatTarget.reset();
-						if (auto* cc = summonActor->GetActorRuntimeData().combatController) {
-							cc->targetHandle.reset();
-							cc->startedCombat = false;
-						}
-					}
-				}
-				// Return order: keep combat disengaged while the summon is on its way back
-				else if (model->order == core::SummonOrder::Return) {
-					if (summonActor->IsInCombat()) {
-						summonActor->StopCombat();
-						summonActor->GetActorRuntimeData().currentCombatTarget.reset();
-						if (auto* cc = summonActor->GetActorRuntimeData().combatController) {
-							cc->targetHandle.reset();
-							cc->startedCombat = false;
-						}
+				// A focus target that vanished must not keep the summon locked in "attack":
+				// clear it before the combat policy is derived from it.
+				if (model->currentTargetId != core::InvalidEntityID) {
+					auto* focus = RE::TESForm::LookupByID<RE::Actor>(model->currentTargetId);
+					if (!focus || focus->IsDead() || focus->GetParentCell() != summonActor->GetParentCell()) {
+						logger::info("[UpdateHook] Summon 0x{:08X} focus target 0x{:08X} is gone; resuming order",
+							summonId, model->currentTargetId);
+						model->currentTargetId = core::InvalidEntityID;
 					}
 				}
 
+				// Combat policy: may this summon fight at all this tick, and against whom?
+				// The gate denies StartCombat for managed summons, sets the native
+				// attack/cast deny bits and breaks an existing fight when forbidden.
+				const core::CombatPolicy policy = core::BuildCombatPolicy(*model, model->currentTargetId != core::InvalidEntityID);
+				combat::UpdateForSummon(summonActor, policy);
+
 				// Movement execution for the current order (follow / return / move-to /
-				// guard). It also flips Return back to Follow on arrival.
+				// guard / attack approach). It also flips Return back to Follow on arrival.
 				movement::UpdateForSummon(
 					a_player,
 					summonActor,
@@ -290,10 +306,11 @@ namespace scf::engine::update
 					settings,
 					i,
 					orderedSummons.size(),
-					a_timestamp);
+					a_timestamp,
+					policy.allowCombat);
 
 				// Combat Leash enforcement
-				if (settings.combat.enableCombatLeash && summonActor->IsInCombat()) {
+				if (settings.combat.enableCombatLeash && policy.allowCombat && summonActor->IsInCombat()) {
 					const float distToPlayerSq = summonActor->GetPosition().GetSquaredDistance(a_player->GetPosition());
 					const float leashRadius = settings.combat.combatLeashRadius;
 					if (distToPlayerSq > leashRadius * leashRadius) {
@@ -314,9 +331,10 @@ namespace scf::engine::update
 				}
 			}
 
-			// Drop movement bookkeeping for summons that left the engine roster (dispel,
-			// death, cell detach, displacement) so a recycled handle cannot inherit it.
+			// Drop bookkeeping for summons that left the engine roster (dispel, death,
+			// cell detach, displacement) so a recycled handle cannot inherit it.
 			movement::RetainOnly(currentEngineSummons);
+			combat::RetainOnly(currentEngineSummons);
 		}
 
 		struct PlayerUpdate
@@ -373,6 +391,7 @@ namespace scf::engine::update
 	{
 		s_totalElapsed = 0.0f;
 		movement::ResetAll();
+		combat::ResetAll();
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

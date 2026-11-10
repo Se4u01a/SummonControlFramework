@@ -93,7 +93,12 @@ namespace scf::engine::movement
 
 		// How long an explicit FocusTarget order is given to put the summon into combat
 		// before the driver decides the engagement never started.
-		constexpr float kAttackGraceSeconds = 2.0f;
+		constexpr float kAttackGraceSeconds = 5.0f;
+		constexpr float kAttackReengageSeconds = 1.0f;
+
+		// The focused-target charge stops this far from the target (melee reach); inside
+		// it the keep-offset goal is released so the combat AI swings.
+		constexpr float kAttackApproachRange = 150.0f;
 
 		// Radius the position of a "parked" summon is held inside (APMF's proven
 		// full stand-still values: catchUp 20, follow 10).
@@ -118,6 +123,7 @@ namespace scf::engine::movement
 			float lastIssuedAt{ 0.0f };
 			float bestDistance{ std::numeric_limits<float>::max() };
 			float lastProgressAt{ 0.0f };
+			float lastReengageAt{ -100.0f };
 			bool catchUpWarped{ false };
 		};
 
@@ -278,7 +284,8 @@ namespace scf::engine::movement
 		const core::SettingsData& a_settings,
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize,
-		float a_now)
+		float a_now,
+		bool a_combatPermitted)
 	{
 		if (!a_owner || !a_summon) {
 			return;
@@ -297,17 +304,6 @@ namespace scf::engine::movement
 		// movement primitives against it would address an unloaded reference.
 		if (a_summon->GetParentCell() != a_owner->GetParentCell()) {
 			return;
-		}
-
-		// A focus target that vanished must not keep the summon locked in "combat"
-		// mode forever: that would suppress the follow order silently.
-		if (a_model.currentTargetId != core::InvalidEntityID) {
-			auto* focus = RE::TESForm::LookupByID<RE::Actor>(a_model.currentTargetId);
-			if (!focus || focus->IsDead() || focus->GetParentCell() != a_summon->GetParentCell()) {
-				logger::info("[Movement] Summon 0x{:08X} focus target 0x{:08X} is gone; resuming order",
-					id, a_model.currentTargetId);
-				a_model.currentTargetId = core::InvalidEntityID;
-			}
 		}
 
 		const core::Vec3 summonPosition = ToCore(a_summon->GetPosition());
@@ -370,15 +366,50 @@ namespace scf::engine::movement
 		}
 
 		// 2. Translate the order into a movement intent.
-		const auto intent = core::BuildMovementIntent(
+		core::MovementIntent intent = core::BuildMovementIntent(
 			a_model,
 			a_summon->IsInCombat(),
+			a_combatPermitted,
 			a_settings,
 			ownerPosition,
 			summonPosition,
 			a_owner->GetAngleZ(),
 			a_slotIndex,
 			a_squadSize);
+
+		// 2b. Explicit attack: close in on the focused actor ourselves. The combat policy
+		// allows exactly this target, but a summoned creature's own follow behaviour can
+		// keep it planted while "in combat"; the keep-offset gives the charge a guaranteed
+		// direction and facing. Inside melee range the goal is dropped so the combat AI
+		// owns the swings.
+		if (a_model.order == core::SummonOrder::Attack && a_combatPermitted &&
+			a_model.currentTargetId != core::InvalidEntityID) {
+			auto* attackTarget = RE::TESForm::LookupByID<RE::Actor>(a_model.currentTargetId);
+			if (attackTarget && !attackTarget->IsDead() && attackTarget->GetParentCell() == a_summon->GetParentCell()) {
+				const auto targetPosition = ToCore(attackTarget->GetPosition());
+
+				// Keep the engagement alive: if the engine dropped combat, re-start it
+				// against the same target (the StartCombat seat permits this one).
+				if (!a_summon->IsInCombat() && (a_now - state.lastReengageAt) >= kAttackReengageSeconds) {
+					state.lastReengageAt = a_now;
+					const bool started = a_summon->StartCombat(attackTarget, nullptr);
+					logger::info("[Movement] Summon 0x{:08X} re-engage StartCombat(0x{:08X}) -> {} (dist {:.0f})",
+						id, attackTarget->GetFormID(), started ? "true" : "false",
+						std::sqrt(HorizontalDistanceSq(summonPosition, targetPosition)));
+				}
+
+				const float targetDistanceSq = HorizontalDistanceSq(summonPosition, targetPosition);
+				if (targetDistanceSq > kAttackApproachRange * kAttackApproachRange &&
+					targetDistanceSq <= core::kMaxMoveToDistance * core::kMaxMoveToDistance) {
+					intent.mode = core::MovementMode::AttackApproach;
+					intent.localOffset = core::WorldPointToOwnerLocal(targetPosition, ownerPosition, a_owner->GetAngleZ());
+					intent.followRadius = kAttackApproachRange;
+					intent.catchUpRadius = std::max(4000.0f, kAttackApproachRange * 4.0f);
+					intent.facingOffsetDegrees = core::FacingOffsetDegrees(summonPosition, targetPosition, a_owner->GetAngleZ());
+					intent.lockTranslation = false;
+				}
+			}
+		}
 
 		if (intent.mode != state.mode) {
 			state.modeEnteredAt = a_now;

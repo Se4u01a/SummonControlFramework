@@ -18,18 +18,20 @@ namespace scf::core
 		FollowSlot,    // Hold the squad formation slot around the owner
 		ReturnToOwner, // Run to the owner until inside followRadius
 		MoveToPoint,   // Walk to SummonModel::moveTargetPosition
+		AttackApproach,// Explicit FocusTarget: close in on the focused actor
 		HoldPosition   // Stand still (guard / wait): goal parked, translation locked
 	};
 
 	constexpr const char* ToString(MovementMode a_mode) noexcept
 	{
 		switch (a_mode) {
-		case MovementMode::None:          return "None";
-		case MovementMode::FollowSlot:    return "FollowSlot";
-		case MovementMode::ReturnToOwner: return "ReturnToOwner";
-		case MovementMode::MoveToPoint:   return "MoveToPoint";
-		case MovementMode::HoldPosition:  return "HoldPosition";
-		default:                          return "Unknown";
+		case MovementMode::None:           return "None";
+		case MovementMode::FollowSlot:     return "FollowSlot";
+		case MovementMode::ReturnToOwner:  return "ReturnToOwner";
+		case MovementMode::MoveToPoint:    return "MoveToPoint";
+		case MovementMode::AttackApproach: return "AttackApproach";
+		case MovementMode::HoldPosition:   return "HoldPosition";
+		default:                           return "Unknown";
 		}
 	}
 
@@ -80,11 +82,15 @@ namespace scf::core
 	//     kMaxMoveToDistance is ignored as stale.
 	//   * Follow keeps the formation slot, but only while the summon is NOT fighting:
 	//     an engaged summon must be driven by the combat AI, not dragged back by us.
+	//     `a_combatPermitted` is the CombatPolicy answer for this tick: when the policy
+	//     forbids combat (Passive, Return, MoveTo) the summon keeps following even if the
+	//     engine still reports it in combat.
 	//     The engine combat flag is the only authority; a stale model target (a focus
 	//     command whose enemy disengaged) must not freeze the follow order.
 	MovementIntent BuildMovementIntent(
 		const SummonModel& a_model,
 		bool a_inCombat,
+		bool a_combatPermitted,
 		const SettingsData& a_settings,
 		const Vec3& a_ownerPosition,
 		const Vec3& a_summonPosition,
