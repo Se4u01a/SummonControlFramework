@@ -1,5 +1,7 @@
 #pragma once
 
+#include "FriendlyFire/FriendlyFireSettings.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -59,6 +61,7 @@ namespace scf::core
 		CombatSettings combat{};
 		SquadSettings squad{};
 		HotkeySettings hotkeys{};
+		friendly_fire::FriendlyFireSettings friendlyFire{};
 	};
 
 	class Settings

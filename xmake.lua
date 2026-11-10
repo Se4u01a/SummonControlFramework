@@ -56,10 +56,19 @@ target("SummonControlFramework")
     set_encodings("utf-8")
     set_pcxxheader("src/PCH.h")
     add_headerfiles("src/**.h")
-    add_files("src/main.cpp", "src/Core/**.cpp", "src/AI/**.cpp", "src/Collision/**.cpp", "src/Engine/**.cpp", "src/Plugin/**.cpp")
+    add_files(
+        "src/main.cpp",
+        "src/Core/**.cpp",
+        "src/AI/**.cpp",
+        "src/Collision/**.cpp",
+        "src/FriendlyFire/**.cpp",
+        "src/Integrations/**.cpp",
+        "src/Engine/**.cpp",
+        "src/Plugin/**.cpp"
+    )
 
     after_build(function (target)
-        local deploy_dir = get_config("deploy_dir")
+        local deploy_dir = get_config("deploy_dir") or "D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins"
         if deploy_dir and deploy_dir ~= "" then
             os.mkdir(deploy_dir)
             if not os.trycp(target:targetfile(), deploy_dir) then
@@ -85,5 +94,5 @@ target("scf_tests")
     set_encodings("utf-8")
     set_rundir("$(projectdir)")
     add_includedirs("src", "tests")
-    add_headerfiles("src/Core/**.h", "src/AI/**.h", "src/Collision/**.h", "tests/**.h")
-    add_files("src/Core/**.cpp", "src/AI/**.cpp", "src/Collision/**.cpp", "tests/**.cpp")
+    add_headerfiles("src/Core/**.h", "src/AI/**.h", "src/Collision/**.h", "src/FriendlyFire/**.h", "tests/**.h")
+    add_files("src/Core/**.cpp", "src/AI/**.cpp", "src/Collision/**.cpp", "src/FriendlyFire/RelationshipClassifier.cpp", "tests/**.cpp")

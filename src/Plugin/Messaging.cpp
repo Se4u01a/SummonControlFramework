@@ -3,30 +3,32 @@
 #include "Core/FrameworkContext.h"
 #include "Engine/EventAdapter.h"
 #include "Engine/UpdateHook.h"
+#include "FriendlyFire/HitHook.h"
+#include "FriendlyFire/ProjectileHook.h"
+#include "Integrations/PrecisionBackend.h"
 #include "PCH.h"
+
+#include <filesystem>
 
 namespace scf::plugin
 {
-	void OnMessage(SKSE::MessagingInterface::Message* a_message)
+	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
 	{
-		if (!a_message) {
+		if (!a_msg) {
 			return;
 		}
 
-		switch (a_message->type) {
-		case SKSE::MessagingInterface::kPostLoad:
-			logger::info("[Messaging] SKSE kPostLoad received.");
-			break;
-
+		switch (a_msg->type) {
 		case SKSE::MessagingInterface::kDataLoaded:
-			logger::info("[Messaging] SKSE kDataLoaded received: Initializing framework...");
+			logger::info("[Messaging] SKSE kDataLoaded received: Initializing framework components.");
 			{
-				auto& settings = core::FrameworkContext::GetSingleton().GetSettings();
 				const std::string iniPath = "Data/SKSE/Plugins/SummonControlFramework.ini";
-				if (!settings.LoadFromFile(iniPath)) {
-					logger::info("[Messaging] Configuration file not found at {}, saving default configuration.", iniPath);
+				auto& settings = core::FrameworkContext::GetSingleton().GetSettings();
+				if (!std::filesystem::exists(iniPath)) {
+					logger::info("[Messaging] INI not found at {}, creating default configuration.", iniPath);
 					settings.SaveToFile(iniPath);
 				} else {
+					settings.LoadFromFile(iniPath);
 					logger::info("[Messaging] Configuration successfully loaded from {}.", iniPath);
 				}
 			}
@@ -34,6 +36,9 @@ namespace scf::plugin
 			ConsoleCommands::Register();
 			engine::EventAdapter::RegisterEventSinks();
 			engine::update::Install();
+			friendly_fire::HitHook::Install();
+			friendly_fire::ProjectileHook::Install();
+			integrations::PrecisionBackend::Initialize();
 			logger::info("[Messaging] Framework initialization complete.");
 			break;
 

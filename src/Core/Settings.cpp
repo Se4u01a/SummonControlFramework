@@ -327,6 +327,52 @@ namespace scf::core
 				} else if (key == "toggleaggressionkey" || key == "utoggleaggressionkey") {
 					_data.hotkeys.toggleAggressionKey = ParseUInt32(val, _data.hotkeys.toggleAggressionKey);
 				}
+			} else if (currentSection == "friendlyfire") {
+				if (key == "enablesummonprotection" || key == "benablesummonprotection" || key == "enabled" || key == "benabled") {
+					_data.friendlyFire.enabled = ParseBool(val, _data.friendlyFire.enabled);
+				} else if (key == "protectplayerownedsummons" || key == "bprotectplayerownedsummons") {
+					_data.friendlyFire.protectPlayerOwnedSummons = ParseBool(val, _data.friendlyFire.protectPlayerOwnedSummons);
+				} else if (key == "protectallyownedsummons" || key == "bprotectallyownedsummons") {
+					_data.friendlyFire.protectAllyOwnedSummons = ParseBool(val, _data.friendlyFire.protectAllyOwnedSummons);
+				} else if (key == "filterplayerattacks" || key == "bfilterplayerattacks") {
+					_data.friendlyFire.filterPlayerAttacks = ParseBool(val, _data.friendlyFire.filterPlayerAttacks);
+				} else if (key == "filterplayerallies" || key == "bfilterplayerallies") {
+					_data.friendlyFire.filterPlayerAllies = ParseBool(val, _data.friendlyFire.filterPlayerAllies);
+				} else if (key == "filterplayerownedsummons" || key == "bfilterplayerownedsummons") {
+					_data.friendlyFire.filterPlayerOwnedSummons = ParseBool(val, _data.friendlyFire.filterPlayerOwnedSummons);
+				} else if (key == "filteralliedsummons" || key == "bfilteralliedsummons") {
+					_data.friendlyFire.filterAlliedSummons = ParseBool(val, _data.friendlyFire.filterAlliedSummons);
+				} else if (key == "blockmeleedamage" || key == "bblockmeleedamage") {
+					_data.friendlyFire.blockMeleeDamage = ParseBool(val, _data.friendlyFire.blockMeleeDamage);
+				} else if (key == "blockarrowdamage" || key == "bblockarrowdamage") {
+					_data.friendlyFire.blockArrowDamage = ParseBool(val, _data.friendlyFire.blockArrowDamage);
+				} else if (key == "blockphysicalprojectiledamage" || key == "bblockphysicalprojectiledamage") {
+					_data.friendlyFire.blockPhysicalProjectileDamage = ParseBool(val, _data.friendlyFire.blockPhysicalProjectileDamage);
+				} else if (key == "blockmagicprojectiledamage" || key == "bblockmagicprojectiledamage") {
+					_data.friendlyFire.blockMagicProjectileDamage = ParseBool(val, _data.friendlyFire.blockMagicProjectileDamage);
+				} else if (key == "blockconcentrationdamage" || key == "bblockconcentrationdamage") {
+					_data.friendlyFire.blockConcentrationDamage = ParseBool(val, _data.friendlyFire.blockConcentrationDamage);
+				} else if (key == "blockareamagicdamage" || key == "bblockareamagicdamage") {
+					_data.friendlyFire.blockAreaMagicDamage = ParseBool(val, _data.friendlyFire.blockAreaMagicDamage);
+				} else if (key == "blockshoutdamage" || key == "bblockshoutdamage") {
+					_data.friendlyFire.blockShoutDamage = ParseBool(val, _data.friendlyFire.blockShoutDamage);
+				} else if (key == "blockenchantmentdamage" || key == "bblockenchantmentdamage") {
+					_data.friendlyFire.blockEnchantmentDamage = ParseBool(val, _data.friendlyFire.blockEnchantmentDamage);
+				} else if (key == "meleepassthrough" || key == "bmeleepassthrough") {
+					_data.friendlyFire.meleePassThrough = ParseBool(val, _data.friendlyFire.meleePassThrough);
+				} else if (key == "arrowpassthrough" || key == "barrowpassthrough") {
+					_data.friendlyFire.arrowPassThrough = ParseBool(val, _data.friendlyFire.arrowPassThrough);
+				} else if (key == "physicalprojectilepassthrough" || key == "bphysicalprojectilepassthrough") {
+					_data.friendlyFire.physicalProjectilePassThrough = ParseBool(val, _data.friendlyFire.physicalProjectilePassThrough);
+				} else if (key == "magicprojectilepassthrough" || key == "bmagicprojectilepassthrough") {
+					_data.friendlyFire.magicProjectilePassThrough = ParseBool(val, _data.friendlyFire.magicProjectilePassThrough);
+				} else if (key == "suppressfriendlyaggression" || key == "bsuppressfriendlyaggression") {
+					_data.friendlyFire.suppressFriendlyAggression = ParseBool(val, _data.friendlyFire.suppressFriendlyAggression);
+				} else if (key == "suppressfriendlykillmoves" || key == "bsuppressfriendlykillmoves") {
+					_data.friendlyFire.suppressFriendlyKillmoves = ParseBool(val, _data.friendlyFire.suppressFriendlyKillmoves);
+				} else if (key == "suppressfriendlyhitreactions" || key == "bsuppressfriendlyhitreactions") {
+					_data.friendlyFire.suppressFriendlyHitReactions = ParseBool(val, _data.friendlyFire.suppressFriendlyHitReactions);
+				}
 			}
 		}
 
@@ -430,7 +476,31 @@ namespace scf::core
 		out << "[Hotkeys]\n";
 		out << "uFocusTargetKey = " << _data.hotkeys.focusTargetKey << "\n";
 		out << "uCommandReturnKey = " << _data.hotkeys.commandReturnKey << "\n";
-		out << "uToggleAggressionKey = " << _data.hotkeys.toggleAggressionKey << "\n";
+		out << "uToggleAggressionKey = " << _data.hotkeys.toggleAggressionKey << "\n\n";
+
+		out << "[FriendlyFire]\n";
+		out << "bEnableSummonProtection = " << (_data.friendlyFire.enabled ? "true" : "false") << "\n";
+		out << "bProtectPlayerOwnedSummons = " << (_data.friendlyFire.protectPlayerOwnedSummons ? "true" : "false") << "\n";
+		out << "bProtectAllyOwnedSummons = " << (_data.friendlyFire.protectAllyOwnedSummons ? "true" : "false") << "\n\n";
+		out << "bFilterPlayerAttacks = " << (_data.friendlyFire.filterPlayerAttacks ? "true" : "false") << "\n";
+		out << "bFilterPlayerAllies = " << (_data.friendlyFire.filterPlayerAllies ? "true" : "false") << "\n";
+		out << "bFilterPlayerOwnedSummons = " << (_data.friendlyFire.filterPlayerOwnedSummons ? "true" : "false") << "\n";
+		out << "bFilterAlliedSummons = " << (_data.friendlyFire.filterAlliedSummons ? "true" : "false") << "\n\n";
+		out << "bBlockMeleeDamage = " << (_data.friendlyFire.blockMeleeDamage ? "true" : "false") << "\n";
+		out << "bBlockArrowDamage = " << (_data.friendlyFire.blockArrowDamage ? "true" : "false") << "\n";
+		out << "bBlockPhysicalProjectileDamage = " << (_data.friendlyFire.blockPhysicalProjectileDamage ? "true" : "false") << "\n";
+		out << "bBlockMagicProjectileDamage = " << (_data.friendlyFire.blockMagicProjectileDamage ? "true" : "false") << "\n";
+		out << "bBlockConcentrationDamage = " << (_data.friendlyFire.blockConcentrationDamage ? "true" : "false") << "\n";
+		out << "bBlockAreaMagicDamage = " << (_data.friendlyFire.blockAreaMagicDamage ? "true" : "false") << "\n";
+		out << "bBlockShoutDamage = " << (_data.friendlyFire.blockShoutDamage ? "true" : "false") << "\n";
+		out << "bBlockEnchantmentDamage = " << (_data.friendlyFire.blockEnchantmentDamage ? "true" : "false") << "\n\n";
+		out << "bMeleePassThrough = " << (_data.friendlyFire.meleePassThrough ? "true" : "false") << "\n";
+		out << "bArrowPassThrough = " << (_data.friendlyFire.arrowPassThrough ? "true" : "false") << "\n";
+		out << "bPhysicalProjectilePassThrough = " << (_data.friendlyFire.physicalProjectilePassThrough ? "true" : "false") << "\n";
+		out << "bMagicProjectilePassThrough = " << (_data.friendlyFire.magicProjectilePassThrough ? "true" : "false") << "\n\n";
+		out << "bSuppressFriendlyAggression = " << (_data.friendlyFire.suppressFriendlyAggression ? "true" : "false") << "\n";
+		out << "bSuppressFriendlyKillmoves = " << (_data.friendlyFire.suppressFriendlyKillmoves ? "true" : "false") << "\n";
+		out << "bSuppressFriendlyHitReactions = " << (_data.friendlyFire.suppressFriendlyHitReactions ? "true" : "false") << "\n";
 
 		return out.str();
 	}
