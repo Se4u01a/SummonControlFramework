@@ -38,12 +38,6 @@ set_config("skyrim_ae", true)
 set_config("skyrim_se", true)
 set_config("skse_xbyak", true)
 
-option("deploy_dir")
-    set_default("D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins")
-    set_showmenu(true)
-    set_description("SKSE/Plugins folder of the mod to copy the build into (empty = no copy)")
-option_end()
-
 target("SummonControlFramework")
     add_deps("commonlibsse-ng")
     add_rules("commonlibsse-ng.plugin", {
@@ -68,11 +62,14 @@ target("SummonControlFramework")
     )
 
     after_build(function (target)
-        local deploy_dir = get_config("deploy_dir") or "D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins"
-        if deploy_dir and deploy_dir ~= "" then
+        local deploy_dirs = {
+            "D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins",
+            "D:/Games/stb/[RE2CE TEST] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins"
+        }
+        for _, deploy_dir in ipairs(deploy_dirs) do
             os.mkdir(deploy_dir)
             if not os.trycp(target:targetfile(), deploy_dir) then
-                cprint("${yellow}warning: %s is in use (the game is running?): not copied", path.join(deploy_dir, path.filename(target:targetfile())))
+                cprint("${yellow}warning: %s is in use: not copied", path.join(deploy_dir, path.filename(target:targetfile())))
             else
                 local pdb = path.join(path.directory(target:targetfile()), target:basename() .. ".pdb")
                 if os.isfile(pdb) then

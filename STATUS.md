@@ -131,7 +131,10 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
   * `src/FriendlyFire/ProjectileHook.h/.cpp`: hooks `ArrowProjectile` (arrows & crossbow bolts) and `MissileProjectile` (spells) at `AddImpact` (vfunc 189) and `HandleHits` (vfunc 190).
   * Skips impact registration on friendly summons and compacts contact points, allowing projectiles to fly cleanly through summons into enemies behind.
 
-## Ready for In-Game Playtesting in MO2 (SBORKA profile)
+## Ready for In-Game Playtesting in MO2 ([RE2CE TEST] Profile RE2CE & [STB] Profile SBORKA)
+
+Active clean testing profile configured in `D:\Games\stb\[RE2CE TEST] Mod Organizer` (Profile `RE2CE`).
+Mod automatically deployed and enabled as `+Summon Control Framework`.
 
 1. **Multi-summon unlock test:** In console type `player.addperk 000581DE` (Twin Souls), cast 2 summons, and verify both stay active simultaneously.
 2. **Melee pass-through test:** Stand behind a summon with a sword/axe while an enemy is nearby. Swing at the enemy through the summon — sword should pass through the summon (no hitstop, no damage) and strike the enemy.
