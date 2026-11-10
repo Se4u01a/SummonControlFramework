@@ -120,8 +120,17 @@
   * `Attack` approach assist (`MovementMode::AttackApproach`): outside 150 units the summon is driven to the focused actor's world position by keep-offset (facing the target), inside it the goal is released to the combat AI; `StartCombat` is retried once per second if the engine dropped the fight.
   * Focus resolution: `targetActor` → `target` → aim-cone fallback (closest hostile actor within 25° of the player's facing, 2500 units); `Passive` refuses a Focus order with an explicit HUD message instead of a false confirmation.
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
-  * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat) — **102/102 tests passing**.
+  * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **Target Pin for FocusTarget (`CombatController` selectors) — 2026-11-10:**
+  * Root cause of "Focus executed but ignored": the engine re-chooses a fighting actor's target on every `Actor::UpdateCombat` (`CombatController::UpdateTarget`, SE `+4FE300`, asks each `CombatTargetSelector` through vtable slot 6 and writes the first non-zero answer via `SetTarget`, `+4FDFE0`). SCF's main-thread writes to `CombatController::targetHandle` were overwritten on the next combat update (and raced the BSJobs combat workers).
+  * New seat in `CombatGate`: chaining `write_vfunc` on slot 6 `SelectTarget` of `CombatTargetSelectorStandard` (SE vtable id 265605, function `+7B5E50`) and `CombatTargetSelectorFixed` (265607, `+7B6920`), verified on the unpacked 1.5.97 image. For a summon with a FocusTarget it answers with the focused actor when the engine holds a target, the focus is alive/loaded and it is a held (not `kTargetLost`) target of the summon's combat group (`core::ChooseSelectorAnswer`, `src/Core/TargetPin.{h,cpp}`).
+  * Entry: `StartCombat(focus)` on the order; while the summon fights someone else, a `StartCombat(focus)` once per second adds the focus to its group's targets.
+  * `AttackApproach` keep-offset only while the engine is not yet fighting the focus — the combat AI owns locomotion and range during the fight (ranged summons keep distance).
+  * No `CombatController` member is written from the main thread any more: `combat::BreakCombat` = `StopCombat()` + reset of the actor's `currentCombatTarget`.
+  * `engine::ShareLoadedSpace` replaces `GetParentCell() ==` for focus validity and movement gating: neighbouring loaded exterior cells of one worldspace count as the same space (the old test dropped focus across a cell border and froze orders while the summon trailed one cell behind).
+  * Covered by 7 unit tests in `tests/test_target_pin.cpp` — **109/109 tests passing**.
+  * **Field status:** built and deployed to both MO2 instances, NOT tested in game. First session must show `[TargetPin] selector seat OBSERVED running` (TEST-COMBAT-8…11 in `TESTING.md`).
 * **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
   * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
   * **Crosshair Target Pick & Move-To-Point (`RE::CrosshairPickData`):**
@@ -150,7 +159,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **102/102 test cases passing** (0 failures, execution time < 2 ms).
+  * **109/109 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -197,7 +206,7 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 
 * Engine adapters (`ActorAdapter`, `CombatAdapter`) are currently decoupled; test execution uses synthetic `DecisionContext` snapshots until the `SummonRegistry` hook is active.
 * Raycast / Line-of-sight checks currently depend on snapshot inputs and will be connected to engine raycasts in the adapter layer.
-* `SummonMovement` is field-confirmed for `Follow` / `Return` / `Guard` / `MoveTo` (the keep-offset moves a summoned wolf, warp fires when stuck, `SetDontMove` holds it, the aim projection lands where the player aimed). `CombatGate` is new and not yet re-tested: the open question is whether denying `Actor::StartCombat` is enough to make the vanilla commanded-actor logic stop fighting (the `AttackApproach` assist is the fallback for the focused target).
+* `SummonMovement` is field-confirmed for `Follow` / `Return` / `Guard` / `MoveTo` (the keep-offset moves a summoned wolf, warp fires when stuck, `SetDontMove` holds it, the aim projection lands where the player aimed). `CombatGate` and the FocusTarget target pin are not yet re-tested after the call-site fix: the open questions are whether denying `Actor::StartCombat` is enough to stop the vanilla commanded-actor fighting, and whether the selector seat runs for summoned creatures (the first log line `[TargetPin] selector seat OBSERVED running` answers the latter).
 * The `StartCombat` seat is a global hook: another plugin hooking the same function chains through the SKSE trampoline, but a mod that calls combat entry through a path this function does not cover could still start a fight for a summon. The native `kAttackingDisabled`/`kCastingDisabled` bits are the second layer for that case.
 * Catch-up warp is same-cell only; cross-cell recall relies on the engine's vanilla summon snap (`fSummonedCreatureMaxFollowDist`, patched from `[Recovery] fCatchUpDistance`).
 * A summon in a different cell than the player receives no movement orders (its AI process is suspended); the drift `MoveTo` destination is abandoned when the owner is more than 8000 units away.

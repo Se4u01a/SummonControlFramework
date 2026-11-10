@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **102/102 тестов успешно пройдено (0 failures)**.
+Текущий результат: **109/109 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -140,6 +140,16 @@ xmake run scf_tests
 * `TestMovementIntentMoveToWithoutDestinationFallsBackToFollow`: Проверяет безопасный откат `MoveTo` без сохранённой точки в обычное следование.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
+### Suite N: Target Pin (`TargetPin`) — 7 tests
+Файл `tests/test_target_pin.cpp`, правило `core::ChooseSelectorAnswer`, которым seat селектора `CombatController` заменяет выбор цели движка на `FocusTarget`.
+* `TestTargetPinReplacesEnginePick`: фокус — удерживаемая цель группы, движок выбрал другого → ответ = фокус.
+* `TestTargetPinWithoutPinKeepsEnginePick`: без фокуса выбор движка не меняется.
+* `TestTargetPinNeverRevivesAFight`: движок не держит цели (ответ 0) → 0, пин не начинает и не оживляет бой.
+* `TestTargetPinAbsentFromGroupKeepsEnginePick`: фокус ещё не цель группы → выбор движка.
+* `TestTargetPinLostTargetKeepsEnginePick`: фокус помечен `kTargetLost` → выбор движка.
+* `TestTargetPinDeadTargetKeepsEnginePick`: фокус мёртв/выгружен → выбор движка.
+* `TestTargetPinAgreeingPickIsUnchanged`: движок уже выбрал фокус → без изменений.
+
 ---
 
 ## 2. Static / offline (passing)
@@ -166,7 +176,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 102/102 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 109/109 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -288,5 +298,9 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-4 (Focus engages):** Навестись на врага и нажать `Numpad 1`: в логе `StartCombat(0x...) -> true (dist ..., hostile ..., inCombat yes)`, суммон подходит (`AttackApproach keep-offset ...`) и атакует. Если `StartCombat -> false` — пришлите строку целиком.
 * **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
 * **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
+* **[ ] TEST-COMBAT-8 (Target pin seat runs):** В первом же бою в логе должна появиться строка `[TargetPin] selector seat OBSERVED running`. После `Numpad 1` — `[TargetPin] Summon 0x... pinned to focus 0x...` и затем `engine picked handle ..., answered with focus ...`. Если вместо этого раз в 2 с идёт `not pinned this update (... membership absent)`, фокус не попал в цели боевой группы — пришлите эти строки и соседние `add-target StartCombat`.
+* **[ ] TEST-COMBAT-9 (Focus among several enemies):** В бою с 2–3 врагами навестись на дальнего и нажать `Numpad 1`: суммон бросает текущего противника и дерётся с назначенным до его смерти, не переключаясь, даже если другие бьют его.
+* **[ ] TEST-COMBAT-10 (Ranged summon keeps range):** С атронахом (огненным/грозовым) дать `Numpad 1` по врагу на расстоянии: атронах стреляет с дистанции, а не бежит вплотную (keep-offset `AttackApproach` снимается, как только движок воюет с фокусом).
+* **[ ] TEST-COMBAT-11 (Cell border outdoors):** Снаружи пройти через границу ячейки с Follow/Return/Focus: приказы не замирают, фокус по врагу в соседней ячейке не сбрасывается сам (`focus target ... is gone` не появляется, пока враг жив и рядом).
 * **[ ] TEST-COMBAT-7 (MoveTo does not fight):** Отправить отряд в `MoveTo` мимо врага: пока идёт переход, суммон не вступает в бой (биты включены), после прибытия (`-> Guard`) снова может обороняться.
 

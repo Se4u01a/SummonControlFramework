@@ -525,6 +525,23 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
 * **Checked.** Build clean, deployed; `scf_tests` 102/102. The install line now reads `StartCombat denial seat installed on 10 site(s) (1 tail call(s)) of 0x...; function entry untouched.` — the next session's log confirms it on the real image.
 * **Rule learned.** In this fork `write_branch`/`write_call` return the previous *branch target*, never a callable copy of the original. Only call-site patches keep the original callable; a function-entry hook needs a real trampoline (copied prologue + jump back), which this fork does not provide.
 
+---
+
+## 2026-11-10 — FocusTarget через `CombatController`: пин цели в селекторах, без записей в контроллер
+
+Ревизия всего, что сделано по контролю боя, по подсказке пользователя «combatController может помочь для управления поведением сумонов». Полевого лога после исправления краша нет (последний `SummonControlFramework.log` — сессия краша 19:53), поэтому всё ниже — анализ кода и дизассемблера, **не проверено в игре**.
+
+* **Корневая причина «Focus исполняется, но игнорируется» (подтверждено дизассемблером 1.5.97):** `Actor::UpdateCombat` на каждом боевом тике вызывает `CombatController::UpdateTarget` (id 32489 → `+4FE300`). Тот обходит `targetSelectors`, для активных вызывает слот 6 (`call [rax+0x30]`, `rdx` = слот на стеке), берёт первый ненулевой ответ и при отличии от `controller+0x2C` вызывает `CombatController::SetTarget` (id 32488 → `+4FDFE0`). Значит запись `cc->targetHandle` / `currentCombatTarget` из главного потока живёт до следующего боевого тика, а сама запись — гонка с BSJobs-потоками, которые держат контроллер. Слот 6 селекторов: `Standard` (vtable id 265605 → `+1690A98`, функция `+7B5E50`, читает контроллер через `[this+0x10]`, группу через `[controller+0]`), `Fixed` (265607 → `+1690AF8`, `+7B6920`: `mov eax,[rcx+0x18]; mov [rdx],eax; mov rax,rdx; ret`). Совпадает с таблицей APMF (`APMF/Docs/VERIFIED-ADDRESSES.md`, ch.20 Target Pin) — APMF использовали как справочник, код написан заново под SCF.
+* **Сделано:**
+  * `CombatGate`: chaining-хук слота 6 обоих селекторов. Для призыва с фокусом ответ заменяется фокусом, если движок держит цель, фокус жив/загружен и является целью группы без `kTargetLost` (чтение под read-lock группы). Правило вынесено в чистый `core::ChooseSelectorAnswer` (`src/Core/TargetPin.*`), 7 unit-тестов. Быстрый путь — атомарный счётчик пинов (seat вызывается для каждого воюющего NPC игры). Разрешение `ActorHandle` фокуса — только в главном потоке.
+  * Записи `CombatController::targetHandle`/`startedCombat` из главного потока удалены отовсюду (Focus, Return, Guard, Follow, Passive, leash, смена политики); разрыв боя — `combat::BreakCombat` (`StopCombat` + сброс `currentCombatTarget`).
+  * `AttackApproach` (keep-offset к фокусу) работает только пока движок не воюет с фокусом; во время боя с ним движением владеет боевой AI — устраняет конкуренцию двух целей движения и не тащит дальнобойных атронахов в ближний бой. Если суммон воюет с другим, раз в секунду `StartCombat(focus)` добавляет фокус в цели группы (так он становится пригодным для пина).
+  * `ShareLoadedSpace` вместо `GetParentCell() ==` (фокус и гейт движения): снаружи сосед по загруженной сетке — нормальная ситуация, старое сравнение сбрасывало фокус и замораживало приказы.
+* **Отклонено:** писать цель в контроллер чаще (каждый кадр) — та же гонка и всё равно проигрывает `UpdateTarget`; хук `UpdateCombat` с перезаписью после тика — APMF отказался от этого как от маскирующего пояса, а источник выбора (селектор) закрывает задачу целиком.
+* **Проверено:** полная пересборка DLL без предупреждений в нашем коде (единственное — в стороннем minhook), `scf_tests` 109/109, DLL разложена в обе MO2-сборки.
+* **Ревью незакоммиченных правок FF** (`HitHook`, `ProjectileHook`, `PrecisionBackend` — были в рабочем дереве до этой задачи): слоты `AddImpact`/`HandleHits` (0xBD/0xBE) у `FlameProjectile`/`ConeProjectile`/`BeamProjectile` существуют, у `Cone` собственный `HandleHits` с тем же контрактом коллектора (`[rdx+0x10]` данные, `[rdx+0x18]` размер, шаг 0x40). Ошибок не найдено; правки оставлены незакоммиченными как чужие (AGENTS.md §9).
+* **Осталось:** полевой тест TEST-COMBAT-1…11. Главный вопрос первой сессии — появится ли `[TargetPin] selector seat OBSERVED running` и `answered with focus` (APMF помечает тот же seat как «не наблюдался в поле»).
+
 
 
 

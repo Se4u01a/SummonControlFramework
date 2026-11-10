@@ -30,7 +30,20 @@ namespace scf::engine::combat
 	// are main-thread only; ShouldDenyStartCombat() runs on whatever thread calls
 	// StartCombat and only touches the mutex-protected policy table.
 
+	//
+	// Third layer, the target pin (FocusTarget): a chaining write_vfunc on slot 6
+	// (SelectTarget) of CombatTargetSelectorStandard and CombatTargetSelectorFixed. The
+	// engine re-chooses a fighting actor's target every combat update through those
+	// selectors, so writing CombatController::targetHandle from the main thread is
+	// overwritten; the seat answers the selector with the focused actor instead (rules in
+	// core::ChooseSelectorAnswer). Runs on the combat job threads; reads only the
+	// mutex-protected table and the group's target list under the group's own read lock.
+
 	bool Install();
+
+	// Leave combat through the engine's own StopCombat (main thread). Never writes the
+	// CombatController members: the combat workers own them.
+	void BreakCombat(RE::Actor* a_actor);
 
 	// Publish and enforce the policy for one summon (main thread, each tactical tick).
 	void UpdateForSummon(RE::Actor* a_summon, const core::CombatPolicy& a_policy);

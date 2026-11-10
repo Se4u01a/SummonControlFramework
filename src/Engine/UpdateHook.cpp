@@ -4,6 +4,7 @@
 #include "Core/FrameworkContext.h"
 #include "Core/SummonModel.h"
 #include "Core/SummonRegistry.h"
+#include "Engine/ActorSpace.h"
 #include "Engine/CombatGate.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
@@ -57,16 +58,14 @@ namespace scf::engine::update
 							combat::UpdateForSummon(a_summon, core::BuildCombatPolicy(*a_model, true));
 						}
 
-						a_summon->StopCombat();
+						// Fresh engagement: StartCombat (through the seat, which now permits
+						// exactly this actor) builds a new CombatController/CombatGroup whose
+						// first combat target is the focus. From then on the target pin makes
+						// the controller's own selectors keep choosing it every combat update;
+						// no CombatController member is written from here (the combat workers
+						// own them and used to overwrite such writes on the next update).
+						combat::BreakCombat(a_summon);
 						const bool started = a_summon->StartCombat(target, nullptr);
-						a_summon->GetActorRuntimeData().currentCombatTarget = target->GetHandle();
-
-						if (auto* cc = a_summon->GetActorRuntimeData().combatController) {
-							cc->targetHandle = target->GetHandle();
-							cc->startedCombat = true;
-						}
-
-						a_summon->EvaluatePackage(true, false);
 
 						const float distance = a_summon->GetPosition().GetDistance(target->GetPosition());
 						logger::info("[Execution] Summon 0x{:08X} StartCombat(0x{:08X}) -> {} (dist {:.0f}, hostile {}, inCombat {})",
@@ -90,13 +89,7 @@ namespace scf::engine::update
 					{
 						logger::info("[Execution] Summon 0x{:08X} ordered to RETURN to owner", a_summon->GetFormID());
 
-						a_summon->StopCombat();
-						a_summon->GetActorRuntimeData().currentCombatTarget.reset();
-
-						if (auto* cc = a_summon->GetActorRuntimeData().combatController) {
-							cc->targetHandle.reset();
-							cc->startedCombat = false;
-						}
+						combat::BreakCombat(a_summon);
 					}
 					break;
 
@@ -104,13 +97,7 @@ namespace scf::engine::update
 					{
 						logger::info("[Execution] Summon 0x{:08X} ordered to GUARD / WAIT", a_summon->GetFormID());
 
-						a_summon->StopCombat();
-						a_summon->GetActorRuntimeData().currentCombatTarget.reset();
-
-						if (auto* cc = a_summon->GetActorRuntimeData().combatController) {
-							cc->targetHandle.reset();
-							cc->startedCombat = false;
-						}
+						combat::BreakCombat(a_summon);
 					}
 					break;
 
@@ -118,13 +105,7 @@ namespace scf::engine::update
 					{
 						logger::info("[Execution] Summon 0x{:08X} ordered to FOLLOW", a_summon->GetFormID());
 
-						a_summon->StopCombat();
-						a_summon->GetActorRuntimeData().currentCombatTarget.reset();
-
-						if (auto* cc = a_summon->GetActorRuntimeData().combatController) {
-							cc->targetHandle.reset();
-							cc->startedCombat = false;
-						}
+						combat::BreakCombat(a_summon);
 					}
 					break;
 
@@ -143,13 +124,7 @@ namespace scf::engine::update
 				if (a_cmd.aggression == core::AggressionMode::Passive) {
 					logger::info("[Execution] Summon 0x{:08X} set to PASSIVE - disengaging combat", a_summon->GetFormID());
 
-					a_summon->StopCombat();
-					a_summon->GetActorRuntimeData().currentCombatTarget.reset();
-
-					if (auto* cc = a_summon->GetActorRuntimeData().combatController) {
-						cc->targetHandle.reset();
-						cc->startedCombat = false;
-					}
+					combat::BreakCombat(a_summon);
 
 					a_summon->EvaluatePackage(true, false);
 				}
@@ -283,7 +258,7 @@ namespace scf::engine::update
 				// clear it before the combat policy is derived from it.
 				if (model->currentTargetId != core::InvalidEntityID) {
 					auto* focus = RE::TESForm::LookupByID<RE::Actor>(model->currentTargetId);
-					if (!focus || focus->IsDead() || focus->GetParentCell() != summonActor->GetParentCell()) {
+					if (!focus || focus->IsDead() || !ShareLoadedSpace(focus, summonActor)) {
 						logger::info("[UpdateHook] Summon 0x{:08X} focus target 0x{:08X} is gone; resuming order",
 							summonId, model->currentTargetId);
 						model->currentTargetId = core::InvalidEntityID;
@@ -317,12 +292,7 @@ namespace scf::engine::update
 						if (settings.combat.returnToOwnerWhenOutsideLeash) {
 							logger::info("[UpdateHook] Summon 0x{:08X} outside combat leash radius ({:.1f} > {:.1f}), returning to owner",
 								summonId, std::sqrt(distToPlayerSq), leashRadius);
-							summonActor->StopCombat();
-							summonActor->GetActorRuntimeData().currentCombatTarget.reset();
-							if (auto* cc = summonActor->GetActorRuntimeData().combatController) {
-								cc->targetHandle.reset();
-								cc->startedCombat = false;
-							}
+							combat::BreakCombat(summonActor);
 							model->order = core::SummonOrder::Return;
 							model->hasMoveTarget = false;
 							ctx.GetStateMachine().TransitionTo(*model, core::SummonState::Return, "Exceeded combat leash");
