@@ -10,6 +10,7 @@ namespace scf::core
 
 	FrameworkContext::FrameworkContext()
 	{
+		_registry.SetDefaultMaxSummonsPerOwner(_settings.Get().general.maxSummonsPerOwner);
 		PropagateLogCallbacks();
 	}
 
@@ -43,6 +44,7 @@ namespace scf::core
 	void FrameworkContext::ResetRuntimeState() noexcept
 	{
 		_registry.Reset();
+		_registry.SetDefaultMaxSummonsPerOwner(_settings.Get().general.maxSummonsPerOwner);
 		_commandQueue.Clear();
 		_scheduler.Reset();
 

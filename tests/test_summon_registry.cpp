@@ -98,8 +98,30 @@ TEST(TestDeathAndDispelLifecycle)
 	CHECK(registry.GetActiveSummonsForOwner(10).empty());
 	CHECK(registry.GetTotalCount() == 2);
 
-	// Garbage collect stale records
+	// Garbage collect stale records (immediate when no timestamps given)
 	registry.ClearStaleRecords();
+	CHECK(registry.GetTotalCount() == 0);
+}
+
+TEST(TestGracePeriodGarbageCollection)
+{
+	SummonRegistry registry;
+	registry.RegisterSummon(10, 201, SummonType::SummonCreature, 60.0f, 1.0f);
+
+	// Dies at timestamp 10.0s
+	registry.NotifyDeath(201, 10.0f);
+
+	// At 11.0s (1s elapsed, grace period 3.0s): should NOT be cleared yet
+	registry.ClearStaleRecords(11.0f, 3.0f);
+	CHECK(registry.GetTotalCount() == 1);
+	CHECK(!registry.IsActive(201));
+
+	// At 12.9s: still kept
+	registry.ClearStaleRecords(12.9f, 3.0f);
+	CHECK(registry.GetTotalCount() == 1);
+
+	// At 13.1s (>= 3.0s elapsed): should be pruned
+	registry.ClearStaleRecords(13.1f, 3.0f);
 	CHECK(registry.GetTotalCount() == 0);
 }
 

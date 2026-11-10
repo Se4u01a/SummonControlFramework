@@ -59,6 +59,7 @@ namespace scf::core
 
 		float remainingDuration{ -1.0f }; // Negative = permanent
 		float registrationTimestamp{ 0.0f };
+		float deathTimestamp{ 0.0f };     // Time when actor died or effect dispelled
 
 		bool isDead{ false };
 		bool isSuspended{ false };
@@ -100,9 +101,9 @@ namespace scf::core
 
 		void NotifyCellAttach(EntityID a_summonId);
 
-		void NotifyDeath(EntityID a_summonId);
+		void NotifyDeath(EntityID a_summonId, float a_timestamp = 0.0f);
 
-		void NotifyEffectRemoved(EntityID a_ownerId, EntityID a_summonId);
+		void NotifyEffectRemoved(EntityID a_ownerId, EntityID a_summonId, float a_timestamp = 0.0f);
 
 		[[nodiscard]] const SummonRecord* FindRecord(EntityID a_summonId) const noexcept;
 
@@ -123,7 +124,7 @@ namespace scf::core
 			return _records;
 		}
 
-		void ClearStaleRecords();
+		void ClearStaleRecords(float a_currentTimestamp = 0.0f, float a_gracePeriod = 0.0f);
 
 		void Reset();
 

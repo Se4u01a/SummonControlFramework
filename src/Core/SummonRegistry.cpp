@@ -61,6 +61,7 @@ namespace scf::core
 			it->second.lifecycle = SummonLifecycleState::Active;
 			it->second.isSuspended = false;
 			it->second.isDead = false;
+			it->second.deathTimestamp = 0.0f;
 
 			if (_logCallback) {
 				std::snprintf(logBuf, sizeof(logBuf),
@@ -81,6 +82,7 @@ namespace scf::core
 				auto oldestIt = _records.find(oldestId);
 				if (oldestIt != _records.end()) {
 					oldestIt->second.lifecycle = SummonLifecycleState::Displaced;
+					oldestIt->second.deathTimestamp = a_timestamp;
 				}
 
 				if (a_outDisplaced) {
@@ -104,6 +106,7 @@ namespace scf::core
 		record.lifecycle = SummonLifecycleState::Active;
 		record.remainingDuration = a_duration;
 		record.registrationTimestamp = a_timestamp;
+		record.deathTimestamp = 0.0f;
 		record.isDead = false;
 		record.isSuspended = false;
 
@@ -171,12 +174,13 @@ namespace scf::core
 		}
 	}
 
-	void SummonRegistry::NotifyDeath(EntityID a_summonId)
+	void SummonRegistry::NotifyDeath(EntityID a_summonId, float a_timestamp)
 	{
 		const auto it = _records.find(a_summonId);
 		if (it != _records.end()) {
 			it->second.lifecycle = SummonLifecycleState::Dead;
 			it->second.isDead = true;
+			it->second.deathTimestamp = a_timestamp;
 
 			if (_logCallback) {
 				char logBuf[256];
@@ -187,11 +191,12 @@ namespace scf::core
 		}
 	}
 
-	void SummonRegistry::NotifyEffectRemoved(EntityID a_ownerId, EntityID a_summonId)
+	void SummonRegistry::NotifyEffectRemoved(EntityID a_ownerId, EntityID a_summonId, float a_timestamp)
 	{
 		const auto it = _records.find(a_summonId);
 		if (it != _records.end() && it->second.ownerId == a_ownerId) {
 			it->second.lifecycle = SummonLifecycleState::Dispatched;
+			it->second.deathTimestamp = a_timestamp;
 
 			if (_logCallback) {
 				char logBuf[256];
@@ -257,13 +262,19 @@ namespace scf::core
 		return count;
 	}
 
-	void SummonRegistry::ClearStaleRecords()
+	void SummonRegistry::ClearStaleRecords(float a_currentTimestamp, float a_gracePeriod)
 	{
-		std::erase_if(_records, [](const auto& pair) {
+		std::erase_if(_records, [=](const auto& pair) {
 			const auto& record = pair.second;
-			return record.isDead ||
-			       record.lifecycle == SummonLifecycleState::Dispatched ||
-			       record.lifecycle == SummonLifecycleState::Displaced;
+			if (record.isDead ||
+			    record.lifecycle == SummonLifecycleState::Dispatched ||
+			    record.lifecycle == SummonLifecycleState::Displaced) {
+				if (a_gracePeriod <= 0.0f || a_currentTimestamp <= 0.0f) {
+					return true;
+				}
+				return (a_currentTimestamp - record.deathTimestamp) >= a_gracePeriod;
+			}
+			return false;
 		});
 	}
 

@@ -13,7 +13,9 @@ namespace scf::engine::update
 {
 	namespace
 	{
-		void InternalSyncPlayerSummons(RE::PlayerCharacter* a_player)
+		float s_totalElapsed = 0.0f;
+
+		void InternalSyncPlayerSummons(RE::PlayerCharacter* a_player, float a_timestamp)
 		{
 			if (!a_player) {
 				return;
@@ -39,7 +41,7 @@ namespace scf::engine::update
 
 				const auto summonId = actorPtr->GetFormID();
 				if (actorPtr->IsDead()) {
-					registry.NotifyDeath(summonId);
+					registry.NotifyDeath(summonId, a_timestamp);
 					continue;
 				}
 
@@ -56,7 +58,7 @@ namespace scf::engine::update
 					summonId,
 					core::SummonType::SummonCreature,
 					remainingDuration,
-					0.0f,
+					a_timestamp,
 					&displaced);
 
 				if (displaced != core::InvalidEntityID) {
@@ -68,9 +70,12 @@ namespace scf::engine::update
 			const auto activeSummons = registry.GetActiveSummonsForOwner(ownerId);
 			for (const auto prevSummonId : activeSummons) {
 				if (currentEngineSummons.find(prevSummonId) == currentEngineSummons.end()) {
-					registry.NotifyEffectRemoved(ownerId, prevSummonId);
+					registry.NotifyEffectRemoved(ownerId, prevSummonId, a_timestamp);
 				}
 			}
+
+			// Automatically garbage collect dead / dispatched summons after 3 seconds grace period (fadeout)
+			registry.ClearStaleRecords(a_timestamp, 3.0f);
 		}
 
 		struct PlayerUpdate
@@ -92,13 +97,15 @@ namespace scf::engine::update
 					return;
 				}
 
+				s_totalElapsed += a_delta;
+
 				auto& ctx = core::FrameworkContext::GetSingleton();
 				if (!ctx.GetSettings().Get().general.enabled) {
 					return;
 				}
 
 				if (ctx.GetScheduler().ShouldTick(a_delta)) {
-					InternalSyncPlayerSummons(a_player);
+					InternalSyncPlayerSummons(a_player, s_totalElapsed);
 				}
 			}
 
@@ -110,7 +117,7 @@ namespace scf::engine::update
 	{
 		auto* player = RE::PlayerCharacter::GetSingleton();
 		if (player) {
-			InternalSyncPlayerSummons(player);
+			InternalSyncPlayerSummons(player, s_totalElapsed);
 		}
 	}
 
@@ -123,6 +130,7 @@ namespace scf::engine::update
 
 	void Reset()
 	{
+		s_totalElapsed = 0.0f;
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

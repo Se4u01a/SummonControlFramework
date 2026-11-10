@@ -245,3 +245,22 @@ Discovery and resolution of in-game summon registration failure.
   * Rebuilt `SummonControlFramework.dll` (~607 KB) and confirmed clean compilation with 0 warnings.
   * All 61 unit tests continue to pass in `scf_tests.exe`.
   * Deployed fresh DLL and PDB to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
+
+---
+
+## 2026-11-10 — Grace Period Garbage Collection & Console Output Filtering
+
+Resolution of stale summon retention in scf registry after death or dispelling.
+
+* **Grace Period Garbage Collection (SummonRegistry & UpdateHook):**
+  * When a summon dies or is dispelled, keeping its metadata temporarily is essential so that other subsystems (SquadCoordinator, CommandQueue, TargetSelector) can safely unbind slots, drop orders, and handle the engine's 3-second death animation/ash-pile shader.
+  * Added deathTimestamp tracking to SummonRecord.
+  * SummonRegistry::ClearStaleRecords(timestamp, gracePeriod) now retains dead/dispatched records during a configurable grace period (default 3.0s), and automatically purges them once the fadeout completes.
+  * In UpdateHook.cpp, ClearStaleRecords runs on every 15 Hz tick with the elapsed game time, ensuring zero manual intervention.
+* **Console Formatting Improvements (ConsoleHandler):**
+  * scf registry displays active summons clearly with duration and ownership.
+  * Any dying/fading summons currently undergoing the 3-second ash-pile transition are displayed distinctly as (fading in ash-pile), avoiding confusion.
+* **Verification:**
+  * Added TestGracePeriodGarbageCollection in 	ests/test_summon_registry.cpp.
+  * Test suite expanded to **62/62 unit tests passing**.
+  * Deployed fresh DLL and PDB to D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\.
