@@ -114,24 +114,28 @@
 * **Automatic Garbage Collection Active:** Dispelled or killed summons cleanly transition with 3-second grace period for death/ash-pile fadeout before record purging.
 * **Multi-Summon Engine Limitation Identified:** In vanilla Skyrim engine, `commandedActors` default limit is 1 unless the player has the *Twin Souls* perk (FormID `000581DE`) or a multi-summon mod. Command `player.addperk 000581DE` enables summoning 2 creatures simultaneously.
 
-## Active Workstream: FF-01 (Friendly Fire Protection & Attack Filtering)
+## Implemented and Deployed to MO2: FF-01 (Friendly Fire Protection & Attack Filtering)
 
-Based on [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md):
+Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md).
 
-* **FF-Stage A — Baseline & Classification:**
-  * Define `AttackSourceKind` enum (`Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, `Unknown`).
-  * Implement `RelationshipClassifier` in `src/Core/` with loop-guarded command chain traversal and 100% unit test coverage.
-* **FF-Stage B — Damage Protection MVP:**
-  * Add `[FriendlyFire]` INI settings section (`bEnableSummonProtection`, `bBlock*Damage`, etc.).
-  * Hook hit/damage pipeline (`Actor::AdjustDamage` / `ProcessHit`) to nullify damage and suppress hostility reaction from friendly sources.
-  * Integrate Precision API (`PrecisionAPI.h`) `PreHitCallback` returning `bIgnoreHit = true`.
-  * Protect against player hostile magic (`MagicTarget::AddTarget`, `ValueModifierEffect`).
-* **FF-Stage C — True Melee Pass-Through:**
-  * Verify weapon swing continuation past ignored friendly summons to strike enemies behind them.
-* **FF-Stage D — True Projectile Pass-Through:**
-  * Implement projectile collision filter (`bhkCollisionFilter`) allowing friendly arrows, bolts, and spells to fly through summons.
-* **FF-Stage E — Reactions, Compatibility & Diagnostics:**
-  * Stagger/recoil suppression, killmove prevention, and combat diagnostics.
+* **FF-Stage A (Relationship Classification & Matrix Policy):**
+  * `src/FriendlyFire/RelationshipClassifier.h/.cpp`: classifies sources as `Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, or `Unknown`.
+  * Depth-guarded commanding actor traversal (`MaxCommandChainDepth = 4`) with cycle detection.
+  * Fail-Safe Gate: `Unknown` and hostile sources are NEVER filtered, protecting combat integrity against true enemies.
+  * 100% covered by 5 new unit tests in `tests/test_friendly_fire.cpp` (all 67/67 tests passing).
+* **FF-Stage B & C (Damage Protection MVP & Precision Melee Pass-Through):**
+  * `src/FriendlyFire/FriendlyFireSettings.h`: integrated with `Settings.h/.cpp` with full INI parsing, validation, and round-trip serialization.
+  * `src/Integrations/PrecisionBackend.h/.cpp`: dynamically discovers `Precision.dll` (v2.0.4) and installs `PreHitCallback`. When the player swings through a registered summon, returns `bIgnoreHit = true`: weapon physically flies through without hitstop to strike enemies behind!
+  * `src/FriendlyFire/HitHook.h/.cpp`: intercepts engine `ProcessHit` (ID 37673 at offset 0x3C0), nullifying damage, stagger, and pushback, dropping friendly hits before combat hostility loops can trigger.
+* **FF-Stage D (True Projectile Pass-Through):**
+  * `src/FriendlyFire/ProjectileHook.h/.cpp`: hooks `ArrowProjectile` (arrows & crossbow bolts) and `MissileProjectile` (spells) at `AddImpact` (vfunc 189) and `HandleHits` (vfunc 190).
+  * Skips impact registration on friendly summons and compacts contact points, allowing projectiles to fly cleanly through summons into enemies behind.
+
+## Ready for In-Game Playtesting in MO2 (SBORKA profile)
+
+1. **Multi-summon unlock test:** In console type `player.addperk 000581DE` (Twin Souls), cast 2 summons, and verify both stay active simultaneously.
+2. **Melee pass-through test:** Stand behind a summon with a sword/axe while an enemy is nearby. Swing at the enemy through the summon — sword should pass through the summon (no hitstop, no damage) and strike the enemy.
+3. **Projectile pass-through test:** Shoot an arrow or spell missile through a summon — projectile should pass through the summon and strike the target behind.
 
 ## Known limitations
 

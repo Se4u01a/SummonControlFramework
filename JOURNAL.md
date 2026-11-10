@@ -284,3 +284,35 @@ Comprehensive milestone following user playtesting in `[STB] Mod Organizer` and 
   * **`ARCHITECTURE.md`:** Added Section 16 detailing the architectural separation between Actor body collision (`CollisionPairClassifier`) and combat hit filtering (`AttackFilterManager`), the `RelationshipClassifier` model (`AttackSourceKind`), Precision backend mechanics, and INI configuration schemas.
   * **`STATUS.md`:** Formally recorded in-game verified milestones and activated Workstream FF-01 roadmap tasks.
   * **`TESTING.md`:** Added Section 4 with comprehensive acceptance test suites FF-1 (Damage Protection), FF-2 (Attack Pass-Through), and FF-3 (Compatibility & Regression).
+
+---
+
+## 2026-11-10 — Full Implementation of FF-01 (Friendly Fire, Precision Melee Pass-Through, Projectile Hook)
+
+Implemented and deployed the complete friendly fire and combat pass-through subsystem.
+
+* **Settings & Configuration (`FriendlyFireSettings`):**
+  * Created `src/FriendlyFire/FriendlyFireSettings.h`.
+  * Added `friendlyFire` member to `SettingsData` with support for `bEnableSummonProtection`, `bProtectPlayerOwnedSummons`, `bBlock*Damage`, `b*PassThrough`, etc.
+  * Added INI parsing and round-trip serialization in `src/Core/Settings.cpp`.
+* **Relationship Classification & Matrix Evaluation (`RelationshipClassifier`):**
+  * Created `src/FriendlyFire/RelationshipClassifier.h/.cpp`.
+  * Classified sources: `Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, `Unknown`.
+  * Depth-guarded commanding actor chain traversal (`MaxCommandChainDepth = 4`) with loop detection to prevent cycles.
+  * Evaluates attack kinds (`Melee`, `Sweep`, `Arrow`, `PhysicalProjectile`, `MagicProjectile`, `AreaEffect`, etc.).
+  * Fail-safe safety gate: unknown, neutral, and hostile sources are never filtered.
+  * Added 5 new unit tests in `tests/test_friendly_fire.cpp` (all 67/67 tests passing).
+* **Precision Melee Pass-Through (`PrecisionBackend`):**
+  * Copied `PrecisionAPI.h` and created `src/Integrations/PrecisionBackend.h/.cpp`.
+  * Dynamically connects to `Precision.dll` and installs `PreHitCallback`.
+  * When a friendly melee swing touches a protected summon, returns `bIgnoreHit = true`. Precision physically ignores the hit, avoids hitstop, and lets the weapon slice through to hit enemies behind!
+* **Engine Damage Hook (`HitHook`):**
+  * Created `src/FriendlyFire/HitHook.h/.cpp`.
+  * Intercepts call to `Actor::ProcessHit` (ID 37673 at offset 0x3C0).
+  * Nullifies damage, stagger, and pushback, dropping friendly hits before damage calculation or hostility loops can trigger.
+* **Engine Projectile Pass-Through (`ProjectileHook`):**
+  * Created `src/FriendlyFire/ProjectileHook.h/.cpp`.
+  * Hooks virtual functions `AddImpact` (vfunc 189) and `HandleHits` (vfunc 190) on `ArrowProjectile` and `MissileProjectile`.
+  * Skips impact registration on friendly summons and removes physics contact points from `hkpAllCdPointCollector`, allowing arrows, bolts, and spells to fly directly through summons into targets behind them!
+* **Build & Deployment:**
+  * Clean compilation of `SummonControlFramework.dll` (647 KB) and automatic deployment to `D:\Games\stb\[STB] Mod Organizer\mods\Summon Control Framework\SKSE\Plugins\`.
