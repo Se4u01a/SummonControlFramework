@@ -243,6 +243,19 @@
 
 ---
 
+### 14.1. Движковые seat'ы прохождения сквозь друг друга (`PassThrough`, 2026-11-11)
+**Важно:** до 2026-11-11 `CollisionPairClassifier` не был подключён ни к одному движковому хуку — матрица выше существовала только в тестах. Прохождение игрока сквозь призывов, подтверждённое в поле, по всей видимости давал установленный мод «Disable Follower Collision» (в профиле SBORKA), а не SCF. Теперь правило реализовано заново как `core::ShouldPassThrough` (`src/Core/PassThrough.{h,cpp}`, 5 тестов) и подключено к двум seat'ам в `src/Engine/PassThrough.{h,cpp}` (только SE 1.5.97, проверено по распакованному образу):
+
+| Seat | Адрес (SE) | Что делает |
+|---|---|---|
+| Обход в движении | `MovementAvoidanceManager` vtable id 262446 (`+1668D28`), слот 4 = id 40659 (`+6EBFD0`), `bool ShouldAvoid(this, FormID self, FormID other)` | Его первым спрашивают и локальный обход `MovementAgentActorAvoider` (через id 90637 `+112D140`, вызовы `+11099C5/+1109C7F/+110A04F`), и проверка `MovementActorAvoidanceParameters` (id 90636 `+112CFF0`, те же параметры несёт `BSPathingRequest` в `+0xD8`). Для пары «призыв↔призыв одного владельца» и «призыв↔владелец» seat отвечает `false` — актор не обходит другого и не строит путь вокруг него |
+| Тела | `bhkCollisionFilter` sub-vtable `[1]` id 289509 (`+179E3B0`), слот 1 = id 76676 (`+DD6780`) | Реальная ABI: `hkBool* IsCollisionEnabled(this, hkBool* out, const hkpCollidable* a, const hkpCollidable* b)` (скрытый слот возврата; объявление CommonLib `bool(a, b)` неверно). Для двух коллайдеров слоя CharController (30), чьи system group опубликованы главным потоком для пары прохождения, `*out = 0` |
+
+* **Опубликованная таблица:** каждый тактический тик `UpdateHook` передаёт владельца и живых призывов; system group берётся из `Actor::GetCollisionFilterInfo` (id 36559 → фильтр контроллера персонажа). Seat'ы читают её под `shared_lock`; физический seat сравнивает только два числа из переданных ему коллайдеров (`+0x2C`), без поиска актора. Быстрый выход, пока нет призывов, и для любых пар не-CharController.
+* **Установка:** перед `write_vfunc` слот сверяется с проверенной функцией; если там чужой хук вне образа игры — цепочка с предупреждением, если другая функция игры — seat не ставится.
+* **Наблюдаемость:** `[PassThrough] ... hooked`, `movement avoidance seat OBSERVED running`, `collision filter seat OBSERVED a CharController pair`, сводка раз в 10 с: сколько проверок обхода и столкновений тел пропущено.
+* **Настройки:** `[Collision] bEnableCollisionBypass` (всё), `bEnableSummonToSummonBypass` (пары призывов).
+
 ## 15. Синхронизация с игровым циклом (`UpdateHook` и `MiddleHighProcessData`)
 
 * **Файл:**

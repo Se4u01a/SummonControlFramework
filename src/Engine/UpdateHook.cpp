@@ -6,6 +6,7 @@
 #include "Core/SummonRegistry.h"
 #include "Engine/ActorSpace.h"
 #include "Engine/CombatGate.h"
+#include "Engine/PassThrough.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
 
@@ -246,6 +247,18 @@ namespace scf::engine::update
 
 			// 5. Per-tick order execution and continuous AI enforcement
 			const auto& settings = ctx.GetSettings().Get();
+
+			// Pass-through table for the movement-avoidance and collision-filter seats:
+			// the owner and its live summons (system groups read from their controllers).
+			{
+				std::vector<passthrough::Member> members;
+				members.reserve(orderedSummons.size() + 1);
+				members.push_back({ core::PassThroughParty{ ownerId, core::InvalidEntityID }, a_player });
+				for (const auto& [id, actor] : orderedSummons) {
+					members.push_back({ core::PassThroughParty{ id, ownerId }, actor });
+				}
+				passthrough::Publish(members, settings.collision);
+			}
 			for (std::size_t i = 0; i < orderedSummons.size(); ++i) {
 				const auto summonId = orderedSummons[i].first;
 				auto* summonActor = orderedSummons[i].second;
@@ -362,6 +375,7 @@ namespace scf::engine::update
 		s_totalElapsed = 0.0f;
 		movement::ResetAll();
 		combat::ResetAll();
+		passthrough::ResetAll();
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

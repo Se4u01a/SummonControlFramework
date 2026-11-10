@@ -122,6 +122,12 @@
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
   * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **Summons pass through each other (movement avoidance + bodies) — 2026-11-11:**
+  * Finding: `CollisionPairClassifier` was never wired to an engine hook; the field-verified player-through-summon passthrough most likely came from the installed mod "Disable Follower Collision", not from SCF.
+  * Seat 1 (SE 1.5.97): `MovementAvoidanceManager` slot 4 `ShouldAvoid(self, other)` (id 40659), asked first by both the local actor avoider and the path avoidance parameters — returns false for own summon↔summon and summon↔owner pairs.
+  * Seat 2 (SE 1.5.97): `bhkCollisionFilter::IsCollisionEnabled(collidable, collidable)` (id 76676, real ABI with a hidden hkBool* return) — clears the result for two CharController collidables whose system groups belong to such a pair (groups published from `Actor::GetCollisionFilterInfo`).
+  * Rule `core::ShouldPassThrough`, 5 tests — **116/116 passing**.
+  * **Field status:** built and deployed to both MO2 instances, NOT tested in game (TEST-PASS-1…3).
 * **M0: follow package recognition without `templateParent` — 2026-11-11:**
   * The 00:08 session proved the follow-leash release never fired: the summon's runtime package (type 18) has `templateParent = 0`.
   * New creation seat (SE 1.5.97 only, byte-checked): call site `id 36410 + 0x84` → id 36422 is patched with `write_call<5>`; it records the package built for each summon and builds it already released under an away order. Fallback (AE, packages restored from a save): shape — runtime FormID `0xFF…`, type 18, exactly two float inputs (`core::IsSummonFollowPackageShape`, 1 test, **111/111 passing**).
@@ -169,7 +175,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **111/111 test cases passing** (0 failures, execution time < 2 ms).
+  * **116/116 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -181,7 +187,7 @@
 
 ## In-Game Verified Functionality (Player Tested in MO2 / Skyrim SE 1.5.97)
 
-* **Physical Body Passthrough Verified:** Player character freely passes through summoned creatures without physical body collision or doorway blocking.
+* **Physical Body Passthrough Verified:** Player character freely passes through summoned creatures without physical body collision or doorway blocking. (2026-11-11: SCF had no engine hook for this at the time; the effect is most likely from the installed "Disable Follower Collision" mod.)
 * **Cell Transition Resilience Verified:** Transitioning across load doors correctly preserves summons without crashes or broken registry state (`Active <-> Suspended` transition).
 * **Live Summon Registration & Synchronization:** `UpdateHook` on `PlayerCharacter::Update` correctly polls `commandedActors` at 15 Hz and tracks active summons.
 * **Automatic Garbage Collection Active:** Dispelled or killed summons cleanly transition with 3-second grace period for death/ash-pile fadeout before record purging.
