@@ -1,5 +1,6 @@
 #include "Engine/SummonMovement.h"
 #include "Engine/ActorSpace.h"
+#include "Engine/FollowLeash.h"
 #include "Core/Formation.h"
 #include "PCH.h"
 
@@ -94,12 +95,20 @@ namespace scf::engine::movement
 
 		// How long an explicit FocusTarget order is given to put the summon into combat
 		// before the driver decides the engagement never started.
-		constexpr float kAttackGraceSeconds = 5.0f;
+		// Long enough for a summon to run ~2500 units to a target it has not detected yet
+		// (StartCombat on an undetected foe is refused until the summon gets close).
+		constexpr float kAttackGraceSeconds = 15.0f;
 		constexpr float kAttackReengageSeconds = 1.0f;
 
 		// The focused-target charge stops this far from the target (melee reach); inside
 		// it the keep-offset goal is released so the combat AI swings.
 		constexpr float kAttackApproachRange = 150.0f;
+
+		// Even while the engine is "fighting" the focus, a summon farther than this is
+		// still driven at it: a fight against an undetected or distant target is the
+		// engine's SEARCH behaviour, not an approach (the 2026-11-10 session showed a wolf
+		// "in combat" with its focus at 1300-1600 units that never closed in).
+		constexpr float kAttackHandoffRange = 400.0f;
 
 		// Radius the position of a "parked" summon is held inside (APMF's proven
 		// full stand-still values: catchUp 20, follow 10).
@@ -113,7 +122,7 @@ namespace scf::engine::movement
 			core::Vec3 localOffset{};
 			float facingOffsetDegrees{ 0.0f };
 			bool keepOffsetActive{ false };
-			bool keepOffsetOnOwner{ true };
+			RE::FormID keepOffsetAnchor{ 0 };
 			bool translationLocked{ false };
 			// SetDontMove is persistent on the actor and survives a save/load, so the
 			// first tick after (re)discovery must push the desired value even when it
@@ -167,15 +176,15 @@ namespace scf::engine::movement
 
 		void ApplyKeepOffset(
 			RE::Actor* a_summon,
-			const RE::ActorHandle& a_target,
-			bool a_targetIsOwner,
+			RE::Actor* a_anchor,
+			const char* a_anchorLabel,
 			core::EntityID a_id,
 			const core::MovementIntent& a_intent,
 			AppliedMovement& a_state,
 			float a_now)
 		{
 			const bool sameGoal = a_state.keepOffsetActive &&
-			                      a_state.keepOffsetOnOwner == a_targetIsOwner &&
+			                      a_state.keepOffsetAnchor == a_anchor->GetFormID() &&
 			                      a_state.localOffset.DistanceSquaredTo(a_intent.localOffset) <= kOffsetEpsilonSq &&
 			                      std::abs(a_state.facingOffsetDegrees - a_intent.facingOffsetDegrees) <= kFacingEpsilonDegrees;
 			const bool reassert = a_state.keepOffsetActive && (a_now - a_state.lastIssuedAt) >= kReassertSeconds;
@@ -186,10 +195,10 @@ namespace scf::engine::movement
 
 			const RE::NiPoint3 offset{ a_intent.localOffset.x, a_intent.localOffset.y, a_intent.localOffset.z };
 			const RE::NiPoint3 angles{ 0.0f, 0.0f, a_intent.facingOffsetDegrees };
-			native::KeepOffsetFromActor(a_summon, a_target, offset, angles, a_intent.catchUpRadius, a_intent.followRadius);
+			native::KeepOffsetFromActor(a_summon, a_anchor->GetHandle(), offset, angles, a_intent.catchUpRadius, a_intent.followRadius);
 
 			a_state.keepOffsetActive = true;
-			a_state.keepOffsetOnOwner = a_targetIsOwner;
+			a_state.keepOffsetAnchor = a_anchor->GetFormID();
 			a_state.localOffset = a_intent.localOffset;
 			a_state.facingOffsetDegrees = a_intent.facingOffsetDegrees;
 			a_state.lastIssuedAt = a_now;
@@ -204,7 +213,7 @@ namespace scf::engine::movement
 					a_intent.facingOffsetDegrees,
 					a_intent.followRadius,
 					a_intent.catchUpRadius,
-					a_targetIsOwner ? "owner" : "self");
+					a_anchorLabel);
 			} else {
 				logger::debug("[Movement] Summon 0x{:08X} keep-offset re-asserted ({})", a_id, core::ToString(a_intent.mode));
 			}
@@ -380,6 +389,8 @@ namespace scf::engine::movement
 			a_slotIndex,
 			a_squadSize);
 
+		RE::Actor* approachAnchor = nullptr;
+
 		// 2b. Explicit attack. While the engine's combat AI is fighting the focused actor
 		// (StartCombat + the CombatGate target pin), it owns locomotion, approach range
 		// and attack choice: a ranged or caster summon keeps its distance, a melee one
@@ -395,6 +406,9 @@ namespace scf::engine::movement
 				const auto engineTarget = a_summon->GetActorRuntimeData().currentCombatTarget.get();
 				const bool fightingFocus = inCombat && engineTarget && engineTarget.get() == attackTarget;
 
+				const float targetDistanceSq = HorizontalDistanceSq(summonPosition, targetPosition);
+				const bool closeEnough = targetDistanceSq <= kAttackHandoffRange * kAttackHandoffRange;
+
 				// Keep the engagement alive: if the engine dropped combat, re-start it
 				// against the same target; if it is fighting someone else, StartCombat on
 				// an actor already in combat adds the focus to its group's targets, which
@@ -408,16 +422,19 @@ namespace scf::engine::movement
 						engineTarget ? engineTarget->GetFormID() : 0u);
 				}
 
-				const float targetDistanceSq = HorizontalDistanceSq(summonPosition, targetPosition);
-				if (!fightingFocus &&
+				// The charge is anchored on the TARGET itself (offset 0 in its body space),
+				// not on the owner: an owner-relative goal moved with every step and turn of
+				// the player, which dragged the summon around instead of at the enemy.
+				if (!(fightingFocus && closeEnough) &&
 					targetDistanceSq > kAttackApproachRange * kAttackApproachRange &&
 					targetDistanceSq <= core::kMaxMoveToDistance * core::kMaxMoveToDistance) {
 					intent.mode = core::MovementMode::AttackApproach;
-					intent.localOffset = core::WorldPointToOwnerLocal(targetPosition, ownerPosition, a_owner->GetAngleZ());
+					intent.localOffset = core::Vec3{ 0.0f, 0.0f, 0.0f };
 					intent.followRadius = kAttackApproachRange;
-					intent.catchUpRadius = std::max(4000.0f, kAttackApproachRange * 4.0f);
-					intent.facingOffsetDegrees = core::FacingOffsetDegrees(summonPosition, targetPosition, a_owner->GetAngleZ());
+					intent.catchUpRadius = kAttackApproachRange * 2.0f;
+					intent.facingOffsetDegrees = core::FacingOffsetDegrees(summonPosition, targetPosition, attackTarget->GetAngleZ());
 					intent.lockTranslation = false;
+					approachAnchor = attackTarget;
 				}
 			}
 		}
@@ -446,17 +463,25 @@ namespace scf::engine::movement
 				park.catchUpRadius = kParkCatchUpRadius;
 
 				ApplyTranslationLock(a_summon, id, true, state);
-				ApplyKeepOffset(a_summon, a_summon->GetHandle(), false, id, park, state, a_now);
+				ApplyKeepOffset(a_summon, a_summon, "self", id, park, state, a_now);
 			}
 			break;
 
 		default:
 			ApplyTranslationLock(a_summon, id, false, state);
-			ApplyKeepOffset(a_summon, a_owner->GetHandle(), true, id, intent, state, a_now);
+			if (approachAnchor) {
+				ApplyKeepOffset(a_summon, approachAnchor, "focus", id, intent, state, a_now);
+			} else {
+				ApplyKeepOffset(a_summon, a_owner, "owner", id, intent, state, a_now);
+			}
 			break;
 		}
 
 		state.mode = intent.mode;
+
+		// 4. The vanilla FollowTo package pulls a summon back to within Min Radius of the
+		// player; orders that keep it away from the player release that leash.
+		leash::UpdateForSummon(a_summon, core::ReleasesFollowLeash(a_model));
 	}
 
 	void RetainOnly(const std::unordered_set<core::EntityID>& a_liveSummons)
@@ -464,11 +489,13 @@ namespace scf::engine::movement
 		std::erase_if(s_applied, [&a_liveSummons](const auto& a_entry) {
 			return a_liveSummons.find(a_entry.first) == a_liveSummons.end();
 		});
+		leash::RetainOnly(a_liveSummons);
 	}
 
 	void ResetAll()
 	{
 		s_applied.clear();
+		leash::ResetAll();
 		logger::info("[Movement] Movement state reset.");
 	}
 }

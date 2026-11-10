@@ -103,6 +103,19 @@ namespace scf::core
 		return intent;
 	}
 
+	bool ReleasesFollowLeash(const SummonModel& a_model) noexcept
+	{
+		switch (a_model.order) {
+		case SummonOrder::MoveTo:
+			return a_model.hasMoveTarget;
+		case SummonOrder::Attack:
+		case SummonOrder::WaitGuard:
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	bool IsWithinArrivalRadius(const Vec3& a_actorPosition, const Vec3& a_destination, float a_radius) noexcept
 	{
 		const float dx = a_actorPosition.x - a_destination.x;

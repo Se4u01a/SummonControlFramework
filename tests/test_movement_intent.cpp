@@ -332,6 +332,24 @@ TEST(TestMoveToArrivalRadiusIsHorizontal)
 	CHECK(IsWithinArrivalRadius(summon, { 240.0f, 100.0f, 900.0f }));
 }
 
+// Given an order that keeps the summon away from the player (MoveTo point, Attack, Guard)
+// When the movement driver runs
+// Then the vanilla FollowTo leash is released; Follow / Return / a MoveTo without a
+// destination keep it.
+TEST(TestFollowLeashReleasedOnlyForAwayOrders)
+{
+	SummonModel model = OrderModel(SummonOrder::MoveTo);
+	model.hasMoveTarget = true;
+	CHECK(ReleasesFollowLeash(model));
+	model.hasMoveTarget = false;
+	CHECK(!ReleasesFollowLeash(model));
+
+	CHECK(ReleasesFollowLeash(OrderModel(SummonOrder::Attack)));
+	CHECK(ReleasesFollowLeash(OrderModel(SummonOrder::WaitGuard)));
+	CHECK(!ReleasesFollowLeash(OrderModel(SummonOrder::Follow)));
+	CHECK(!ReleasesFollowLeash(OrderModel(SummonOrder::Return)));
+}
+
 // ---------------------------------------------------------------------------
 // CombatPolicy: the "no second behaviour pattern" contract.
 // ---------------------------------------------------------------------------

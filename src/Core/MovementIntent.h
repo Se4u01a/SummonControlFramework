@@ -100,4 +100,10 @@ namespace scf::core
 
 	// True when the actor is close enough to a destination to consider the order done.
 	bool IsWithinArrivalRadius(const Vec3& a_actorPosition, const Vec3& a_destination, float a_radius = kMoveToArrivalRadius) noexcept;
+
+	// True for orders that need the summon away from the player, during which the
+	// vanilla FollowTo package's "stay within Min Radius of the caster" pull is released
+	// (src/Engine/FollowLeash.cpp): MoveTo with a destination, Attack, WaitGuard.
+	// Follow and Return keep the vanilla follow (it agrees with them).
+	bool ReleasesFollowLeash(const SummonModel& a_model) noexcept;
 }

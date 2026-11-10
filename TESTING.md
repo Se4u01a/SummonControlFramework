@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **109/109 тестов успешно пройдено (0 failures)**.
+Текущий результат: **110/110 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -111,7 +111,7 @@ xmake run scf_tests
 * `relationship_classifier_target_protection`: Проверяет селектор защиты целей в зависимости от настроек (`bProtectPlayerOwnedSummons`, `bProtectAlliedSummons`).
 * `relationship_classifier_evaluate_attack_matrix`: Проверяет матрицу решений: защита атак ближнего боя, стрел, магии, криков от игрока и союзников, при безусловном пропуске атак от врагов и нейтральных сущностей.
 
-### Suite M: Formation Geometry, Facing, Movement Intent & Combat Policy (`Formation`, `MovementIntent`, `CombatPolicy`) — 27 tests
+### Suite M: Formation Geometry, Facing, Movement Intent & Combat Policy (`Formation`, `MovementIntent`, `CombatPolicy`) — 28 tests
 * `TestFormationSlotOffsetsSitOnRadius`: Проверяет, что смещение любого слота строя лежит ровно на заданном радиусе (50..1000) и не имеет вертикального сдвига.
 * `TestFormationSlotsAreDistinct`: Проверяет непересечение слотов отряда: для 2..6 существ позиции разнесены более чем на 50 единиц.
 * `TestFormationDefaultSlotIsBehindOwner`: Проверяет, что одиночный сумон и замыкающий тройки стоят позади владельца.
@@ -138,6 +138,7 @@ xmake run scf_tests
 * `TestMovementIntentMoveToKeepsWorldDestination`: Ключевой тест: при смещении и повороте владельца пересчитанный offset всё равно указывает на ту же мировую точку.
 * `TestMovementIntentMoveToIgnoresStaleDestination`: Проверяет отмену `MoveTo` с точкой дальше 8000 единиц (осталась в другой ячейке после телепорта) — иначе получались абсурдные offset-цели из полевого лога.
 * `TestMovementIntentMoveToWithoutDestinationFallsBackToFollow`: Проверяет безопасный откат `MoveTo` без сохранённой точки в обычное следование.
+* `TestFollowLeashReleasedOnlyForAwayOrders`: поводок ванильного `FollowTo` отпускается только для `MoveTo` с точкой, `Attack` и `WaitGuard`; `Follow`/`Return`/`MoveTo` без точки его сохраняют.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
 ### Suite N: Target Pin (`TargetPin`) — 7 tests
@@ -176,7 +177,7 @@ xmake run scf_tests
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 109/109 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 110/110 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -266,6 +267,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-ORDER-11 (Focus overrides guard / move-to):** Поставить отряд в `Guard` (Numpad 5) или отправить `MoveTo` (Numpad 4), затем навестись на врага и нажать `Numpad 1`. В логе: `[Movement] ... Attack` не появляется как keep-offset (приказ `Attack` даёт `None`), но должен появиться `SetDontMove(false)` (если был guard), сумон бросается на цель; при смерти цели — `attack order finished (...) -> Follow`.
 * **[ ] TEST-ORDER-12 (MoveTo aim sources):** Нажатие `Numpad 4` при прицеле на землю пишет в лог `MoveTo destination from aim projection`, при прицеле на актора/ссылку — `from crosshair reference`, при попадании пика в объект — `from crosshair collision point`. Точка назначения при этом совпадает с тем, куда смотрит прицел.
 * **[ ] TEST-ORDER-13 (Crosshair diagnostics):** При промахе Focus (надпись `No target under crosshair`) в логе появляется строка `[Crosshair] FocusTarget: target=0x... targetActor=0x... ref=0x... point=(... , ... , ...)` — по ней видно, какое из полей прицела пустое.
+* **[ ] TEST-ORDER-15 (MoveTo without the follow pull):** `Numpad 4` в точку в 700–2000 ед.: суммон бежит до точки без остановок и разворотов к игроку, даже если игрок идёт в другую сторону; в логе `[Leash] ... follow leash RELEASED ... min 200 -> 100000` и затем `arrived at MoveTo point ... -> Guard`. После `Numpad 6` — `follow leash restored`.
 * **[ ] TEST-ORDER-14 (Stale MoveTo cancelled):** Отправить отряд в `MoveTo`, затем быстро сменить ячейку (дверь/быстрое перемещение/`coc`): в логе должно появиться `MoveTo destination is ... units from the owner (limit 8000); abandoned -> Follow`, а сумон не должен бежать к старой точке.
 
 ### 6.2. Внутриигровое меню FLICK Menu (FUCK.dll — клавиша F7)
@@ -298,6 +300,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-4 (Focus engages):** Навестись на врага и нажать `Numpad 1`: в логе `StartCombat(0x...) -> true (dist ..., hostile ..., inCombat yes)`, суммон подходит (`AttackApproach keep-offset ...`) и атакует. Если `StartCombat -> false` — пришлите строку целиком.
 * **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
 * **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
+* **[ ] TEST-COMBAT-12 (Focus on a far target):** Навестись на врага в 1500–2500 ед. и нажать `Numpad 1`: в логе `[Leash] ... follow leash RELEASED`, `AttackApproach keep-offset ... target=focus`; суммон бежит прямо к врагу (не возвращается к игроку), по дороге `re-engage StartCombat(...) -> true` и атакует. Приказ не должен сбрасываться (`combat never started`) раньше 15 с.
 * **[ ] TEST-COMBAT-8 (Target pin seat runs):** В первом же бою в логе должна появиться строка `[TargetPin] selector seat OBSERVED running`. После `Numpad 1` — `[TargetPin] Summon 0x... pinned to focus 0x...` и затем `engine picked handle ..., answered with focus ...`. Если вместо этого раз в 2 с идёт `not pinned this update (... membership absent)`, фокус не попал в цели боевой группы — пришлите эти строки и соседние `add-target StartCombat`.
 * **[ ] TEST-COMBAT-9 (Focus among several enemies):** В бою с 2–3 врагами навестись на дальнего и нажать `Numpad 1`: суммон бросает текущего противника и дерётся с назначенным до его смерти, не переключаясь, даже если другие бьют его.
 * **[ ] TEST-COMBAT-10 (Ranged summon keeps range):** С атронахом (огненным/грозовым) дать `Numpad 1` по врагу на расстоянии: атронах стреляет с дистанции, а не бежит вплотную (keep-offset `AttackApproach` снимается, как только движок воюет с фокусом).

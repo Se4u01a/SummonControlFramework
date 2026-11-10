@@ -122,6 +122,12 @@
   * Diagnostics: `StartCombat` result, target distance, hostility and combat flag are logged for every focus; a refused seat logs `[CombatGate] StartCombat refused`.
   * Covered by 7 new unit tests (CombatPolicy matrix + movement under forbidden combat).
   * **Field status:** build deployed, not yet re-tested in game.
+* **Follow leash release + focus-anchored approach — 2026-11-11 (field log 23:44–23:53):**
+  * Field report: Numpad 1 — summons do not attack; Numpad 4 — summons keep stopping and turning to the player instead of running to the point.
+  * Log evidence: no MoveTo in the session ever logged `arrived at MoveTo point` (points 358–1719 units away, 10–30 s each); the first Focus at 2142 units got `StartCombat -> false` and was dropped after 5 s; the second Focus entered combat (`answered with focus (engine already agreed)`, so the target pin works) but the wolf never closed the 1300–1600 units.
+  * Root cause (verified on the 1.5.97 image and Skyrim.esm): the summon's own runtime package is an instance of template `FollowTo` (00025E6D) built by id 36410 with `Min Radius = fSummonedCreatureMinFollowDist` (200); it keeps pulling the summon back to the player.
+  * Fix: `src/Engine/FollowLeash.{h,cpp}` releases that instance's Min/Max Radius (100000) during `MoveTo`/`Attack`/`WaitGuard` and restores the GMST values on `Follow`/`Return`; the focus approach is anchored on the target actor itself and handed to the combat AI only within 400 units; attack grace 15 s. 1 new test — **110/110 passing**.
+  * **Field status:** built and deployed to both MO2 instances, NOT tested in game (TEST-ORDER-15, TEST-COMBAT-12).
 * **Target Pin for FocusTarget (`CombatController` selectors) — 2026-11-10:**
   * Root cause of "Focus executed but ignored": the engine re-chooses a fighting actor's target on every `Actor::UpdateCombat` (`CombatController::UpdateTarget`, SE `+4FE300`, asks each `CombatTargetSelector` through vtable slot 6 and writes the first non-zero answer via `SetTarget`, `+4FDFE0`). SCF's main-thread writes to `CombatController::targetHandle` were overwritten on the next combat update (and raced the BSJobs combat workers).
   * New seat in `CombatGate`: chaining `write_vfunc` on slot 6 `SelectTarget` of `CombatTargetSelectorStandard` (SE vtable id 265605, function `+7B5E50`) and `CombatTargetSelectorFixed` (265607, `+7B6920`), verified on the unpacked 1.5.97 image. For a summon with a FocusTarget it answers with the focused actor when the engine holds a target, the focus is alive/loaded and it is a held (not `kTargetLost`) target of the summon's combat group (`core::ChooseSelectorAnswer`, `src/Core/TargetPin.{h,cpp}`).
@@ -130,7 +136,7 @@
   * No `CombatController` member is written from the main thread any more: `combat::BreakCombat` = `StopCombat()` + reset of the actor's `currentCombatTarget`.
   * `engine::ShareLoadedSpace` replaces `GetParentCell() ==` for focus validity and movement gating: neighbouring loaded exterior cells of one worldspace count as the same space (the old test dropped focus across a cell border and froze orders while the summon trailed one cell behind).
   * Covered by 7 unit tests in `tests/test_target_pin.cpp` — **109/109 tests passing**.
-  * **Field status:** built and deployed to both MO2 instances, NOT tested in game. First session must show `[TargetPin] selector seat OBSERVED running` (TEST-COMBAT-8…11 in `TESTING.md`).
+  * **Field status (session 2026-11-10 23:44):** the selector seat runs (`selector seat OBSERVED running`) and answered with the focus once combat started; the summon still did not attack because the vanilla follow leash dragged it back (fixed above).
 * **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
   * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
   * **Crosshair Target Pick & Move-To-Point (`RE::CrosshairPickData`):**
@@ -159,7 +165,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **109/109 test cases passing** (0 failures, execution time < 2 ms).
+  * **110/110 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
