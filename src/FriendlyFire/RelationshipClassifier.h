@@ -68,7 +68,14 @@ namespace scf::friendly_fire
 	{
 		bool blockDamage{ false };
 		bool passThrough{ false };
+		// Stop the victim from treating a friendly attacker as an aggressor (the engine's
+		// AIProcess aggressor bit). Independent of the damage toggles: a hit may keep its
+		// damage and still not start a fight.
 		bool suppressAggression{ false };
+		// Refuse a killmove / paired "finishing" animation on a protected summon.
+		bool suppressKillmove{ false };
+		// Suppress the victim's stagger / hit reaction for this hit.
+		bool suppressHitReaction{ false };
 	};
 
 	class RelationshipClassifier
@@ -106,6 +113,24 @@ namespace scf::friendly_fire
 		[[nodiscard]] static FilterDecision EvaluateAttack(
 			AttackSourceKind a_sourceKind,
 			AttackKind a_attackKind,
+			bool a_isTargetProtected,
+			const FriendlyFireSettings& a_settings) noexcept;
+
+		// Killmove admission (bSuppressFriendlyKillmoves). A killmove is not a damage
+		// kind: it is a paired animation the engine starts on a valid victim, so the
+		// answer must not depend on the damage toggles. Refused only for a source SCF
+		// already filters and a target that is a protected summon; hostile, neutral and
+		// unknown sources are never refused.
+		[[nodiscard]] static bool ShouldSuppressKillmove(
+			AttackSourceKind a_sourceKind,
+			bool a_isTargetProtected,
+			const FriendlyFireSettings& a_settings) noexcept;
+
+		// Hit reaction / stagger suppression (bSuppressFriendlyHitReactions). Same gate
+		// as the killmove rule and also independent of the damage toggles: a protected
+		// summon can still take the damage and not flinch.
+		[[nodiscard]] static bool ShouldSuppressHitReaction(
+			AttackSourceKind a_sourceKind,
 			bool a_isTargetProtected,
 			const FriendlyFireSettings& a_settings) noexcept;
 	};

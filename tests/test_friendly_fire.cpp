@@ -180,6 +180,8 @@ TEST(relationship_classifier_evaluate_attack_matrix)
 		CHECK(dec.blockDamage);
 		CHECK(dec.passThrough);
 		CHECK(dec.suppressAggression);
+		CHECK(dec.suppressKillmove);      // default on: no killmove on a protected summon
+		CHECK(!dec.suppressHitReaction);  // default off: the summon still flinches
 	}
 
 	// 2. Player attacking own summon with Arrow
@@ -216,6 +218,7 @@ TEST(relationship_classifier_evaluate_attack_matrix)
 		CHECK(!dec.blockDamage);
 		CHECK(!dec.passThrough);
 		CHECK(!dec.suppressAggression);
+		CHECK(!dec.suppressKillmove);    // enemies keep their killmoves
 	}
 
 	// 5. Unknown source attacking summon -> FAIL-SAFE: MUST NOT BE FILTERED!
@@ -273,4 +276,89 @@ TEST(relationship_classifier_magic_attack_kind)
 	CHECK(area.blockDamage);
 	const auto hostile = RelationshipClassifier::EvaluateAttack(AttackSourceKind::Hostile, AttackKind::AreaEffect, true, settings);
 	CHECK(!hostile.blockDamage);
+}
+
+// Given a protected player-owned summon
+// When the player's damage settings are all off but bSuppressFriendlyKillmoves is on
+// Then the killmove is still refused: a killmove is not a damage kind, so the damage
+// toggles must not be able to open it again.
+TEST(relationship_classifier_killmove_rule)
+{
+	FriendlyFireSettings settings{};
+
+	// Default: on, for every source SCF filters, on a protected target.
+	CHECK(RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, true, settings));
+	CHECK(RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::PlayerAlly, true, settings));
+	CHECK(RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::PlayerOwnedSummon, true, settings));
+	CHECK(RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::AlliedSummon, true, settings));
+
+	// The damage toggles do not gate it.
+	auto damageOff = settings;
+	damageOff.blockMeleeDamage = false;
+	damageOff.blockArrowDamage = false;
+	damageOff.meleePassThrough = false;
+	CHECK(RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, true, damageOff));
+
+	// Targets that are not ours, and sources we never filter.
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, false, settings));
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Hostile, true, settings));
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Unknown, true, settings));
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Neutral, true, settings));
+
+	// Per-source filter toggles are respected.
+	auto noPlayerFilter = settings;
+	noPlayerFilter.filterPlayerAttacks = false;
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, true, noPlayerFilter));
+	CHECK(RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::PlayerAlly, true, noPlayerFilter));
+
+	// The setting itself, and the master switch, turn it off.
+	auto settingOff = settings;
+	settingOff.suppressFriendlyKillmoves = false;
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, true, settingOff));
+
+	auto masterOff = settings;
+	masterOff.enabled = false;
+	CHECK(!RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, true, masterOff));
+
+	// And it stays consistent with the decision the damage seat computes.
+	const auto decision = RelationshipClassifier::EvaluateAttack(AttackSourceKind::Player, AttackKind::Melee, true, settings);
+	CHECK(decision.suppressKillmove == RelationshipClassifier::ShouldSuppressKillmove(AttackSourceKind::Player, true, settings));
+}
+
+// Given a protected summon
+// When bSuppressFriendlyHitReactions is enabled
+// Then only friendly hits are refused a reaction; an enemy hit still staggers the summon
+// (the default is off, so vanilla behaviour is unchanged unless asked for).
+TEST(relationship_classifier_hit_reaction_rule)
+{
+	FriendlyFireSettings defaults{};
+	CHECK(!defaults.suppressFriendlyHitReactions);
+	CHECK(!RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Player, true, defaults));
+
+	FriendlyFireSettings settings{};
+	settings.suppressFriendlyHitReactions = true;
+
+	CHECK(RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Player, true, settings));
+	CHECK(RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::PlayerAlly, true, settings));
+	CHECK(RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::PlayerOwnedSummon, true, settings));
+	CHECK(RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::AlliedSummon, true, settings));
+
+	// Fail-safe: never for an unfiltered source or a target that is not protected.
+	CHECK(!RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Hostile, true, settings));
+	CHECK(!RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Unknown, true, settings));
+	CHECK(!RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Player, false, settings));
+
+	auto masterOff = settings;
+	masterOff.enabled = false;
+	CHECK(!RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Player, true, masterOff));
+
+	// It is independent of damage blocking: a summon may take the hit and not flinch.
+	auto damageOff = settings;
+	damageOff.blockMeleeDamage = false;
+	CHECK(RelationshipClassifier::ShouldSuppressHitReaction(AttackSourceKind::Player, true, damageOff));
+
+	const auto decision = RelationshipClassifier::EvaluateAttack(AttackSourceKind::Player, AttackKind::Melee, true, settings);
+	CHECK(decision.suppressHitReaction);
+	CHECK(decision.suppressKillmove);
+	CHECK(decision.suppressAggression);
 }

@@ -139,6 +139,9 @@
   * Any actor with a keyword whose EditorID is `SCF_PassThroughFriends` (through its own side), `SCF_PassThroughAll` (through everyone) or `SCF_Untargetable` (enemies neither target nor block it) — on its base, race or an active magic effect. No SCF plugin file: mods define the KYWD themselves. Contract in README.
   * Collision/avoidance table now holds every loaded actor while the API is active; untargetable handled in the StartCombat seat, the target-selector seat and by ending fights that have no other target. Core rules: 7 tests — **138/138 passing**.
   * **Field status:** built and deployed, NOT tested in game (TEST-KW-1..5; needs a test plugin with the keywords).
+* **FF-Stage E: friendly killmoves, hit reactions, aggression — 2026-11-11 (DSH agent):**
+  * `KillmoveHook` (id 38048, 4 call sites) refuses a killmove on a protected summon by the player/allies/their summons; `HitReactionHook` (id 36700, 6 sites) refuses the stagger inside the friendly-hit window when `bSuppressFriendlyHitReactions` (off by default); `bSuppressFriendlyAggression` now clears the AIProcess aggressor bit (id 38185) — previously the flag was computed and never read. 2 tests.
+  * **Field status:** built and deployed, NOT tested in game (TEST-FF-KM-1, TEST-FF-HR-1).
 * **Stage 9: Papyrus API and reanimates — 2026-11-11:**
   * `scripts/Source/SCF.psc` + `src/Integrations/Papyrus.{h,cpp}`: `SCF.RegisterSummon / UnregisterSummon / IsRegistered / GetSummons / GetSummonCount` (class `SCF`, global natives, not callable from tasklets), registered from `SKSEPluginLoad`. Owner policy: the player only; no owner argument means the player.
   * `SummonRegistry`: `explicitRegistration` (survives the 15 Hz refresh), `IsRosterIndependent`, `GetOrphanedSummons`; `explicit`/`Reanimate` records are outside the owner's conjuration limit — they never consume a slot and are never displaced.

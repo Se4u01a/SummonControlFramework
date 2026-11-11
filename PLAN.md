@@ -1124,7 +1124,7 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [ ] Исследовать и реализовать защиту от player-cast hostile magic по архитектуре NOFF (MagicTarget::AddTarget, ValueModifierEffect).
 - [ ] Отдельно протестировать concentration, explosion/AoE, shouts, staves и enchantments.
 - [ ] Не блокировать non-hostile magic effects (healing, buffs) без явной настройки.
-- [ ] Предотвратить нежелательную hostility/агрессию без глобального подавления всех TESHitEvent.
+- [x] **[РЕАЛИЗОВАНО 2026-11-11, ждёт полевого теста]** Предотвратить нежелательную hostility/агрессию без глобального подавления всех TESHitEvent: `bSuppressFriendlyAggression` раньше только вычислялся; теперь `HitHook` после дружественного удара снимает бит агрессора `AIProcess+0x136` (setter id 38185, байты проверяются). Достаточность этого против боевой петли — гипотеза до поля.
 
 #### FF-Stage C — True Melee Pass-Through
 - [ ] Проверить, продолжает ли vanilla melee/sweep обработку следующих целей после пропуска дружественного актора.
@@ -1142,8 +1142,8 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [ ] Не менять глобальные collision layers без доказательства безопасности для врагов, окружения и других модов.
 
 #### FF-Stage E — Reactions, Compatibility и Settings
-- [ ] Решить отдельно, нужно ли подавлять hit reactions и stagger (SuppressFriendlyHitReactions).
-- [ ] Предотвратить killmove по защищенным призывам (SuppressFriendlyKillmoves).
+- [x] **[РЕШЕНО 2026-11-11]** Подавление hit reactions и stagger — опционально, `bSuppressFriendlyHitReactions` (по умолчанию выкл.): `HitReactionHook` отказывает в стаггере (id 36700, 6 мест вызова) только внутри окна дружественного удара, плюс обнуление `HitData::stagger/pushBack`. Ждёт полевого теста.
+- [x] **[РЕАЛИЗОВАНО 2026-11-11, ждёт полевого теста]** Предотвратить killmove по защищённым призывам (`bSuppressFriendlyKillmoves`): `KillmoveHook` отказывает функции начала killmove (id 38048, 4 места вызова, вход не трогается), если жертва защищена, а источник — игрок/союзник/их призывы.
 - [ ] Проверить friendly-fire цепочки между summons/followers союзников.
 - [ ] Добавить полную сериализацию и валидацию секции [FriendlyFire] в Settings.
 - [ ] При наличии MCM-инфраструктуры вывести основные настройки в меню.

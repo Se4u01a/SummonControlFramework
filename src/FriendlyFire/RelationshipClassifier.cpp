@@ -4,6 +4,32 @@
 
 namespace scf::friendly_fire
 {
+	namespace
+	{
+		// The "is this attack source ours to filter at all" gate, shared by the damage
+		// matrix and the reaction rules (killmove, hit reaction). Hostile, neutral and
+		// unknown sources are NEVER filtered: an unrecognised attacker must keep every
+		// effect it has in vanilla.
+		[[nodiscard]] bool IsFilteredSource(AttackSourceKind a_sourceKind, const FriendlyFireSettings& a_settings) noexcept
+		{
+			switch (a_sourceKind) {
+			case AttackSourceKind::Player:
+				return a_settings.filterPlayerAttacks;
+			case AttackSourceKind::PlayerAlly:
+				return a_settings.filterPlayerAllies;
+			case AttackSourceKind::PlayerOwnedSummon:
+				return a_settings.filterPlayerOwnedSummons;
+			case AttackSourceKind::AlliedSummon:
+				return a_settings.filterAlliedSummons;
+			case AttackSourceKind::Neutral:
+			case AttackSourceKind::Hostile:
+			case AttackSourceKind::Unknown:
+			default:
+				return false;
+			}
+		}
+	}
+
 	AttackSourceKind RelationshipClassifier::ClassifySource(
 		core::EntityID a_sourceId,
 		const core::SummonRegistry& a_registry,
@@ -136,28 +162,7 @@ namespace scf::friendly_fire
 		}
 
 		// Verify whether the source is configured to be filtered
-		bool shouldFilterSource = false;
-		switch (a_sourceKind) {
-		case AttackSourceKind::Player:
-			shouldFilterSource = a_settings.filterPlayerAttacks;
-			break;
-		case AttackSourceKind::PlayerAlly:
-			shouldFilterSource = a_settings.filterPlayerAllies;
-			break;
-		case AttackSourceKind::PlayerOwnedSummon:
-			shouldFilterSource = a_settings.filterPlayerOwnedSummons;
-			break;
-		case AttackSourceKind::AlliedSummon:
-			shouldFilterSource = a_settings.filterAlliedSummons;
-			break;
-		case AttackSourceKind::Neutral:
-		case AttackSourceKind::Hostile:
-		case AttackSourceKind::Unknown:
-		default:
-			// Safety Gate: NEVER filter hostile, neutral, or unknown attacks!
-			shouldFilterSource = false;
-			break;
-		}
+		const bool shouldFilterSource = IsFilteredSource(a_sourceKind, a_settings);
 
 		if (!shouldFilterSource) {
 			return decision;
@@ -215,6 +220,33 @@ namespace scf::friendly_fire
 		// 3. Hostility suppression
 		decision.suppressAggression = a_settings.suppressFriendlyAggression;
 
+		// 4. Reactions. Both are independent of the damage toggles above: a hit can keep
+		// its damage and still not start a fight, flinch or open a killmove.
+		decision.suppressKillmove = a_settings.suppressFriendlyKillmoves;
+		decision.suppressHitReaction = a_settings.suppressFriendlyHitReactions;
+
 		return decision;
+	}
+
+	bool RelationshipClassifier::ShouldSuppressKillmove(
+		AttackSourceKind a_sourceKind,
+		bool a_isTargetProtected,
+		const FriendlyFireSettings& a_settings) noexcept
+	{
+		if (!a_settings.enabled || !a_settings.suppressFriendlyKillmoves || !a_isTargetProtected) {
+			return false;
+		}
+		return IsFilteredSource(a_sourceKind, a_settings);
+	}
+
+	bool RelationshipClassifier::ShouldSuppressHitReaction(
+		AttackSourceKind a_sourceKind,
+		bool a_isTargetProtected,
+		const FriendlyFireSettings& a_settings) noexcept
+	{
+		if (!a_settings.enabled || !a_settings.suppressFriendlyHitReactions || !a_isTargetProtected) {
+			return false;
+		}
+		return IsFilteredSource(a_sourceKind, a_settings);
 	}
 }

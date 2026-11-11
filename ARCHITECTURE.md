@@ -345,7 +345,8 @@ src/FriendlyFire/
 ├── MagicFilter.h/.cpp             // Прямые заклинания, concentration, staves, shouts
 ├── ExplosionFilter.h/.cpp         // Исключение призыва из списков поражения AoE
 ├── HostilityFilter.h/.cpp         // Подавление дружественных петель враждебности
-└── HitReactionFilter.h/.cpp       // Контроль stagger, recoil и killmoves
+├── HitReactionHook.h/.cpp         // Стаггер от дружественного удара (окно Arm/Disarm из HitHook)
+└── KillmoveHook.h/.cpp            // Отказ killmove по защищённому призыву
 
 src/Integrations/
 └── PrecisionBackend.h/.cpp        // Интеграция с PrecisionAPI (PreHitCallback)
@@ -687,6 +688,13 @@ Thunk читает `CombatPolicy`, опубликованную главным �
 * **M5 лимит призывов:** seat `engine::summonlimit` (`src/Engine/SummonLimit.*`) — call-site у id 38993 + 0xA1 (`+683E11`, вызов `BGSEntryPoint::HandleEntryPoint` для точки 68 `kModCommandedActorLimit`; аргументы ecx = 68, rdx = кастер, r8 = заклинание, r9 = `float*` со значением `iMaxSummonedCreatures`). Thunk вызывает оригинал и для игрока поднимает значение (`core::ApplyPlayerSummonLimit`); движок дальше сам округляет и снимает лишних. Настройка `[General] uPlayerSummonLimit` (0..32) публикуется каждый тик. Лимит учёта реестра SCF = `core::TrackingCapacity(uMaxSummonsPerOwner, живые в commandedActors)`.
 * **M4 постоянные призывы:** чистое состояние слотов `core::PersistenceState` (Alive / Dead / Reviving, правило «никто не умирал за N с», резерв, кодек co-save) и адаптер `engine::persistence` (`src/Engine/Persistence.*`). Вызовы: `Install()` в `SKSEPluginLoad` (co-save callbacks, unique id `SCF4`), `OnSummonDied` / `OnSummonRemoved` и `Tick` в `UpdateHook::InternalSyncPlayerSummons`, `Reset` в `update::Reset`. Чёрный список `sBlacklistedSpells` разрешается в FormID в `Messaging::ApplyLoadedSettings` (после загрузки INI; при «Reload INI» в FLICK — только после перезапуска). Продление — запись `duration` / `elapsedSeconds` живого `ActiveEffect`; резерв — `kPermanent` модификатор `Magicka`.
 * **M6 панель:** `integrations::MinionPanel` (`src/Integrations/MinionPanel.*`, FLICK `IWindow`), чистое форматирование `core::MinionPanelModel`. `PublishSnapshot` — в конце тика (главный поток: реестр, `LookupByID`, здоровье, кулдаун из `actions::CooldownRemaining`), `ClearSnapshot` — в `update::Reset`, `Install` + `Configure` — в `Messaging` после FlickMenu. Настройки `[MinionPanel]`, клавиша `[Hotkeys] uMinionPanelToggleKey`.
+
+### 21.14. Killmove, реакция на удар и агрессия (FF-Stage E, 2026-11-11)
+* **Правило:** `RelationshipClassifier::ShouldSuppressKillmove / ShouldSuppressHitReaction` (чистые, в `FilterDecision`); источник hostile/neutral/unknown никогда не подавляется; killmove — не вид урона и не зависит от `Block*Damage`.
+* **Killmove:** `src/FriendlyFire/KillmoveHook.*` — на SE 1.5.97 патчатся все 4 прямых места вызова функции начала killmove (id 38048, `+63D0F0`; внутри два `call Actor::SetKillMove` id 37659, проверяются байтами). Запрос: `[req+0x08]` исполнитель, `[req+0x10]` жертва (только ACHR). Отказ = функция не вызывается: нет флага killmove, `myKiller`, killcam и парной анимации.
+* **Реакция на удар:** `src/FriendlyFire/HitReactionHook.*` — 6 мест вызова функции применения стаггера (id 36700, `+5FA1B0`, 5 × `E8` + 1 × `E9`). Атакующий туда не передаётся, поэтому `HitHook` взводит thread-local окно `ArmFor(victim)` на время синхронного `ProcessHit` и снимает его `Disarm()`; вне окна хук ничего не меняет.
+* **Агрессия:** `HitHook` после применения дружественного удара вызывает движковый `AIProcess::SetAggressor(false)` (id 38185, `+644300`, байты проверяются; бит `+0x136 & 4`).
+* Оба места ищутся сканом `.text` и принимаются только при точном числе проверенных мест (4 и 6), иначе установка отказывается — случайное совпадение rel32 не может пропатчить чужой код. Другие рантаймы: лог и отказ.
 
 ### 21.8. «Одно загруженное пространство» вместо «одна ячейка»
 `engine::ShareLoadedSpace` (`src/Engine/ActorSpace.h`): та же ячейка, либо две загруженные внешние ячейки одного worldspace. Сравнение `GetParentCell() ==` снаружи ошибочно: сетка загруженных ячеек шире одной, и суммон, идущий за игроком через границу ячейки, или враг в соседней ячейке полностью загружены и обрабатываются. Старое сравнение сбрасывало фокус, как только враг стоял через границу, и останавливало все приказы движения, пока суммон отставал на ячейку. Аварийный warp по-прежнему только внутри одной ячейки (запись позиции не меняет родительскую ячейку).

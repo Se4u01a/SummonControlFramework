@@ -11,6 +11,8 @@
 #include "Engine/InputHandler.h"
 #include "Engine/UpdateHook.h"
 #include "FriendlyFire/HitHook.h"
+#include "FriendlyFire/HitReactionHook.h"
+#include "FriendlyFire/KillmoveHook.h"
 #include "FriendlyFire/MagicHook.h"
 #include "FriendlyFire/ProjectileHook.h"
 #include "Integrations/FlickMenu.h"
@@ -141,6 +143,8 @@ namespace scf::plugin
 			engine::summonlimit::Publish(core::FrameworkContext::GetSingleton().GetSettings().Get().general.playerSummonLimit);
 			engine::update::Install();
 			friendly_fire::HitHook::Install();
+			friendly_fire::KillmoveHook::Install();
+			friendly_fire::HitReactionHook::Install();
 			friendly_fire::MagicHook::Install();
 			friendly_fire::ProjectileHook::Install();
 			integrations::PrecisionBackend::Initialize();
