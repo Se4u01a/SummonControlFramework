@@ -128,9 +128,12 @@
   * Follow-up: pairs Havok accepted before the table knew both actors keep colliding while they overlap. Every publish now re-filters the existing pairs of new / regrouped / removed actors through `bhkWorld::UpdateCollisionFilter` (id 76091) (`core::RowsToRefilter`, 3 tests — **125/125 passing**).
   * Field (screenshot): wolves still pile into a column; re-filter ran (26 bodies). Same rule added on the shape-collection (id 76677) and ray-collidable (id 76679) filter slots (controller ray vs partner controller only), plus `diag:` log lines naming what our controllers still touch (1 test — **126/126 passing**).
   * **Field status:** built and deployed, NOT tested in game (TEST-PASS-4).
+* **PoE2 M5: engine summon limit for the player — 2026-11-11:**
+  * Disassembled on SE 1.5.97: id 38993 (+683D70) adds a commanded actor using `iMaxSummonedCreatures` modified by perk entry point 68 (single call at +683E11), then dispels the oldest. SCF hooks that call and raises the player's value to `[General] uPlayerSummonLimit` (0 = vanilla; FLICK slider). SCF registry cap now follows the engine roster, fixing the undone-displacement defect. 2 tests — **195/195 passing**.
+  * **Field status:** built and deployed, NOT tested in game (TEST-M5-2).
 * **PoE2 M1 / M4 / M5 / M6 by a DSH agent team — 2026-11-11:**
   * M1 follow paces (walk/run/sprint via SpeedMult) and stuck/far recall; M4 persistent summons, Magicka reserve, auto-revive, co-save (off by default); M5 formation rings for 6–10 summons + engine-limit research (no hook yet); M6 minion HUD panel via FLICK (hidden by default). Integration, settings (`[Persistence]`, `[MinionPanel]`, new `[Movement]/[Recovery]/[Squad]/[Hotkeys]` keys) and FLICK entries by the lead. **193/193 passing**, full rebuild clean.
-  * Not done: raising the engine summon limit (next: disassemble entry point 68), FPS measurements, panel subgroup selection, M7. Known defect: the SCF registry's displacement under `uMaxSummonsPerOwner` is undone on the next tick.
+  * Not done: FPS measurements, panel subgroup selection, M7. (Engine limit and the registry displacement defect: fixed in the entry above.)
   * **Field status:** built and deployed, NOT tested in game (TEST-M1-1, TEST-M4-1..3, TEST-M5-1, TEST-M6-1).
 * **Keyword API: collision and untargetable — 2026-11-11:**
   * Any actor with a keyword whose EditorID is `SCF_PassThroughFriends` (through its own side), `SCF_PassThroughAll` (through everyone) or `SCF_Untargetable` (enemies neither target nor block it) — on its base, race or an active magic effect. No SCF plugin file: mods define the KYWD themselves. Contract in README.
@@ -204,7 +207,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **193/193 test cases passing** (0 failures, execution time < 2 ms).
+  * **195/195 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

@@ -313,6 +313,7 @@ namespace scf::core
 		clampFloat(_data.recovery.stuckWarpSeconds, 0.0f, 60.0f);
 		clampFloat(_data.recovery.stuckWarpMinDistance, 0.0f, 5000.0f);
 		_data.squad.formationRingCapacity = std::clamp<std::size_t>(_data.squad.formationRingCapacity, 1, 32);
+		_data.general.playerSummonLimit = std::min<std::uint32_t>(_data.general.playerSummonLimit, 32);
 		clampFloat(_data.squad.formationInnerRingScale, 0.1f, 1.0f);
 		clampFloat(_data.squad.formationMinSlotDistance, 0.0f, 500.0f);
 		clampFloat(_data.squad.formationMaxExpansion, 1.0f, 10.0f);
@@ -358,6 +359,8 @@ namespace scf::core
 					_data.general.enabled = ParseBool(val, _data.general.enabled);
 				} else if (key == "loglevel" || key == "sloglevel") {
 					_data.general.logLevel = ParseString(val, _data.general.logLevel);
+				} else if (key == "playersummonlimit" || key == "uplayersummonlimit") {
+					_data.general.playerSummonLimit = ParseUInt32(val, _data.general.playerSummonLimit);
 				} else if (key == "maxsummonsperowner" || key == "umaxsummonsperowner") {
 					_data.general.maxSummonsPerOwner = ParseSizeT(val, _data.general.maxSummonsPerOwner);
 				}
@@ -630,7 +633,9 @@ namespace scf::core
 		out << "[General]\n";
 		out << "bEnabled = " << (_data.general.enabled ? "true" : "false") << "\n";
 		out << "sLogLevel = " << _data.general.logLevel << "\n";
-		out << "uMaxSummonsPerOwner = " << _data.general.maxSummonsPerOwner << "\n\n";
+		out << "uMaxSummonsPerOwner = " << _data.general.maxSummonsPerOwner << "\n";
+		out << "; How many summons the player may command at once (0 = vanilla: iMaxSummonedCreatures + perks such as Twin Souls)\n";
+		out << "uPlayerSummonLimit = " << _data.general.playerSummonLimit << "\n\n";
 
 		out << "[Collision]\n";
 		out << "bEnableCollisionBypass = " << (_data.collision.enableCollisionBypass ? "true" : "false") << "\n";

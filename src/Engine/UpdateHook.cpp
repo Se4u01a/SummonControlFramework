@@ -10,6 +10,8 @@
 #include "Engine/KeywordApi.h"
 #include "Engine/PassThrough.h"
 #include "Engine/Persistence.h"
+#include "Engine/SummonLimit.h"
+#include "Core/SummonLimit.h"
 #include "Integrations/MinionPanel.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
@@ -182,6 +184,21 @@ namespace scf::engine::update
 			const auto& commanded = currentProcess->middleHigh->commandedActors;
 			std::unordered_set<core::EntityID> currentEngineSummons;
 			std::unordered_map<core::EntityID, RE::Actor*> liveActors;
+
+			// PoE2 M5: the engine limit for the player (seat in engine::summonlimit), and SCF's
+			// tracking cap: never below what the engine keeps, so the registry cannot
+			// "displace" a summon the engine still commands (the displacement used to be
+			// undone on the next tick anyway, when RegisterSummon refreshed the record).
+			{
+				const auto& general = ctx.GetSettings().Get().general;
+				summonlimit::Publish(general.playerSummonLimit);
+				std::size_t rosterSize = 0;
+				for (const auto& data : commanded) {
+					const auto actor = data.commandedActor.get();
+					rosterSize += (actor && !actor->IsDead()) ? 1 : 0;
+				}
+				registry.SetOwnerMaxSummons(ownerId, core::TrackingCapacity(general.maxSummonsPerOwner, rosterSize));
+			}
 
 			// 1. Sync engine commanded actors with SummonRegistry
 			for (const auto& data : commanded) {

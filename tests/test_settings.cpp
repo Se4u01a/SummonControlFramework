@@ -50,6 +50,7 @@ TEST(settings_default_values)
 	CHECK(data.hotkeys.followKey == 0x4D);
 	CHECK(data.hotkeys.commandActionKey == 0x47);
 	CHECK(data.hotkeys.minionPanelToggleKey == 0);
+	CHECK(data.general.playerSummonLimit == 0);
 	CHECK(data.movement.sprintDistance == 1200.0f);
 	CHECK(data.recovery.stuckWarpSeconds == 3.0f);
 	CHECK(data.squad.formationRingCapacity == 6);
@@ -64,6 +65,7 @@ TEST(settings_poe2_sections_round_trip)
 {
 	scf::core::Settings settings;
 	CHECK(settings.LoadFromString(
+		"[General]\nuPlayerSummonLimit = 64\n"
 		"[Movement]\nfSprintDistance = 900\nfSprintSpeed = 999\n"
 		"[Recovery]\nfStuckWarpSeconds = 4\n"
 		"[Squad]\nuFormationRingCapacity = 5\n"
@@ -72,6 +74,7 @@ TEST(settings_poe2_sections_round_trip)
 		"sBlacklistedSpells = Skyrim.esm|0x000640B6\n"
 		"[MinionPanel]\nbShowMinionPanel = true\nfMinionPanelX = 77\n"));
 	const auto& data = settings.Get();
+	CHECK(data.general.playerSummonLimit == 32);
 	CHECK(data.movement.sprintDistance == 900.0f);
 	CHECK(data.movement.sprintSpeed == 500.0f);
 	CHECK(data.recovery.stuckWarpSeconds == 4.0f);

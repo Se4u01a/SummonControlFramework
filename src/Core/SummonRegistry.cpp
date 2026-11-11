@@ -8,6 +8,11 @@ namespace scf::core
 {
 	void SummonRegistry::SetOwnerMaxSummons(EntityID a_ownerId, std::size_t a_max)
 	{
+		// Called every tactical tick (the cap follows the engine roster): log changes only.
+		const auto it = _ownerMaxSummons.find(a_ownerId);
+		if (it != _ownerMaxSummons.end() && it->second == a_max) {
+			return;
+		}
 		_ownerMaxSummons[a_ownerId] = a_max;
 		if (_logCallback) {
 			char logBuf[256];

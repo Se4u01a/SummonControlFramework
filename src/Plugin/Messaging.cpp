@@ -6,6 +6,7 @@
 #include "Engine/KeywordApi.h"
 #include "Engine/FollowLeash.h"
 #include "Engine/PassThrough.h"
+#include "Engine/SummonLimit.h"
 #include "Engine/EventAdapter.h"
 #include "Engine/InputHandler.h"
 #include "Engine/UpdateHook.h"
@@ -136,6 +137,8 @@ namespace scf::plugin
 			engine::combat::Install();
 			engine::leash::Install();
 			engine::passthrough::Install();
+			engine::summonlimit::Install();
+			engine::summonlimit::Publish(core::FrameworkContext::GetSingleton().GetSettings().Get().general.playerSummonLimit);
 			engine::update::Install();
 			friendly_fire::HitHook::Install();
 			friendly_fire::MagicHook::Install();

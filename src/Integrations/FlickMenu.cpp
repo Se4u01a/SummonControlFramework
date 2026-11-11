@@ -150,6 +150,13 @@ namespace scf::integrations
 
 				// --- PoE2 minions: follow paces, persistence, panel ---
 				FUCK::SeparatorText("PoE2 Minions");
+				{
+					int limit = static_cast<int>(data.general.playerSummonLimit);
+					if (FUCK::SliderInt("Player Summon Limit", &limit, 0, 32, limit == 0 ? "vanilla" : "%d")) {
+						data.general.playerSummonLimit = static_cast<std::uint32_t>(limit);
+					}
+					if (FUCK::IsItemHovered()) FUCK::SetTooltip("How many summons you may command at once (0 = vanilla: 1, Twin Souls 2). Applies to the next summon cast.");
+				}
 				FUCK::SliderFloat("Sprint Distance", &data.movement.sprintDistance, 400.0f, 5000.0f, "%.0f");
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("A following summon lagging further than this behind its slot sprints");
 

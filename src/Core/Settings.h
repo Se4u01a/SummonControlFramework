@@ -16,7 +16,8 @@ namespace scf::core
 	{
 		bool enabled{ true };
 		std::string logLevel{ "info" };
-		std::size_t maxSummonsPerOwner{ 1 };
+		std::size_t maxSummonsPerOwner{ 1 };       // SCF tracking floor; never below the engine roster
+		std::uint32_t playerSummonLimit{ 0 };     // PoE2 M5: engine limit for the player, 0 = vanilla perks
 	};
 
 	struct CollisionSettings

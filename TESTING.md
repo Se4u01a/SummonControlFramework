@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **193/193 тестов успешно пройдено (0 failures)**.
+Текущий результат: **195/195 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -148,7 +148,8 @@ xmake run scf_tests
 * `tests/test_formation.cpp` (15): для 1..10 призывов слоты уникальны и не ближе минимума, 1–4 совпадают с прежней раскладкой, слоты 0–5 не двигаются при росте отряда, детерминированность, вырожденные настройки.
 * `tests/test_persistence.cpp` (17): таймер возрождения, правило недавней смерти, отмена при выключении/отзыве, таймаут каста и лимит попыток, резерв, восстановление слота и приказа, `ShouldTrackSummonSpell` (мод-заклинания по умолчанию, vanilla-only, чёрный список), round-trip кодека и отказ на битых данных.
 * `tests/test_minion_panel.cpp` (12): цвет и формат здоровья, статус, заголовок, кулдаун, длительность, видимость ушедших записей, сортировка.
-* `tests/test_settings.cpp` (+1): новые секции INI читаются, пишутся и ограничиваются.
+* `tests/test_settings.cpp` (+1): новые секции INI читаются, пишутся и ограничиваются (в т.ч. `uPlayerSummonLimit` ≤ 32).
+* `tests/test_summon_limit.cpp` (2): лимит игрока поднимается до настройки, но не ниже перков; NaN/inf безопасны; лимит учёта SCF не ниже росписи движка.
 
 ### Suite R: Keyword API (`KeywordApi`) — 7 tests
 Файл `tests/test_keyword_api.cpp`.
@@ -224,7 +225,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 193/193 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 195/195 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -355,6 +356,7 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-M4-1 (Persistent):** `bPersistentSummons = true` (FLICK «Persistent Summons»): призыв не исчезает по таймеру > 10 мин (`is now persistent`), максимум магии уменьшен на резерв (`max Magicka reserve`).
 * **[ ] TEST-M4-2 (Revive):** убить постоянного призыва — через ~7 с он появляется снова тем же заклинанием, с прежним приказом (`re-cast summon spell`, `revived from spell`, `order ... restored`); две смерти подряд — второй ждёт окно недавней смерти.
 * **[ ] TEST-M4-3 (Save/Load):** сохранить с постоянными призывами, загрузить: `co-save loaded`, слоты и резерв на месте; выключить режим — резерв снят.
+* **[ ] TEST-M5-2 (Engine limit):** `uPlayerSummonLimit = 6` (FLICK «Player Summon Limit»): шесть кастов призыва подряд — все шесть остаются (`[SummonLimit] player summon limit raised: perks give 1 ...`), седьмой снимает самого старого; `0` — снова ванильный лимит; NPC-призыватели не меняются. В логе нет `Displacing oldest summon` от реестра SCF.
 * **[ ] TEST-M5-1 (Rings):** 6+ призывов (если лимит позволяет) стоят двумя кольцами за спиной без наложения; 1–4 — как раньше.
 * **[ ] TEST-M6-1 (Panel):** FLICK «Show Minion Panel» или клавиша: панель с именами, здоровьем, приказом, целью, кулдауном команды обновляется в бою, не перехватывает мышь/клавиши, скрывается в меню.
 * **[ ] TEST-KW-1 (API idle):** без плагина с кейвордами в логе `[KeywordApi] 0 API keyword record(s) found ... idle`; поведение как раньше.
