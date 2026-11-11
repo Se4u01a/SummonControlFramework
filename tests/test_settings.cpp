@@ -53,6 +53,9 @@ TEST(settings_default_values)
 	CHECK(data.general.playerSummonLimit == 0);
 	CHECK(data.movement.sprintDistance == 1200.0f);
 	CHECK(data.recovery.stuckWarpSeconds == 3.0f);
+	CHECK(data.recovery.catchUpCooldownSeconds == 5.0f);
+	CHECK(!data.recovery.catchUpWarpSummonCombat);
+	CHECK(!data.recovery.catchUpWarpOwnerCombat);
 	CHECK(data.squad.formationRingCapacity == 6);
 	CHECK(!data.persistence.persistentSummons);
 	CHECK(!data.minionPanel.enabled);

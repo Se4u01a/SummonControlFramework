@@ -312,6 +312,7 @@ namespace scf::core
 		clampFloat(_data.movement.sprintDistance, 100.0f, 20000.0f);
 		clampFloat(_data.recovery.stuckWarpSeconds, 0.0f, 60.0f);
 		clampFloat(_data.recovery.stuckWarpMinDistance, 0.0f, 5000.0f);
+		clampFloat(_data.recovery.catchUpCooldownSeconds, 0.0f, 60.0f);
 		_data.squad.formationRingCapacity = std::clamp<std::size_t>(_data.squad.formationRingCapacity, 1, 32);
 		_data.general.playerSummonLimit = std::min<std::uint32_t>(_data.general.playerSummonLimit, 32);
 		clampFloat(_data.squad.formationInnerRingScale, 0.1f, 1.0f);
@@ -423,6 +424,12 @@ namespace scf::core
 					_data.recovery.stuckWarpSeconds = ParseFloat(val, _data.recovery.stuckWarpSeconds);
 				} else if (key == "stuckwarpmindistance" || key == "fstuckwarpmindistance") {
 					_data.recovery.stuckWarpMinDistance = ParseFloat(val, _data.recovery.stuckWarpMinDistance);
+				} else if (key == "catchupcooldownseconds" || key == "fcatchupcooldownseconds") {
+					_data.recovery.catchUpCooldownSeconds = ParseFloat(val, _data.recovery.catchUpCooldownSeconds);
+				} else if (key == "catchupwarpsummoncombat" || key == "bcatchupwarpsummoncombat") {
+					_data.recovery.catchUpWarpSummonCombat = ParseBool(val, _data.recovery.catchUpWarpSummonCombat);
+				} else if (key == "catchupwarpownercombat" || key == "bcatchupwarpownercombat") {
+					_data.recovery.catchUpWarpOwnerCombat = ParseBool(val, _data.recovery.catchUpWarpOwnerCombat);
 				}
 			} else if (currentSection == "squad") {
 				if (key == "maxmeleeslotspertarget" || key == "umaxmeleeslotspertarget") {
@@ -677,7 +684,11 @@ namespace scf::core
 		out << "fCatchUpDistance = " << _data.recovery.catchUpDistance << "\n";
 		out << "; Recall behind the player after this many seconds without progress (while still lagging)\n";
 		out << "fStuckWarpSeconds = " << _data.recovery.stuckWarpSeconds << "\n";
-		out << "fStuckWarpMinDistance = " << _data.recovery.stuckWarpMinDistance << "\n\n";
+		out << "fStuckWarpMinDistance = " << _data.recovery.stuckWarpMinDistance << "\n";
+		out << "; Pause after every recall attempt; the recall is refused in combat unless allowed below\n";
+		out << "fCatchUpCooldownSeconds = " << _data.recovery.catchUpCooldownSeconds << "\n";
+		out << "bCatchUpWarpSummonCombat = " << (_data.recovery.catchUpWarpSummonCombat ? "true" : "false") << "\n";
+		out << "bCatchUpWarpOwnerCombat = " << (_data.recovery.catchUpWarpOwnerCombat ? "true" : "false") << "\n\n";
 
 		out << "[Squad]\n";
 		out << "uMaxMeleeSlotsPerTarget = " << _data.squad.maxMeleeSlotsPerTarget << "\n";

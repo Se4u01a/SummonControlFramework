@@ -142,6 +142,9 @@
 * **FF-Stage E: friendly killmoves, hit reactions, aggression — 2026-11-11 (DSH agent):**
   * `KillmoveHook` (id 38048, 4 call sites) refuses a killmove on a protected summon by the player/allies/their summons; `HitReactionHook` (id 36700, 6 sites) refuses the stagger inside the friendly-hit window when `bSuppressFriendlyHitReactions` (off by default); `bSuppressFriendlyAggression` now clears the AIProcess aggressor bit (id 38185) — previously the flag was computed and never read. 2 tests.
   * **Field status:** built and deployed, NOT tested in game (TEST-FF-KM-1, TEST-FF-HR-1).
+* **Stage 7: catch-up / warp hardening — 2026-11-11 (DSH agent):**
+  * Pure rules in `src/Core/CatchUp.*`: distance or no-progress triggers, hysteresis, `fCatchUpCooldownSeconds`, combat / space / airborne-swimming-mounted refusals, landing candidates behind the player checked by ray casts; one `SetPosition` + navmesh snap per event; per-reason statistics. New INI keys `fCatchUpCooldownSeconds`, `bCatchUpWarpSummonCombat`, `bCatchUpWarpOwnerCombat` (FLICK). 27 catch-up tests.
+  * **Field status:** built and deployed, NOT tested in game (TEST-CU-1).
 * **Stage 9: Papyrus API and reanimates — 2026-11-11:**
   * `scripts/Source/SCF.psc` + `src/Integrations/Papyrus.{h,cpp}`: `SCF.RegisterSummon / UnregisterSummon / IsRegistered / GetSummons / GetSummonCount` (class `SCF`, global natives, not callable from tasklets), registered from `SKSEPluginLoad`. Owner policy: the player only; no owner argument means the player.
   * `SummonRegistry`: `explicitRegistration` (survives the 15 Hz refresh), `IsRosterIndependent`, `GetOrphanedSummons`; `explicit`/`Reanimate` records are outside the owner's conjuration limit — they never consume a slot and are never displaced.

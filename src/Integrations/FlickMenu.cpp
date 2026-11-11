@@ -165,6 +165,10 @@ namespace scf::integrations
 
 				FUCK::SliderFloat("Stuck Recall Seconds", &data.recovery.stuckWarpSeconds, 0.0f, 15.0f, "%.1fs");
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("A following summon that makes no progress this long is recalled behind the player (0 = off)");
+				FUCK::SliderFloat("Recall Cooldown", &data.recovery.catchUpCooldownSeconds, 0.0f, 30.0f, "%.1fs");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Pause after every recall attempt before the next one");
+				FUCK::Checkbox("Recall While Summon Fights", &data.recovery.catchUpWarpSummonCombat);
+				FUCK::Checkbox("Recall While Player Fights", &data.recovery.catchUpWarpOwnerCombat);
 
 				FUCK::Checkbox("Persistent Summons", &data.persistence.persistentSummons);
 				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Summons do not expire; each reserves max Magicka while it lives");

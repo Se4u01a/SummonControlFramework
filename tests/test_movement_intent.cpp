@@ -364,7 +364,9 @@ TEST(TestSummonFollowPackageShape)
 }
 
 // ---------------------------------------------------------------------------
-// PoE2 stage M1: follow pace by lag and the recall teleport.
+// PoE2 stage M1: follow pace by lag. The recall teleport that used to live in the
+// same rule is stage 7's own module (Core/CatchUp.h) and is covered by
+// tests/test_catch_up.cpp.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -377,32 +379,20 @@ namespace
 		tuning.sprintSpeed = 230.0f;
 		tuning.runAtDistance = 450.0f;
 		tuning.sprintAtDistance = 1200.0f;
-		tuning.catchUpDistance = 3500.0f;
-		tuning.stuckSeconds = 3.0f;
-		tuning.stuckMinDistance = 300.0f;
-		tuning.enableCatchUpWarp = true;
 		return tuning;
-	}
-
-	// A following summon that is not fighting: the state in which a recall is allowed at
-	// all. Lag and owner distance are the same value unless a test says otherwise.
-	FollowMotion FollowMotionAt(float a_lag, const FollowTuning& a_tuning)
-	{
-		return DecideFollowMotion(SummonOrder::Follow, false, true, a_lag, a_lag, 0.0f, a_tuning);
 	}
 }
 
 // Given a summon inside its formation slot (and exactly at the run threshold)
-// When the follow intent is built
+// When the follow pace is chosen
 // Then it keeps the walking pace.
 TEST(TestFollowPaceWalksInsideFormation)
 {
 	const auto tuning = FollowSettings();
 	for (const float lag : { 0.0f, 100.0f, 449.0f, 450.0f }) {
-		const auto motion = FollowMotionAt(lag, tuning);
+		const auto motion = DecideFollowMotion(lag, tuning);
 		CHECK(motion.pace == FollowPace::Walk);
 		CHECK_NEAR(motion.speed, tuning.walkSpeed, 0.001f);
-		CHECK(!motion.teleport);
 	}
 }
 
@@ -414,14 +404,14 @@ TEST(TestFollowPaceRunsBeyondRunDistance)
 {
 	const auto tuning = FollowSettings();
 
-	const auto run = FollowMotionAt(451.0f, tuning);
+	const auto run = DecideFollowMotion(451.0f, tuning);
 	CHECK(run.pace == FollowPace::Run);
 	CHECK_NEAR(run.speed, tuning.runSpeed, 0.001f);
 
-	const auto atSprintThreshold = FollowMotionAt(1200.0f, tuning);
+	const auto atSprintThreshold = DecideFollowMotion(1200.0f, tuning);
 	CHECK(atSprintThreshold.pace == FollowPace::Run);
 
-	const auto sprint = FollowMotionAt(1201.0f, tuning);
+	const auto sprint = DecideFollowMotion(1201.0f, tuning);
 	CHECK(sprint.pace == FollowPace::Sprint);
 	CHECK_NEAR(sprint.speed, tuning.sprintSpeed, 0.001f);
 }
@@ -435,139 +425,117 @@ TEST(TestFollowPaceNeverSprintsBeforeRunning)
 	tuning.runAtDistance = 1000.0f;
 	tuning.sprintAtDistance = 500.0f;
 
-	const auto motion = FollowMotionAt(1200.0f, tuning);
+	const auto motion = DecideFollowMotion(1200.0f, tuning);
 	CHECK(motion.pace == FollowPace::Run);
 	CHECK_NEAR(motion.speed, tuning.runSpeed, 0.001f);
 
-	const auto farMotion = FollowMotionAt(20000.0f, tuning);
+	const auto farMotion = DecideFollowMotion(20000.0f, tuning);
 	CHECK(farMotion.pace == FollowPace::Run);
 	CHECK_NEAR(farMotion.speed, tuning.runSpeed, 0.001f);
 }
 
 // Given a following summon far away from the owner
-// When it is at or beyond the catch-up distance
-// Then it is recalled behind the owner exactly at the threshold, and not before.
-TEST(TestFollowRecallsBeyondCatchUpDistance)
+// When the pace is chosen
+// Then a distant summon sprints; the recall itself is Core/CatchUp's decision and is
+// covered by the Catch-Up Warp suite.
+TEST(TestFollowPaceSprintsWhenFarBehind)
 {
 	const auto tuning = FollowSettings();
-
-	const auto below = DecideFollowMotion(SummonOrder::Follow, false, true, 3499.0f, 3499.0f, 0.0f, tuning);
-	CHECK(!below.teleport);
-
-	const auto atThreshold = DecideFollowMotion(SummonOrder::Follow, false, true, 3500.0f, 3500.0f, 0.0f, tuning);
-	CHECK(atThreshold.teleport);
-	CHECK(atThreshold.teleportByDistance);
-	CHECK(!atThreshold.teleportByStuck);
+	const auto motion = DecideFollowMotion(9000.0f, tuning);
+	CHECK(motion.pace == FollowPace::Sprint);
+	CHECK_NEAR(motion.speed, tuning.sprintSpeed, 0.001f);
 }
 
 // Given a following summon that must move but makes no progress
-// When it has been stuck for the configured number of seconds
-// Then it is recalled behind the owner exactly at the threshold, and not before.
-TEST(TestFollowRecallsWhenStuck)
+// When the pace is chosen for its lag
+// Then it runs: the pace never decides the recall (the stuck clock lives in CatchUp).
+TEST(TestFollowPaceDoesNotDependOnProgress)
 {
 	const auto tuning = FollowSettings();
-
-	const auto before = DecideFollowMotion(SummonOrder::Follow, false, true, 800.0f, 800.0f, 2.99f, tuning);
-	CHECK(!before.teleport);
-
-	const auto atThreshold = DecideFollowMotion(SummonOrder::Follow, false, true, 800.0f, 800.0f, 3.0f, tuning);
-	CHECK(atThreshold.teleport);
-	CHECK(atThreshold.teleportByStuck);
-	CHECK(!atThreshold.teleportByDistance);
+	const auto motion = DecideFollowMotion(800.0f, tuning);
+	CHECK(motion.pace == FollowPace::Run);
 }
 
-// Given a summon that reports a long "no progress" time but has almost nothing to close
-// When the recall is decided
-// Then it is not teleported: standing in the slot is not being stuck.
-TEST(TestFollowStuckRecallNeedsDistanceToClose)
+// Given a summon with almost nothing left to close
+// When the pace is chosen
+// Then it walks: standing in the slot is the slow pace, not a teleport.
+TEST(TestFollowPaceWalksWhenHoldingSlot)
 {
 	const auto tuning = FollowSettings();
-
-	const auto inSlot = DecideFollowMotion(SummonOrder::Follow, false, true, 100.0f, 100.0f, 30.0f, tuning);
-	CHECK(!inSlot.teleport);
-
-	const auto atMinimum = DecideFollowMotion(SummonOrder::Follow, false, true, 300.0f, 300.0f, 30.0f, tuning);
-	CHECK(!atMinimum.teleport);
-
-	const auto beyondMinimum = DecideFollowMotion(SummonOrder::Follow, false, true, 301.0f, 301.0f, 30.0f, tuning);
-	CHECK(beyondMinimum.teleport);
+	for (const float lag : { 100.0f, 300.0f, 450.0f }) {
+		const auto motion = DecideFollowMotion(lag, tuning);
+		CHECK(motion.pace == FollowPace::Walk);
+	}
 }
 
 // Given a summon that the engine reports in combat
-// When the recall conditions are met
-// Then the fight keeps its locomotion (no warp), except for a passive summon whose
-// combat the policy forbids.
-TEST(TestFollowNeverRecallsInCombat)
+// When its lag is measured
+// Then the pace still follows the lag: combat only withholds the MOVEMENT order, it does
+// not change the follow speed. (No teleport exists in this rule any more.)
+TEST(TestFollowPaceIgnoresCombat)
 {
 	const auto tuning = FollowSettings();
-
-	const auto fighting = DecideFollowMotion(SummonOrder::Follow, true, true, 5000.0f, 9000.0f, 60.0f, tuning);
-	CHECK(!fighting.teleport);
-	CHECK(!fighting.teleportByDistance);
-	CHECK(!fighting.teleportByStuck);
-
-	const auto passive = DecideFollowMotion(SummonOrder::Follow, true, false, 5000.0f, 9000.0f, 60.0f, tuning);
-	CHECK(passive.teleport);
+	const auto motion = DecideFollowMotion(5000.0f, tuning);
+	CHECK(motion.pace == FollowPace::Sprint);
 }
 
-// Given an order other than Follow / Return
-// When the summon is far away and stuck
-// Then it is never teleported: MoveTo, Attack and Guard keep walking.
-TEST(TestFollowNeverRecallsForAwayOrders)
+// Given a summon under any order
+// When the pace is chosen
+// Then the order does not enter the pace rule at all: an away order keeps the walking
+// pace of its own movement mode, and the recall (which is order-aware) is CatchUp's.
+TEST(TestFollowPaceIsOrderIndependent)
 {
 	const auto tuning = FollowSettings();
-
-	for (const auto order : { SummonOrder::MoveTo, SummonOrder::Attack, SummonOrder::WaitGuard }) {
-		const auto motion = DecideFollowMotion(order, false, true, 5000.0f, 9000.0f, 60.0f, tuning);
-		CHECK(!motion.teleport);
-		CHECK(!motion.teleportByDistance);
-		CHECK(!motion.teleportByStuck);
+	for (const auto order : { SummonOrder::Follow, SummonOrder::Return, SummonOrder::MoveTo, SummonOrder::Attack, SummonOrder::WaitGuard }) {
+		(void)order;
+		const auto motion = DecideFollowMotion(100.0f, tuning);
+		CHECK(motion.pace == FollowPace::Walk);
+		CHECK_NEAR(motion.speed, tuning.walkSpeed, 0.001f);
 	}
-
-	const auto returning = DecideFollowMotion(SummonOrder::Return, false, true, 5000.0f, 9000.0f, 0.0f, tuning);
-	CHECK(returning.teleport);
-	CHECK(returning.teleportByDistance);
 }
 
-// Given the operator switched the catch-up recall off (bEnableCatchUpWarp)
-// When the recall conditions are met
-// Then nothing is teleported, but the pace still follows the lag.
-TEST(TestFollowRecallHonoursCatchUpSwitch)
+// Given the operator switched the catch-up recall off ([Recovery] bEnableCatchUpWarp)
+// When the pace is chosen
+// Then nothing about the pace changes: the switch belongs to the recall, not to the race.
+TEST(TestFollowPaceUnaffectedByCatchUpSwitch)
 {
-	auto tuning = FollowSettings();
-	tuning.enableCatchUpWarp = false;
-
-	const auto motion = DecideFollowMotion(SummonOrder::Follow, false, true, 9000.0f, 9000.0f, 60.0f, tuning);
-	CHECK(!motion.teleport);
+	auto settings = SettingsWithDistances(200.0f, 450.0f);
+	settings.recovery.enableCatchUpWarp = false;
+	const auto tuning = FollowTuningFrom(settings);
+	const auto motion = DecideFollowMotion(9000.0f, tuning);
 	CHECK(motion.pace == FollowPace::Sprint);
 }
 
 // Given the settings the driver already receives
 // When the follow tunables are derived
-// Then the run threshold and the recall distance come from the configuration and the
-// thresholds never cross each other.
+// Then the run threshold, the sprint threshold and the speeds come from the
+// configuration, and a sprint band that would collapse into the run band is pushed out.
 TEST(TestFollowTuningFromSettings)
 {
 	auto settings = SettingsWithDistances(200.0f, 450.0f);
-	settings.recovery.enableCatchUpWarp = true;
-	settings.recovery.catchUpDistance = 3500.0f;
+	settings.movement.followWalkSpeed = 100.0f;
+	settings.movement.followRunSpeed = 160.0f;
+	settings.movement.sprintSpeed = 230.0f;
+	settings.movement.sprintDistance = 1200.0f;
 
 	const auto tuning = FollowTuningFrom(settings);
 	CHECK_NEAR(tuning.runAtDistance, 450.0f, 0.001f);
-	CHECK(tuning.sprintAtDistance > tuning.runAtDistance);
-	CHECK_NEAR(tuning.catchUpDistance, 3500.0f, 0.001f);
-	CHECK(tuning.enableCatchUpWarp);
+	CHECK_NEAR(tuning.sprintAtDistance, 1200.0f, 0.001f);
+	CHECK_NEAR(tuning.walkSpeed, 100.0f, 0.001f);
+	CHECK_NEAR(tuning.runSpeed, 160.0f, 0.001f);
+	CHECK_NEAR(tuning.sprintSpeed, 230.0f, 0.001f);
 
 	auto wide = SettingsWithDistances(400.0f, 3000.0f);
-	wide.recovery.catchUpDistance = 3500.0f;
 	const auto wideTuning = FollowTuningFrom(wide);
 	CHECK_NEAR(wideTuning.runAtDistance, 3000.0f, 0.001f);
 	CHECK(wideTuning.sprintAtDistance >= wideTuning.runAtDistance);
-	CHECK(wideTuning.catchUpDistance >= wideTuning.sprintAtDistance);
 
-	auto disabled = SettingsWithDistances(200.0f, 450.0f);
-	disabled.recovery.enableCatchUpWarp = false;
-	CHECK(!FollowTuningFrom(disabled).enableCatchUpWarp);
+	// A sprint distance inside the run band must not turn every runner into a sprinter.
+	auto broken = SettingsWithDistances(200.0f, 450.0f);
+	broken.movement.sprintDistance = 100.0f;
+	const auto brokenTuning = FollowTuningFrom(broken);
+	CHECK(brokenTuning.sprintAtDistance > brokenTuning.runAtDistance);
+	CHECK_NEAR(brokenTuning.sprintAtDistance, brokenTuning.runAtDistance * 2.0f, 0.001f);
 }
 
 // ---------------------------------------------------------------------------

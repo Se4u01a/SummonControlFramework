@@ -1,16 +1,28 @@
 #include "Engine/SummonMovement.h"
 #include "Engine/ActorSpace.h"
 #include "Engine/FollowLeash.h"
+#include "Core/CatchUp.h"
 #include "Core/Formation.h"
 #include "PCH.h"
 
 #include <RE/A/Actor.h>
+#include <RE/A/ActorState.h>
+#include <RE/B/BSAtomic.h>
+#include <RE/B/bhkPickData.h>
+#include <RE/B/bhkWorld.h>
+#include <RE/C/CFilter.h>
+#include <RE/C/CollisionLayers.h>
+#include <RE/H/hkpCollidable.h>
 #include <RE/N/NiPoint3.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/P/ProcessLists.h>
+#include <RE/T/TES.h>
 #include <RE/T/TESForm.h>
+#include <RE/T/TESObjectCELL.h>
 #include <RE/T/TESObjectREFR.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -82,10 +94,10 @@ namespace scf::engine::movement
 		//     kOffsetEpsilon, and re-asserted every kReassertSeconds so a movement
 		//     goal the engine rewrote on its own is taken back (the vanilla
 		//     summoned-creature follow may rewrite it).
-		//   * the follow recall (PoE2 stage M1) warps behind the owner only when the pure
-		//     rule core::DecideFollowMotion says so (beyond catch-up distance, or no
-		//     progress for the configured stuck time), never more often than
-		//     kMinWarpIntervalSeconds.
+		//   * the catch-up recall itself - when it fires, its hysteresis, its cooldown and
+		//     the landing rules - is decided by Core/CatchUp.h. This file gathers the
+		//     landing facts (space, ground, clearance, occupants, water) and performs the
+		//     one position write; it keeps no threshold of its own.
 		//   * MoveTo cancels (guard in place) after kMoveToTimeoutSeconds.
 		// ------------------------------------------------------------------
 		constexpr float kOffsetEpsilon = 8.0f;
@@ -93,11 +105,6 @@ namespace scf::engine::movement
 		constexpr float kFacingEpsilonDegrees = 10.0f;
 		constexpr float kReassertSeconds = 2.0f;
 		constexpr float kMoveToTimeoutSeconds = 45.0f;
-		constexpr float kProgressEpsilon = 50.0f;
-
-		// A recall is a teleport, so it is rate limited even when every condition still
-		// holds; a wrongly stuck summon gets one recall per window, not one per tick.
-		constexpr float kMinWarpIntervalSeconds = 5.0f;
 
 		// Follow pace (PoE2 stage M1). kDefaultSpeedMult is the engine's normal movement
 		// pace, i.e. the SpeedMult value a summon carries without help; the pace is applied
@@ -114,6 +121,16 @@ namespace scf::engine::movement
 		// instead of being warped every window (horizontal units per second below this
 		// count as standing still).
 		constexpr float kMovingSpeedThreshold = 25.0f;
+
+		// Landing probe geometry of the catch-up recall. The rays follow APMF's
+		// field-proven space query (APMF/native/core/SpaceQuery.cpp): a downward cast for
+		// walkable ground, a ring at knee height for clearance and four samples for a ledge.
+		constexpr float kProbeStartHeight = 64.0f;   // the down ray starts this far above the candidate
+		constexpr float kProbeDropDepth = 600.0f;    // ...and searches this far below it
+		constexpr float kKneeHeight = 32.0f;         // clearance rays run this far above the ground
+		constexpr float kLedgeStep = 48.0f;          // a ring sample must find ground within this
+		constexpr float kOccupantHeight = 256.0f;    // an actor above/below this cannot occupy the spot
+		constexpr std::size_t kMaxLandingProbes = 3; // candidate spots probed per recall
 
 		// How long an explicit FocusTarget order is given to put the summon into combat
 		// before the driver decides the engagement never started.
@@ -153,11 +170,12 @@ namespace scf::engine::movement
 			float modeEnteredAt{ 0.0f };
 			float orderEnteredAt{ 0.0f };
 			float lastIssuedAt{ 0.0f };
-			float bestDistance{ std::numeric_limits<float>::max() };
-			float lastProgressAt{ 0.0f };
 			float lastReengageAt{ -100.0f };
-			bool catchUpWarped{ false };
-			float lastWarpAt{ -1000.0f };
+			// Catch-up recall: the pure rules' memory (progress clock, best lag, hysteresis
+			// gate, cooldown) plus the refusal already reported, so one refusing condition
+			// is logged and counted once, not once per tick.
+			core::CatchUpMemory catchUp{};
+			core::CatchUpRefusal lastCatchUpRefusal{ core::CatchUpRefusal::None };
 			// Follow pace: the SpeedMult modifier this driver currently owns, so the exact
 			// amount can be rolled back and another writer's value is never touched.
 			core::FollowPace pace{ core::FollowPace::Walk };
@@ -170,6 +188,43 @@ namespace scf::engine::movement
 		};
 
 		std::unordered_map<core::EntityID, AppliedMovement> s_applied;
+
+		// Session statistics behind the status line (declared in SummonMovement.h).
+		core::CatchUpStats s_catchUpStats{};
+
+		core::FormationLayout FormationLayoutFrom(const core::SettingsData& a_settings)
+		{
+			core::FormationLayout layout{};
+			layout.outerRingCapacity = a_settings.squad.formationRingCapacity;
+			layout.innerRingScale = a_settings.squad.formationInnerRingScale;
+			layout.minSlotDistance = a_settings.squad.formationMinSlotDistance;
+			layout.maxExpansion = a_settings.squad.formationMaxExpansion;
+			return layout;
+		}
+
+		// Stricter than ShareLoadedSpace: the recall is a teleport inside ONE loaded space,
+		// so both cells must be attached (a cell that is detaching mid-frame has no usable
+		// havok world), both references must have their 3D loaded, and an interior/exterior
+		// boundary is never crossed. Crossing a cell or a worldspace is the engine's own
+		// summoned-creature snap's job (fSummonedCreatureMaxFollowDist).
+		bool SameLoadedSpaceForWarp(RE::Actor* a_owner, RE::Actor* a_summon)
+		{
+			if (!a_owner || !a_summon) {
+				return false;
+			}
+			auto* ownerCell = a_owner->GetParentCell();
+			auto* summonCell = a_summon->GetParentCell();
+			if (!ownerCell || !summonCell) {
+				return false;
+			}
+			if (!ownerCell->IsAttached() || !summonCell->IsAttached()) {
+				return false;
+			}
+			if (ownerCell->IsInteriorCell() != summonCell->IsInteriorCell()) {
+				return false;
+			}
+			return ShareLoadedSpace(a_summon, a_owner) && a_owner->Is3DLoaded() && a_summon->Is3DLoaded();
+		}
 
 		core::Vec3 ToCore(const RE::NiPoint3& a_point) noexcept
 		{
@@ -351,17 +406,11 @@ namespace scf::engine::movement
 			a_state.appliedSpeedDelta = 0.0f;
 		}
 
-		// Updates the "no walking progress" clock of the follow race and returns its age.
-		// The clock is reset while the summon holds its slot (holding the slot is not being
-		// stuck), and also while it is genuinely moving: a summon that trails a sprinting
-		// player without closing the gap is running normally, and must not be recalled just
-		// because the slot keeps running away from it.
-		float TrackFollowProgress(
-			AppliedMovement& a_state,
-			float a_lag,
-			float a_holdRadius,
-			const core::Vec3& a_position,
-			float a_now)
+		// Samples how far the actor actually travelled since the previous tick. Core's
+		// progress rule needs it because "standing still / wedged" and "running after a
+		// player who keeps the gap open" must not be confused: one of them is a recall
+		// candidate, the other is normal following.
+		bool SampleFollowMovement(AppliedMovement& a_state, const core::Vec3& a_position, float a_now)
 		{
 			bool moving = false;
 			const float sinceSample = a_now - a_state.positionSampledAt;
@@ -371,77 +420,330 @@ namespace scf::engine::movement
 			}
 			a_state.lastSamplePosition = a_position;
 			a_state.positionSampledAt = a_now;
-
-			if (moving || a_lag <= a_holdRadius || a_lag < a_state.bestDistance - kProgressEpsilon) {
-				a_state.bestDistance = std::min(a_state.bestDistance, a_lag);
-				a_state.lastProgressAt = a_now;
-				// Progress re-arms the recall: a summon that walks normally again and later
-				// falls behind must be recalled again.
-				a_state.catchUpWarped = false;
-			}
-			return a_now - a_state.lastProgressAt;
+			return moving;
 		}
 
-		bool WarpBehindOwner(RE::Actor* a_summon, RE::Actor* a_owner, float a_distance)
+		// ------------------------------------------------------------------
+		// Landing facts of the catch-up recall.
+		//
+		// Everything below OBSERVES: it writes nothing to the world and lets Core decide.
+		// The ray recipe is the one APMF's space query proved in the field
+		// (APMF/native/core/SpaceQuery.cpp): bhkWorld::PickObject (vtable slot 0x33) cast
+		// under the world's read lock, positions multiplied by bhkWorld::GetWorldScale(),
+		// and the ray layer set to kCharController so static / terrain / ground / stair
+		// geometry is hit like the engine's own char-controller picks do. The summon's own
+		// capsule is skipped by repeating its system group, which is what keeps the ground
+		// cast from landing on the actor being moved.
+		// ------------------------------------------------------------------
+		bool IsGroundLayer(RE::COL_LAYER a_layer) noexcept
 		{
-			// A cross-cell recall cannot be done with a position write; the engine's own
-			// summoned-creature snap keeps that case (fSummonedCreatureMaxFollowDist).
-			if (!a_owner->GetParentCell() || a_summon->GetParentCell() != a_owner->GetParentCell()) {
+			return a_layer == RE::COL_LAYER::kStatic || a_layer == RE::COL_LAYER::kTerrain ||
+			       a_layer == RE::COL_LAYER::kGround || a_layer == RE::COL_LAYER::kStairHelper;
+		}
+
+		// Ray filter: the char-controller layer plus the summon's collision system group,
+		// so the pick ignores the actor's own capsule (same group) and still hits the world.
+		std::uint32_t RayFilter(RE::Actor* a_summon)
+		{
+			std::uint32_t filter = static_cast<std::uint32_t>(RE::COL_LAYER::kCharController);
+			if (a_summon) {
+				if (auto* controller = a_summon->GetCharController()) {
+					RE::CFilter info{};
+					controller->GetCollisionFilterInfo(info);
+					filter |= (info.filter >> 16) << 16;
+				}
+			}
+			return filter;
+		}
+
+		struct RayProbe
+		{
+			bool hit{ false };
+			bool skipped{ false }; // the engine's early-out: the ray was NOT cast, so it proves nothing
+			float fraction{ 1.0f };
+			RE::COL_LAYER layer{ RE::COL_LAYER::kUnidentified };
+		};
+
+		// One closest-hit ray. The caller holds the world's read lock.
+		RayProbe CastRay(RE::bhkWorld* a_world, const RE::NiPoint3& a_from, const RE::NiPoint3& a_to, std::uint32_t a_filter)
+		{
+			const float scale = RE::bhkWorld::GetWorldScale();
+
+			RE::bhkPickData pick;
+			pick.rayInput.from = a_from * scale;
+			pick.rayInput.to = a_to * scale;
+			pick.rayInput.enableShapeCollectionFilter = false;
+			pick.rayInput.filterInfo.filter = a_filter;
+			a_world->PickObject(pick);
+
+			RayProbe probe{};
+			if (pick.pickFailed) {
+				probe.skipped = true;
+				return probe;
+			}
+			if (pick.rayOutput.HasHit()) {
+				probe.hit = true;
+				probe.fraction = pick.rayOutput.hitFraction;
+				if (pick.rayOutput.rootCollidable) {
+					probe.layer = pick.rayOutput.rootCollidable->GetCollisionLayer();
+				}
+			}
+			return probe;
+		}
+
+		// Does the candidate point resolve in the owner's loaded space? An interior
+		// candidate must be the owner's own cell; an exterior one must belong to the
+		// owner's worldspace (a neighbouring loaded cell is fine - the summon routinely
+		// trails the player across a border).
+		bool IsSameSpaceCell(const RE::TESObjectCELL* a_candidateCell, const RE::Actor* a_owner)
+		{
+			const auto* ownerCell = a_owner ? a_owner->GetParentCell() : nullptr;
+			if (!a_candidateCell || !ownerCell) {
+				return false;
+			}
+			if (a_candidateCell->IsInteriorCell() != ownerCell->IsInteriorCell()) {
+				return false;
+			}
+			if (a_candidateCell->IsInteriorCell()) {
+				return a_candidateCell == ownerCell;
+			}
+			auto* worldspace = a_candidateCell->GetRuntimeData().worldSpace;
+			return worldspace && worldspace == a_owner->GetWorldspace();
+		}
+
+		// Horizontal distance from the point to the nearest living actor other than the
+		// summon being moved (the owner included: a recall must never land on top of it).
+		// Clamped to the probe radius: anything at or beyond it is "nobody there".
+		float NearestActorDistance(RE::Actor* a_ignore, const RE::NiPoint3& a_point, float a_radius)
+		{
+			float best = a_radius;
+			const auto test = [&](RE::Actor* a_actor) {
+				if (!a_actor || a_actor == a_ignore || a_actor->IsDead() || a_actor->IsDisabled()) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				const auto position = a_actor->GetPosition();
+				if (std::abs(position.z - a_point.z) > kOccupantHeight) {
+					return RE::BSContainer::ForEachResult::kContinue;
+				}
+				const float dx = position.x - a_point.x;
+				const float dy = position.y - a_point.y;
+				const float distance = std::sqrt(dx * dx + dy * dy);
+				if (distance < best) {
+					best = distance;
+				}
+				return RE::BSContainer::ForEachResult::kContinue;
+			};
+
+			if (auto* lists = RE::ProcessLists::GetSingleton()) {
+				lists->ForEachHighActor(test);
+			}
+			// The player is not guaranteed to be in the high list; a second test is harmless.
+			if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+				test(player);
+			}
+			return best;
+		}
+
+		// The downward cast and the clearance tests of one candidate. Returns true when
+		// walkable ground was found (a_outGroundRise is then valid); a_outBlocked reports a
+		// spot that has ground but is closed in by geometry or sits on a ledge.
+		bool ProbeGround(
+			RE::Actor* a_summon,
+			RE::TESObjectCELL* a_cell,
+			const RE::NiPoint3& a_point,
+			float a_clearance,
+			float& a_outGroundRise,
+			bool& a_outBlocked)
+		{
+			auto* world = a_cell ? a_cell->GetbhkWorld() : nullptr;
+			if (!world) {
 				return false;
 			}
 
-			const float yaw = a_owner->GetAngleZ();
-			const auto ownerPosition = a_owner->GetPosition();
-			const RE::NiPoint3 destination{
-				ownerPosition.x - std::sin(yaw) * a_distance,
-				ownerPosition.y - std::cos(yaw) * a_distance,
-				ownerPosition.z
-			};
+			const std::uint32_t filter = RayFilter(a_summon);
+			RE::BSReadLockGuard guard(world->worldLock);
 
-			a_summon->SetPosition(destination, true);
-			a_summon->MoveToNearestNavmesh(0.0f);
+			const RE::NiPoint3 from{ a_point.x, a_point.y, a_point.z + kProbeStartHeight };
+			const RE::NiPoint3 to{ a_point.x, a_point.y, a_point.z - kProbeDropDepth };
+			const RayProbe ground = CastRay(world, from, to, filter);
+			if (ground.skipped || !ground.hit || !IsGroundLayer(ground.layer)) {
+				return false;
+			}
+
+			const RE::NiPoint3 landed{ a_point.x, a_point.y, from.z + (to.z - from.z) * ground.fraction };
+			a_outGroundRise = landed.z - a_point.z;
+
+			// Clearance: four level rays at knee height. A wall inside the landing radius
+			// would put the actor into geometry, so the spot is refused.
+			const RE::NiPoint3 knee{ landed.x, landed.y, landed.z + kKneeHeight };
+			constexpr float kHalfPi = 1.57079633f;
+			for (int i = 0; i < 4; ++i) {
+				const float angle = static_cast<float>(i) * kHalfPi;
+				const RE::NiPoint3 reach{ knee.x + std::sin(angle) * a_clearance, knee.y + std::cos(angle) * a_clearance, knee.z };
+				const RayProbe wall = CastRay(world, knee, reach, filter);
+				// An unmeasured ray proves nothing, so it refuses the spot instead of
+				// silently accepting it (the caller logs the refusal).
+				if (wall.skipped || wall.hit) {
+					a_outBlocked = true;
+					return true;
+				}
+			}
+
+			// Ledge: all four samples on the clearance ring must meet ground at (roughly)
+			// the same height. A drop at any of them means the point is on an edge.
+			for (int i = 0; i < 4; ++i) {
+				const float angle = static_cast<float>(i) * kHalfPi;
+				const float x = landed.x + std::sin(angle) * a_clearance;
+				const float y = landed.y + std::cos(angle) * a_clearance;
+				const RE::NiPoint3 sampleFrom{ x, y, landed.z + kLedgeStep };
+				const RE::NiPoint3 sampleTo{ x, y, landed.z - kLedgeStep };
+				const RayProbe ring = CastRay(world, sampleFrom, sampleTo, filter);
+				if (ring.skipped || !ring.hit || !IsGroundLayer(ring.layer)) {
+					a_outBlocked = true;
+					return true;
+				}
+			}
 			return true;
 		}
 
-		bool TryFollowWarp(
+		// Collects the facts Core needs to accept or reject one landing candidate.
+		core::LandingObservation ProbeLanding(
+			RE::Actor* a_summon,
+			RE::Actor* a_owner,
+			const core::LandingCandidate& a_candidate,
+			const core::CatchUpTuning& a_tuning)
+		{
+			core::LandingObservation observation{};
+
+			const RE::NiPoint3 point{ a_candidate.position.x, a_candidate.position.y, a_candidate.position.z };
+			auto* tes = RE::TES::GetSingleton();
+			auto* cell = tes ? tes->GetCell(point) : nullptr;
+			observation.hasSpace = IsSameSpaceCell(cell, a_owner);
+			if (!observation.hasSpace) {
+				return observation;
+			}
+
+			observation.groundFound = ProbeGround(a_summon, cell, point, a_tuning.landingClearance, observation.groundRise, observation.blocked);
+
+			// Water: the ground must sit above the local surface. GetWaterHeight returns
+			// false where there is no water at all, which leaves waterRise at "dry".
+			float waterHeight = 0.0f;
+			if (cell->GetWaterHeight(point, waterHeight)) {
+				observation.waterRise = (point.z + observation.groundRise) - waterHeight;
+			}
+
+			observation.nearestActor = NearestActorDistance(a_summon, point, a_tuning.landingClearance);
+			return observation;
+		}
+
+		// One emergency relocation. The decision (trigger, gates, cooldown, hysteresis) was
+		// made by Core; this probes at most kMaxLandingProbes candidates, lets Core pick the
+		// first safe one, and writes the actor there ONCE. Never a continuous movement:
+		// the follow race resumes from that point on the next tick.
+		void TryCatchUpWarp(
 			RE::Actor* a_summon,
 			RE::Actor* a_owner,
 			core::EntityID a_id,
 			const core::SummonModel& a_model,
-			const core::FollowMotion& a_motion,
-			float a_lagDistance,
-			float a_distanceToOwner,
-			float a_landingDistance,
-			const core::FollowTuning& a_tuning,
+			const core::CatchUpDecision& a_decision,
+			const core::CatchUpObservation& a_observation,
+			const core::CatchUpTuning& a_tuning,
+			const core::SettingsData& a_settings,
+			std::size_t a_slotIndex,
+			std::size_t a_squadSize,
 			AppliedMovement& a_state,
 			float a_now)
 		{
-			if (!a_motion.teleport) {
-				return false;
-			}
-			if (a_state.catchUpWarped || (a_now - a_state.lastWarpAt) < kMinWarpIntervalSeconds) {
-				return false;
+			// The cooldown anchors on the attempt, not the outcome: a spot with no safe
+			// landing must not be re-probed on every tick.
+			core::MarkCatchUpAttempt(a_state.catchUp, a_now);
+			// The measurements called for a recall: counted once per attempt, whatever the
+			// landing probe then decides.
+			core::RecordCatchUpTrigger(s_catchUpStats, a_decision.trigger);
+
+			const core::Vec3 ownerPoint{ a_owner->GetPosition().x, a_owner->GetPosition().y, a_owner->GetPosition().z };
+
+			std::array<core::LandingCandidate, core::kMaxLandingCandidates> candidates{};
+			std::array<core::LandingObservation, core::kMaxLandingCandidates> observations{};
+			const std::size_t built = core::BuildLandingCandidates(
+				ownerPoint,
+				a_owner->GetAngleZ(),
+				a_slotIndex,
+				a_squadSize,
+				FormationLayoutFrom(a_settings),
+				a_tuning,
+				candidates.data(),
+				candidates.size());
+
+			const std::size_t probed = std::min(built, kMaxLandingProbes);
+			for (std::size_t i = 0; i < probed; ++i) {
+				observations[i] = ProbeLanding(a_summon, a_owner, candidates[i], a_tuning);
 			}
 
-			a_state.catchUpWarped = true;
-			a_state.lastWarpAt = a_now;
-			a_state.lastProgressAt = a_now;
-			a_state.bestDistance = std::numeric_limits<float>::max();
-
-			if (!WarpBehindOwner(a_summon, a_owner, a_landingDistance)) {
-				logger::warn("[Movement] Summon 0x{:08X} catch-up warp skipped: summon is not in the owner's cell ({} order, dist {:.0f})",
-					a_id, core::ToString(a_model.order), a_distanceToOwner);
-				return false;
+			const core::LandingSelection selection = core::SelectLandingSpot(candidates.data(), observations.data(), probed, a_tuning);
+			if (!selection.found) {
+				a_state.lastCatchUpRefusal = core::CatchUpRefusal::NoSafeSpot;
+				core::RecordCatchUpRefusal(s_catchUpStats, core::CatchUpRefusal::NoSafeSpot);
+				logger::warn("[Movement] Summon 0x{:08X} catch-up warp refused: NoSafeSpot ({} order, {} candidates probed, lag {:.0f}, owner {:.0f})",
+					a_id, core::ToString(a_model.order), probed, a_observation.lagDistance, a_observation.distanceToOwner);
+				return;
 			}
 
-			logger::info("[Movement] Summon 0x{:08X} catch-up warp applied ({}, {} order, lag was {:.0f}, dist {:.0f}, threshold {:.0f})",
+			// The one write. MoveToNearestNavmesh then resolves the exact navmesh height
+			// under the chosen point, so the actor lands on walkable ground rather than on
+			// the bare coordinate; the ground probe above already checked that there is one.
+			a_summon->SetPosition(RE::NiPoint3{ selection.position.x, selection.position.y, selection.position.z }, true);
+			if (!a_summon->MoveToNearestNavmesh(0.0f)) {
+				// Not hidden behind the success log: the actor is at the probed point, but
+				// the engine found no navmesh to snap it to.
+				logger::warn("[Movement] Summon 0x{:08X} catch-up warp landed at ({:.0f}, {:.0f}, {:.0f}) without a navmesh snap",
+					a_id, selection.position.x, selection.position.y, selection.position.z);
+			}
+
+			// The recall moved the actor: re-sample so the next tick's movement check does
+			// not read the teleport as travel.
+			a_state.lastSamplePosition = ToCore(a_summon->GetPosition());
+			a_state.positionSampledAt = a_now;
+
+			core::MarkCatchUpWarped(a_state.catchUp, a_now);
+			core::RecordCatchUpWarp(s_catchUpStats, a_decision.trigger, a_now);
+			a_state.lastCatchUpRefusal = core::CatchUpRefusal::None;
+
+			logger::info("[Movement] Summon 0x{:08X} catch-up warp applied ({}, {} order, spot {}/{}, lag was {:.0f}, owner {:.0f}, threshold {:.0f}, ground rise {:.0f}, nearest actor {:.0f})",
 				a_id,
-				a_motion.teleportByDistance ? "beyond catch-up distance" : "no walking progress",
+				core::ToString(a_decision.trigger),
 				core::ToString(a_model.order),
-				a_lagDistance,
-				a_distanceToOwner,
-				a_tuning.catchUpDistance);
-			return true;
+				selection.index,
+				probed,
+				a_observation.lagDistance,
+				a_observation.distanceToOwner,
+				a_tuning.catchUpDistance,
+				observations[selection.index].groundRise,
+				observations[selection.index].nearestActor);
+		}
+
+		// Reports a refusal once per event: one line and one counter per changing reason,
+		// not one per tick while the condition holds.
+		void NoteCatchUpRefusal(
+			core::EntityID a_id,
+			const core::SummonModel& a_model,
+			const core::CatchUpDecision& a_decision,
+			const core::CatchUpObservation& a_observation,
+			AppliedMovement& a_state)
+		{
+			const core::CatchUpRefusal refusal = a_decision.refusal;
+			if (refusal == core::CatchUpRefusal::None) {
+				a_state.lastCatchUpRefusal = core::CatchUpRefusal::None;
+				return;
+			}
+			if (a_state.lastCatchUpRefusal == refusal) {
+				return;
+			}
+			a_state.lastCatchUpRefusal = refusal;
+			core::RecordCatchUpTrigger(s_catchUpStats, a_decision.trigger);
+			core::RecordCatchUpRefusal(s_catchUpStats, refusal);
+			logger::info("[Movement] Summon 0x{:08X} catch-up warp refused: {} ({}, {} order, lag {:.0f}, owner {:.0f})",
+				a_id, core::ToString(refusal), core::ToString(a_decision.trigger), core::ToString(a_model.order), a_observation.lagDistance, a_observation.distanceToOwner);
 		}
 	}
 
@@ -599,41 +901,57 @@ namespace scf::engine::movement
 
 		if (intent.mode != state.mode) {
 			state.modeEnteredAt = a_now;
-			state.bestDistance = std::numeric_limits<float>::max();
-			state.lastProgressAt = a_now;
-			state.catchUpWarped = false;
+			// A new movement mode starts the recall measurement over; the warp cooldown
+			// survives (Core::ResetCatchUpProgress), so an order switch cannot cut a
+			// teleport short.
+			core::ResetCatchUpProgress(state.catchUp, a_now);
 		}
 
-		// 2c. Follow race (PoE2 stage M1): three paces by lag, and the recall behind the
-		//     owner when the summon is left too far behind or stops making progress. Only
-		//     the two orders that bring the summon back to the owner take part; every other
-		//     mode keeps the actor's own pace (a Command Rush bonus must survive) and never
-		//     teleports.
+		// 2c. Follow race (PoE2 stage M1) and the emergency recall (stage 7). Only the two
+		//     modes that bring the summon back to the owner take part; every other mode
+		//     keeps the actor's own pace (a Command Rush bonus must survive) and is never
+		//     teleported.
 		if (intent.mode == core::MovementMode::FollowSlot || intent.mode == core::MovementMode::ReturnToOwner) {
-			const core::FollowTuning tuning = core::FollowTuningFrom(a_settings);
+			const core::FollowTuning paceTuning = core::FollowTuningFrom(a_settings);
+			const core::CatchUpTuning catchUpTuning = core::CatchUpTuningFrom(a_settings);
+
 			const core::Vec3 goalPoint = intent.mode == core::MovementMode::FollowSlot
 				? core::OwnerLocalToWorldPoint(intent.localOffset, ownerPosition, a_owner->GetAngleZ())
 				: ownerPosition;
 			const float lag = std::sqrt(HorizontalDistanceSq(summonPosition, goalPoint));
-			const float secondsWithoutProgress = TrackFollowProgress(state, lag, intent.followRadius, summonPosition, a_now);
 
-			const core::FollowMotion motion = core::DecideFollowMotion(
-				a_model.order,
-				a_summon->IsInCombat(),
-				a_combatPermitted,
-				lag,
-				distanceToOwner,
-				secondsWithoutProgress,
-				tuning);
+			// The measurements are distance and real progress, never line of sight.
+			core::CatchUpObservation observation{};
+			observation.now = a_now;
+			observation.lagDistance = lag;
+			observation.distanceToOwner = distanceToOwner;
+			observation.holdRadius = intent.followRadius;
+			observation.isMoving = SampleFollowMovement(state, summonPosition, a_now);
+			core::ObserveCatchUp(state.catchUp, observation, catchUpTuning);
 
-			if (TryFollowWarp(a_summon, a_owner, id, a_model, motion, lag, distanceToOwner,
-					a_settings.movement.followMinDistance, tuning, state, a_now)) {
-				// The recall moved the actor: re-sample so the next tick's movement check does
-				// not read the teleport as a sprint.
-				state.lastSamplePosition = ToCore(a_summon->GetPosition());
-				state.positionSampledAt = a_now;
-			}
+			const core::FollowMotion motion = core::DecideFollowMotion(lag, paceTuning);
 			ApplyFollowSpeed(a_summon, id, motion, lag, state);
+
+			core::CatchUpContext context{};
+			context.order = a_model.order;
+			context.summonInCombat = a_summon->IsInCombat();
+			context.combatPermitted = a_combatPermitted;
+			context.ownerInCombat = a_owner->IsInCombat();
+			context.sameSpace = SameLoadedSpaceForWarp(a_owner, a_summon);
+
+			context.ownerSwimming = a_owner->IsInWater();
+			if (auto* ownerState = a_owner->AsActorState()) {
+				context.ownerAirborne = ownerState->IsFlying();
+				context.ownerSwimming = context.ownerSwimming || ownerState->IsSwimming();
+			}
+			context.ownerMounted = a_owner->IsOnMount();
+
+			const core::CatchUpDecision decision = core::DecideCatchUp(context, observation, state.catchUp, catchUpTuning);
+			if (decision.warp) {
+				TryCatchUpWarp(a_summon, a_owner, id, a_model, decision, observation, catchUpTuning, a_settings, a_slotIndex, a_squadSize, state, a_now);
+			} else {
+				NoteCatchUpRefusal(id, a_model, decision, observation, state);
+			}
 		} else {
 			RestoreFollowSpeed(a_summon, id, state);
 		}
@@ -707,6 +1025,18 @@ namespace scf::engine::movement
 
 		s_applied.clear();
 		leash::ResetAll();
+		// The recall counters describe this session, not the previous one.
+		core::ResetCatchUpStats(s_catchUpStats);
 		logger::info("[Movement] Movement state reset.");
+	}
+
+	const core::CatchUpStats& CatchUpStatistics() noexcept
+	{
+		return s_catchUpStats;
+	}
+
+	std::string DescribeCatchUpStatistics()
+	{
+		return core::FormatCatchUpStats(s_catchUpStats);
 	}
 }

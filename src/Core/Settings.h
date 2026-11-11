@@ -69,6 +69,9 @@ namespace scf::core
 		float catchUpDistance{ 3500.0f };
 		float stuckWarpSeconds{ 3.0f };        // M1: no progress this long -> recall behind the owner
 		float stuckWarpMinDistance{ 300.0f };  // ...only while still lagging more than this
+		float catchUpCooldownSeconds{ 5.0f };  // stage 7: pause after every recall attempt
+		bool catchUpWarpSummonCombat{ false }; // stage 7: allow the recall while the summon fights
+		bool catchUpWarpOwnerCombat{ false };  // stage 7: allow the recall while the player fights
 	};
 
 	struct SquadSettings
