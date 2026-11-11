@@ -13,10 +13,14 @@
 #include "FriendlyFire/MagicHook.h"
 #include "FriendlyFire/ProjectileHook.h"
 #include "Integrations/FlickMenu.h"
+#include "Integrations/MinionPanel.h"
 #include "Integrations/PrecisionBackend.h"
+#include "Core/CommandActions.h"
 #include "PCH.h"
 
 #include <RE/G/GameSettingCollection.h>
+#include <RE/S/SpellItem.h>
+#include <RE/T/TESDataHandler.h>
 
 #include <filesystem>
 
@@ -53,6 +57,53 @@ namespace scf::plugin
 		}
 	}
 
+	integrations::MinionPanelConfig ToPanelConfig(const core::MinionPanelSettings& a_settings)
+	{
+		integrations::MinionPanelConfig config{};
+		config.enabled = a_settings.enabled;
+		config.showHealthNumbers = a_settings.showHealthNumbers;
+		config.showTarget = a_settings.showTarget;
+		config.showCommand = a_settings.showCommand;
+		config.showDuration = a_settings.showDuration;
+		config.hideWhenEmpty = a_settings.hideWhenEmpty;
+		config.posX = a_settings.posX;
+		config.posY = a_settings.posY;
+		config.width = a_settings.width;
+		config.maxRows = a_settings.maxRows;
+		return config;
+	}
+
+	// Settings that need the data handler: [Persistence] sBlacklistedSpells
+	// ("Plugin.esp|0xID, ...") -> runtime FormIDs of SPEL records.
+	void ApplyLoadedSettings()
+	{
+		auto& data = core::FrameworkContext::GetSingleton().GetSettings().GetMutable();
+		auto& ids = data.persistence.blacklistedSpellIds;
+		ids.clear();
+		auto* handler = RE::TESDataHandler::GetSingleton();
+		std::string_view list = data.persistenceBlacklist;
+		while (!list.empty()) {
+			const auto comma = list.find(',');
+			const auto item = list.substr(0, comma);
+			list = comma == std::string_view::npos ? std::string_view{} : list.substr(comma + 1);
+			const auto key = core::ParseFormKey(item);
+			if (!key) {
+				if (item.find_first_not_of(" \t") != std::string_view::npos) {
+					logger::warn("[Messaging] [Persistence] sBlacklistedSpells: '{}' is not Plugin.esp|0xID; ignored.", item);
+				}
+				continue;
+			}
+			auto* spell = handler ? handler->LookupForm<RE::SpellItem>(key->localId, key->plugin) : nullptr;
+			if (!spell) {
+				logger::warn("[Messaging] [Persistence] sBlacklistedSpells: {}|0x{:06X} is not a loaded spell; ignored.", key->plugin, key->localId);
+				continue;
+			}
+			ids.push_back(spell->GetFormID());
+		}
+		logger::info("[Messaging] [Persistence] persistent summons {}, {} blacklisted spell(s).",
+			data.persistence.persistentSummons ? "ON" : "off", ids.size());
+	}
+
 	void OnMessage(SKSE::MessagingInterface::Message* a_msg)
 	{
 		if (!a_msg) {
@@ -75,6 +126,7 @@ namespace scf::plugin
 			}
 
 			PatchGameSettings();
+			ApplyLoadedSettings();
 
 			ConsoleCommands::Register();
 			engine::EventAdapter::RegisterEventSinks();
@@ -90,6 +142,8 @@ namespace scf::plugin
 			friendly_fire::ProjectileHook::Install();
 			integrations::PrecisionBackend::Initialize();
 			integrations::FlickMenu::Install();
+			integrations::MinionPanel::Install();
+			integrations::MinionPanel::Configure(ToPanelConfig(core::FrameworkContext::GetSingleton().GetSettings().Get().minionPanel));
 			logger::info("[Messaging] Framework initialization complete.");
 			break;
 

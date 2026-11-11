@@ -35,6 +35,92 @@ namespace scf::core
 		}
 	}
 
+	// ------------------------------------------------------------------
+	// PoE2 stage M1: following with three paces and a recall teleport.
+	// ------------------------------------------------------------------
+
+	// How fast a following summon closes the distance to its follow goal (its formation
+	// slot, or the owner while returning).
+	enum class FollowPace : std::uint8_t
+	{
+		Walk,   // inside the formation: the actor's own pace
+		Run,    // lagging behind the goal by more than FollowTuning::runAtDistance
+		Sprint  // far behind: lagging by more than FollowTuning::sprintAtDistance
+	};
+
+	constexpr const char* ToString(FollowPace a_pace) noexcept
+	{
+		switch (a_pace) {
+		case FollowPace::Walk:   return "Walk";
+		case FollowPace::Run:    return "Run";
+		case FollowPace::Sprint: return "Sprint";
+		default:                 return "Unknown";
+		}
+	}
+
+	// Tunables of the follow race: pure data, passed by argument, so Core never reads an
+	// INI. The engine driver builds them from the settings object it already receives
+	// (FollowTuningFrom) and applies FollowMotion::speed through the actor's SpeedMult
+	// actor value, where 100 is the actor's own normal movement pace.
+	struct FollowTuning
+	{
+		float walkSpeed{ 100.0f };       // inside the formation
+		float runSpeed{ 160.0f };        // lagging
+		float sprintSpeed{ 230.0f };     // far behind
+		float runAtDistance{ 450.0f };   // lag beyond this is a run
+		float sprintAtDistance{ 1200.0f }; // lag beyond this is a sprint
+		float catchUpDistance{ 3500.0f };  // owner distance beyond which the summon is recalled
+		float stuckSeconds{ 3.0f };      // no progress for this long while it should move
+		float stuckMinDistance{ 300.0f }; // ...and it still has this much lag to close
+		bool enableCatchUpWarp{ true };  // operator switch (Recovery.bEnableCatchUpWarp)
+	};
+
+	struct FollowMotion
+	{
+		FollowPace pace{ FollowPace::Walk };
+		float speed{ 100.0f };
+		bool teleport{ false };            // recall behind the owner this tick
+		bool teleportByDistance{ false };  // ...because it is beyond catchUpDistance
+		bool teleportByStuck{ false };     // ...because it made no progress
+	};
+
+	// Follow tunables derived from the configuration the driver already holds: the "run"
+	// threshold is MovementSettings::followMaxDistance (the distance at which the
+	// keep-offset primitive itself starts running), the recall distance is
+	// RecoverySettings::catchUpDistance, and the recall switch is
+	// RecoverySettings::enableCatchUpWarp. The sprint threshold, the three speeds and the
+	// stuck timings keep the documented defaults above.
+	FollowTuning FollowTuningFrom(const SettingsData& a_settings) noexcept;
+
+	// Decides the pace of a following summon and whether it must be recalled behind the
+	// owner.
+	//
+	// `a_lagDistance` is the horizontal distance left to the follow goal (the formation
+	// slot, or the owner while returning); `a_distanceToOwner` the horizontal distance to
+	// the owner; `a_secondsWithoutProgress` how long the lag has not decreased while the
+	// summon was supposed to close it.
+	//
+	// Rules:
+	//   * Pace, exclusive thresholds: above sprintAtDistance -> Sprint, above
+	//     runAtDistance -> Run, otherwise Walk. A summon exactly at a threshold keeps the
+	//     slower pace. A sprint threshold that is not above the run threshold disables
+	//     sprinting (Run is then the fastest pace) rather than collapsing the run band.
+	//   * A recall is a teleport, so it needs all of: the catch-up switch on, the order is
+	//     Follow or Return (the two orders that bring the summon back to the owner), and
+	//     the engine is not fighting (a warp would drop the engagement; combat AI owns
+	//     locomotion then). MoveTo, Attack and WaitGuard never warp.
+	//   * Recall triggers when the summon is at or beyond catchUpDistance from the owner,
+	//     or when it made no progress for stuckSeconds while still lagging more than
+	//     stuckMinDistance behind its goal (a wall, a ledge, a closed door).
+	FollowMotion DecideFollowMotion(
+		SummonOrder a_order,
+		bool a_inCombat,
+		bool a_combatPermitted,
+		float a_lagDistance,
+		float a_distanceToOwner,
+		float a_secondsWithoutProgress,
+		const FollowTuning& a_tuning) noexcept;
+
 	struct MovementIntent
 	{
 		MovementMode mode{ MovementMode::None };

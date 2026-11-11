@@ -27,6 +27,12 @@ namespace scf::engine::movement
 	// with Address Library ids in the .cpp; see the comment block there for what was
 	// verified against the unpacked image.
 	//
+	// Follow pace and the catch-up recall (PoE2 stage M1) sit on top of those primitives:
+	// the pace is an additive temporary SpeedMult modifier that this module owns and rolls
+	// back, and the recall is a position write behind the owner. Both are decided by the
+	// pure rules in Core/MovementIntent.h (core::DecideFollowMotion), so the thresholds and
+	// speeds live in Core and only the engine write happens here.
+	//
 	// GAME THREAD ONLY: called from the PlayerCharacter::Update hook.
 	void UpdateForSummon(
 		RE::PlayerCharacter* a_owner,

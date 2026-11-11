@@ -49,6 +49,47 @@ TEST(settings_default_values)
 	CHECK(data.hotkeys.waitGuardKey == 0x4C);
 	CHECK(data.hotkeys.followKey == 0x4D);
 	CHECK(data.hotkeys.commandActionKey == 0x47);
+	CHECK(data.hotkeys.minionPanelToggleKey == 0);
+	CHECK(data.movement.sprintDistance == 1200.0f);
+	CHECK(data.recovery.stuckWarpSeconds == 3.0f);
+	CHECK(data.squad.formationRingCapacity == 6);
+	CHECK(!data.persistence.persistentSummons);
+	CHECK(!data.minionPanel.enabled);
+}
+
+// Given the PoE2 sections in an INI
+// When it is loaded and written back
+// Then every new key round-trips, and out-of-range values are clamped.
+TEST(settings_poe2_sections_round_trip)
+{
+	scf::core::Settings settings;
+	CHECK(settings.LoadFromString(
+		"[Movement]\nfSprintDistance = 900\nfSprintSpeed = 999\n"
+		"[Recovery]\nfStuckWarpSeconds = 4\n"
+		"[Squad]\nuFormationRingCapacity = 5\n"
+		"[Hotkeys]\nuMinionPanelToggleKey = 72\n"
+		"[Persistence]\nbPersistentSummons = true\nbPersistVanillaSpellsOnly = true\nfReviveDelaySeconds = 9\n"
+		"sBlacklistedSpells = Skyrim.esm|0x000640B6\n"
+		"[MinionPanel]\nbShowMinionPanel = true\nfMinionPanelX = 77\n"));
+	const auto& data = settings.Get();
+	CHECK(data.movement.sprintDistance == 900.0f);
+	CHECK(data.movement.sprintSpeed == 500.0f);
+	CHECK(data.recovery.stuckWarpSeconds == 4.0f);
+	CHECK(data.squad.formationRingCapacity == 5);
+	CHECK(data.hotkeys.minionPanelToggleKey == 72);
+	CHECK(data.persistence.persistentSummons);
+	CHECK(data.persistence.vanillaSpellsOnly);
+	CHECK(data.persistence.reviveDelaySeconds == 9.0f);
+	CHECK(data.persistenceBlacklist == "Skyrim.esm|0x000640B6");
+	CHECK(data.minionPanel.enabled);
+	CHECK(data.minionPanel.posX == 77.0f);
+
+	scf::core::Settings copy;
+	CHECK(copy.LoadFromString(settings.Serialize()));
+	CHECK(copy.Get().persistence.persistentSummons);
+	CHECK(copy.Get().persistenceBlacklist == "Skyrim.esm|0x000640B6");
+	CHECK(copy.Get().minionPanel.posX == 77.0f);
+	CHECK(copy.Get().squad.formationRingCapacity == 5);
 }
 
 TEST(settings_load_from_string_prefixed)

@@ -9,6 +9,8 @@
 #include "Engine/CommandActions.h"
 #include "Engine/KeywordApi.h"
 #include "Engine/PassThrough.h"
+#include "Engine/Persistence.h"
+#include "Integrations/MinionPanel.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
 
@@ -191,6 +193,7 @@ namespace scf::engine::update
 				const auto summonId = actorPtr->GetFormID();
 				if (actorPtr->IsDead()) {
 					registry.NotifyDeath(summonId, a_timestamp);
+					persistence::OnSummonDied(summonId, a_timestamp);  // idempotent while the corpse stays listed
 					continue;
 				}
 
@@ -221,6 +224,7 @@ namespace scf::engine::update
 			for (const auto prevSummonId : activeSummons) {
 				if (currentEngineSummons.find(prevSummonId) == currentEngineSummons.end()) {
 					registry.NotifyEffectRemoved(ownerId, prevSummonId, a_timestamp);
+					persistence::OnSummonRemoved(prevSummonId);
 				}
 			}
 
@@ -354,6 +358,28 @@ namespace scf::engine::update
 			// cell detach, displacement) so a recycled handle cannot inherit it.
 			movement::RetainOnly(currentEngineSummons);
 			combat::RetainOnly(currentEngineSummons);
+
+			// PoE2 M4: persistent summons (effect kept alive, Magicka reserve, revives).
+			{
+				std::vector<RE::Actor*> liveSummonActors;
+				liveSummonActors.reserve(orderedSummons.size());
+				for (const auto& [id, actor] : orderedSummons) {
+					liveSummonActors.push_back(actor);
+				}
+				persistence::Tick(a_player, a_timestamp, liveSummonActors, registry, settings.persistence);
+			}
+
+			// PoE2 M6: minion panel snapshot (drawn by FLICK from this copy).
+			{
+				std::vector<integrations::CommandCooldownView> cooldowns;
+				cooldowns.reserve(orderedSummons.size());
+				for (const auto& [id, actor] : orderedSummons) {
+					if (actions::HasCommand(actor)) {
+						cooldowns.push_back({ id, actions::CooldownRemaining(id, a_timestamp), 0.0f });
+					}
+				}
+				integrations::MinionPanel::PublishSnapshot(ownerId, a_timestamp, cooldowns);
+			}
 		}
 
 		struct PlayerUpdate
@@ -413,6 +439,8 @@ namespace scf::engine::update
 		combat::ResetAll();
 		passthrough::ResetAll();
 		actions::Reset();
+		persistence::Reset();
+		integrations::MinionPanel::ClearSnapshot();
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

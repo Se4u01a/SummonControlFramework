@@ -22,6 +22,85 @@ namespace scf::core
 		}
 	}
 
+	FollowTuning FollowTuningFrom(const SettingsData& a_settings) noexcept
+	{
+		FollowTuning tuning{};
+		const auto& movement = a_settings.movement;
+		const auto& recovery = a_settings.recovery;
+
+		tuning.enableCatchUpWarp = recovery.enableCatchUpWarp;
+		tuning.walkSpeed = movement.followWalkSpeed;
+		tuning.runSpeed = movement.followRunSpeed;
+		tuning.sprintSpeed = movement.sprintSpeed;
+		tuning.sprintAtDistance = movement.sprintDistance;
+		tuning.stuckSeconds = recovery.stuckWarpSeconds;
+		tuning.stuckMinDistance = recovery.stuckWarpMinDistance;
+
+		// The keep-offset primitive already runs the actor beyond its catch-up radius, and
+		// that radius is followMaxDistance: the same distance is the "run" threshold.
+		tuning.runAtDistance = std::max(movement.followMaxDistance, movement.followMinDistance);
+
+		// Never let the configured follow distance reach past the sprint threshold: a
+		// narrower formation must not turn "run" into "sprint" for free.
+		constexpr float kSprintRunFactor = 2.0f;
+		tuning.sprintAtDistance = std::max(tuning.sprintAtDistance, tuning.runAtDistance * kSprintRunFactor);
+
+		if (recovery.catchUpDistance > 0.0f) {
+			tuning.catchUpDistance = recovery.catchUpDistance;
+		}
+		// A recall at or inside the sprint threshold would make the sprint pace dead code.
+		tuning.catchUpDistance = std::max(tuning.catchUpDistance, tuning.sprintAtDistance);
+		return tuning;
+	}
+
+	FollowMotion DecideFollowMotion(
+		SummonOrder a_order,
+		bool a_inCombat,
+		bool a_combatPermitted,
+		float a_lagDistance,
+		float a_distanceToOwner,
+		float a_secondsWithoutProgress,
+		const FollowTuning& a_tuning) noexcept
+	{
+		FollowMotion motion{};
+
+		// 1. Pace from the lag. Thresholds are exclusive: a summon standing exactly on a
+		//    threshold keeps the slower pace. A sprint threshold that is not genuinely
+		//    beyond the run threshold disables sprinting instead of collapsing the run
+		//    band: a broken configuration must not make every runner sprint.
+		const float runAt = std::max(0.0f, a_tuning.runAtDistance);
+		if (a_tuning.sprintAtDistance > runAt && a_lagDistance > a_tuning.sprintAtDistance) {
+			motion.pace = FollowPace::Sprint;
+			motion.speed = a_tuning.sprintSpeed;
+		} else if (a_lagDistance > runAt) {
+			motion.pace = FollowPace::Run;
+			motion.speed = a_tuning.runSpeed;
+		} else {
+			motion.pace = FollowPace::Walk;
+			motion.speed = a_tuning.walkSpeed;
+		}
+
+		// 2. Recall behind the owner: allowed only where it cannot fight the combat AI and
+		//    cannot contradict a standing order.
+		if (!a_tuning.enableCatchUpWarp) {
+			return motion;
+		}
+		if (a_order != SummonOrder::Follow && a_order != SummonOrder::Return) {
+			return motion;
+		}
+		if (a_inCombat && a_combatPermitted) {
+			return motion;
+		}
+
+		motion.teleportByDistance = a_tuning.catchUpDistance > 0.0f &&
+		                            a_distanceToOwner >= a_tuning.catchUpDistance;
+		motion.teleportByStuck = a_tuning.stuckSeconds > 0.0f &&
+		                         a_secondsWithoutProgress >= a_tuning.stuckSeconds &&
+		                         a_lagDistance > a_tuning.stuckMinDistance;
+		motion.teleport = motion.teleportByDistance || motion.teleportByStuck;
+		return motion;
+	}
+
 	MovementIntent BuildMovementIntent(
 		const SummonModel& a_model,
 		bool a_inCombat,
@@ -93,7 +172,12 @@ namespace scf::core
 
 		MovementIntent intent{};
 		intent.mode = MovementMode::FollowSlot;
-		intent.localOffset = FormationSlotOffsetLocal(a_slotIndex, a_squadSize, movement.followMinDistance);
+		FormationLayout layout{};
+		layout.outerRingCapacity = a_settings.squad.formationRingCapacity;
+		layout.innerRingScale = a_settings.squad.formationInnerRingScale;
+		layout.minSlotDistance = a_settings.squad.formationMinSlotDistance;
+		layout.maxExpansion = a_settings.squad.formationMaxExpansion;
+		intent.localOffset = FormationSlotOffsetLocal(a_slotIndex, a_squadSize, movement.followMinDistance, layout);
 		intent.followRadius = std::max(kMinFollowRadius, movement.followMinDistance * 0.5f);
 		intent.catchUpRadius = std::max(movement.followMaxDistance, intent.followRadius * 2.0f);
 		intent.facingOffsetDegrees = TravelFacingDegrees(

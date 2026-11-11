@@ -10,6 +10,7 @@
 #include <RE/T/TESForm.h>
 #include <RE/T/TESObjectREFR.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -81,17 +82,38 @@ namespace scf::engine::movement
 		//     kOffsetEpsilon, and re-asserted every kReassertSeconds so a movement
 		//     goal the engine rewrote on its own is taken back (the vanilla
 		//     summoned-creature follow may rewrite it).
-		//   * Return gives up on walking and warps only when the summon is beyond
-		//     Recovery.fCatchUpDistance or made no progress for kStuckSeconds.
+		//   * the follow recall (PoE2 stage M1) warps behind the owner only when the pure
+		//     rule core::DecideFollowMotion says so (beyond catch-up distance, or no
+		//     progress for the configured stuck time), never more often than
+		//     kMinWarpIntervalSeconds.
 		//   * MoveTo cancels (guard in place) after kMoveToTimeoutSeconds.
 		// ------------------------------------------------------------------
 		constexpr float kOffsetEpsilon = 8.0f;
 		constexpr float kOffsetEpsilonSq = kOffsetEpsilon * kOffsetEpsilon;
 		constexpr float kFacingEpsilonDegrees = 10.0f;
 		constexpr float kReassertSeconds = 2.0f;
-		constexpr float kStuckSeconds = 3.0f;
 		constexpr float kMoveToTimeoutSeconds = 45.0f;
 		constexpr float kProgressEpsilon = 50.0f;
+
+		// A recall is a teleport, so it is rate limited even when every condition still
+		// holds; a wrongly stuck summon gets one recall per window, not one per tick.
+		constexpr float kMinWarpIntervalSeconds = 5.0f;
+
+		// Follow pace (PoE2 stage M1). kDefaultSpeedMult is the engine's normal movement
+		// pace, i.e. the SpeedMult value a summon carries without help; the pace is applied
+		// as the difference to it, as a temporary modifier that is rolled back. It is never
+		// a base actor value and never re-scaled against the current total, so another
+		// writer (a buff spell, the Command Rush bonus) keeps its own points instead of
+		// being fought over. A modifier the engine drops on its own is re-issued on the
+		// next pace change.
+		constexpr float kDefaultSpeedMult = 100.0f;
+		constexpr float kSpeedEpsilon = 5.0f;
+
+		// A summon whose own position barely changes is the one that may be recalled as
+		// "stuck": one that trails a galloping player is moving fast and must keep walking
+		// instead of being warped every window (horizontal units per second below this
+		// count as standing still).
+		constexpr float kMovingSpeedThreshold = 25.0f;
 
 		// How long an explicit FocusTarget order is given to put the summon into combat
 		// before the driver decides the engagement never started.
@@ -135,6 +157,16 @@ namespace scf::engine::movement
 			float lastProgressAt{ 0.0f };
 			float lastReengageAt{ -100.0f };
 			bool catchUpWarped{ false };
+			float lastWarpAt{ -1000.0f };
+			// Follow pace: the SpeedMult modifier this driver currently owns, so the exact
+			// amount can be rolled back and another writer's value is never touched.
+			core::FollowPace pace{ core::FollowPace::Walk };
+			bool paceKnown{ false };
+			float appliedSpeedDelta{ 0.0f };
+			// Position sample used to tell "standing still / wedged" from "running after a
+			// player that keeps the gap open".
+			core::Vec3 lastSamplePosition{};
+			float positionSampledAt{ 0.0f };
 		};
 
 		std::unordered_map<core::EntityID, AppliedMovement> s_applied;
@@ -219,12 +251,135 @@ namespace scf::engine::movement
 			}
 		}
 
-		void TrackProgress(AppliedMovement& a_state, float a_distance, float a_now)
+		void NudgeSpeed(RE::Actor* a_actor)
 		{
-			if (a_distance < a_state.bestDistance - kProgressEpsilon) {
-				a_state.bestDistance = a_distance;
-				a_state.lastProgressAt = a_now;
+			// The engine recomputes locomotion when carry weight changes; a net-zero nudge
+			// makes a SpeedMult change take effect without waiting for the next equip (the
+			// same trick Engine/CommandActions.cpp uses for a Rush).
+			auto* values = a_actor->AsActorValueOwner();
+			values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kCarryWeight, 0.01f);
+			values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kCarryWeight, -0.01f);
+		}
+
+		// Applies the follow pace as a temporary SpeedMult modifier that this driver owns
+		// (`appliedSpeedDelta`), so it can be handed back exactly.
+		void ApplyFollowSpeed(
+			RE::Actor* a_summon,
+			core::EntityID a_id,
+			const core::FollowMotion& a_motion,
+			float a_lag,
+			AppliedMovement& a_state)
+		{
+			const float desiredDelta = a_motion.speed - kDefaultSpeedMult;
+			const float change = desiredDelta - a_state.appliedSpeedDelta;
+			if (std::abs(change) <= kSpeedEpsilon) {
+				return;
 			}
+
+			auto* values = a_summon->AsActorValueOwner();
+			if (!values) {
+				return;
+			}
+
+			values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kSpeedMult, change);
+			NudgeSpeed(a_summon);
+
+			const bool paceChanged = !a_state.paceKnown || a_state.pace != a_motion.pace;
+			a_state.pace = a_motion.pace;
+			a_state.paceKnown = true;
+			a_state.appliedSpeedDelta = desiredDelta;
+
+			if (paceChanged) {
+				logger::info("[Movement] Summon 0x{:08X} follow pace {} (lag {:.0f}, SpeedMult {:+.0f})",
+					a_id, core::ToString(a_motion.pace), a_lag, change);
+			} else {
+				logger::debug("[Movement] Summon 0x{:08X} follow pace {} re-issued (SpeedMult {:+.0f})",
+					a_id, core::ToString(a_motion.pace), change);
+			}
+		}
+
+		// Gives the actor back exactly the SpeedMult modifier this driver added.
+		void RestoreFollowSpeed(RE::Actor* a_summon, core::EntityID a_id, AppliedMovement& a_state)
+		{
+			const float owned = a_state.appliedSpeedDelta;
+			const bool modified = a_state.paceKnown && std::abs(owned) > kSpeedEpsilon;
+			a_state.paceKnown = false;
+			a_state.pace = core::FollowPace::Walk;
+			a_state.appliedSpeedDelta = 0.0f;
+
+			if (!modified) {
+				return;
+			}
+
+			if (auto* values = a_summon->AsActorValueOwner()) {
+				values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kSpeedMult, -owned);
+				NudgeSpeed(a_summon);
+			}
+			logger::info("[Movement] Summon 0x{:08X} follow pace released (SpeedMult {:+.0f})", a_id, -owned);
+		}
+
+		// A summon that leaves the roster (dispel, death, displacement) is dropped from the
+		// bookkeeping without an actor pointer, so its leftover SpeedMult modifier is
+		// rolled back here through the form table while the actor is still alive.
+		void ReleaseLeftoverSpeed(core::EntityID a_id, const AppliedMovement& a_state)
+		{
+			if (!a_state.paceKnown || std::abs(a_state.appliedSpeedDelta) <= kSpeedEpsilon) {
+				return;
+			}
+
+			auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_id);
+			if (!actor || actor->IsDeleted() || actor->IsDead()) {
+				logger::debug("[Movement] Summon 0x{:08X} left the roster with SpeedMult {:+.0f}; actor gone, nothing to restore",
+					a_id, a_state.appliedSpeedDelta);
+				return;
+			}
+
+			if (auto* values = actor->AsActorValueOwner()) {
+				values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kSpeedMult, -a_state.appliedSpeedDelta);
+				NudgeSpeed(actor);
+			}
+			logger::info("[Movement] Summon 0x{:08X} left the roster: follow pace released (SpeedMult {:+.0f})",
+				a_id, -a_state.appliedSpeedDelta);
+		}
+
+		// Drops the bookkeeping without writing actor values (a dead summon is about to
+		// leave the roster and must not be touched).
+		void ForgetFollowSpeed(AppliedMovement& a_state)
+		{
+			a_state.paceKnown = false;
+			a_state.pace = core::FollowPace::Walk;
+			a_state.appliedSpeedDelta = 0.0f;
+		}
+
+		// Updates the "no walking progress" clock of the follow race and returns its age.
+		// The clock is reset while the summon holds its slot (holding the slot is not being
+		// stuck), and also while it is genuinely moving: a summon that trails a sprinting
+		// player without closing the gap is running normally, and must not be recalled just
+		// because the slot keeps running away from it.
+		float TrackFollowProgress(
+			AppliedMovement& a_state,
+			float a_lag,
+			float a_holdRadius,
+			const core::Vec3& a_position,
+			float a_now)
+		{
+			bool moving = false;
+			const float sinceSample = a_now - a_state.positionSampledAt;
+			if (sinceSample > 0.0f) {
+				const float travelled = std::sqrt(HorizontalDistanceSq(a_position, a_state.lastSamplePosition));
+				moving = (travelled / sinceSample) >= kMovingSpeedThreshold;
+			}
+			a_state.lastSamplePosition = a_position;
+			a_state.positionSampledAt = a_now;
+
+			if (moving || a_lag <= a_holdRadius || a_lag < a_state.bestDistance - kProgressEpsilon) {
+				a_state.bestDistance = std::min(a_state.bestDistance, a_lag);
+				a_state.lastProgressAt = a_now;
+				// Progress re-arms the recall: a summon that walks normally again and later
+				// falls behind must be recalled again.
+				a_state.catchUpWarped = false;
+			}
+			return a_now - a_state.lastProgressAt;
 		}
 
 		bool WarpBehindOwner(RE::Actor* a_summon, RE::Actor* a_owner, float a_distance)
@@ -248,41 +403,45 @@ namespace scf::engine::movement
 			return true;
 		}
 
-		void TryCatchUpWarp(
+		bool TryFollowWarp(
 			RE::Actor* a_summon,
 			RE::Actor* a_owner,
 			core::EntityID a_id,
+			const core::SummonModel& a_model,
+			const core::FollowMotion& a_motion,
+			float a_lagDistance,
 			float a_distanceToOwner,
-			const core::SettingsData& a_settings,
+			float a_landingDistance,
+			const core::FollowTuning& a_tuning,
 			AppliedMovement& a_state,
 			float a_now)
 		{
-			if (!a_settings.recovery.enableCatchUpWarp || a_state.catchUpWarped) {
-				return;
+			if (!a_motion.teleport) {
+				return false;
 			}
-
-			const bool tooFar = a_distanceToOwner >= a_settings.recovery.catchUpDistance;
-			const bool stuck = (a_now - a_state.lastProgressAt) >= kStuckSeconds &&
-			                   a_distanceToOwner > a_settings.movement.followMinDistance * 1.5f;
-			if (!tooFar && !stuck) {
-				return;
+			if (a_state.catchUpWarped || (a_now - a_state.lastWarpAt) < kMinWarpIntervalSeconds) {
+				return false;
 			}
 
 			a_state.catchUpWarped = true;
+			a_state.lastWarpAt = a_now;
 			a_state.lastProgressAt = a_now;
 			a_state.bestDistance = std::numeric_limits<float>::max();
 
-			if (!WarpBehindOwner(a_summon, a_owner, a_settings.movement.followMinDistance)) {
-				logger::warn("[Movement] Summon 0x{:08X} catch-up warp skipped: summon is not in the owner's cell (dist {:.0f})",
-					a_id, a_distanceToOwner);
-				return;
+			if (!WarpBehindOwner(a_summon, a_owner, a_landingDistance)) {
+				logger::warn("[Movement] Summon 0x{:08X} catch-up warp skipped: summon is not in the owner's cell ({} order, dist {:.0f})",
+					a_id, core::ToString(a_model.order), a_distanceToOwner);
+				return false;
 			}
 
-			logger::info("[Movement] Summon 0x{:08X} catch-up warp applied ({}, dist was {:.0f}, threshold {:.0f})",
+			logger::info("[Movement] Summon 0x{:08X} catch-up warp applied ({}, {} order, lag was {:.0f}, dist {:.0f}, threshold {:.0f})",
 				a_id,
-				tooFar ? "beyond catch-up distance" : "no walking progress",
+				a_motion.teleportByDistance ? "beyond catch-up distance" : "no walking progress",
+				core::ToString(a_model.order),
+				a_lagDistance,
 				a_distanceToOwner,
-				a_settings.recovery.catchUpDistance);
+				a_tuning.catchUpDistance);
+			return true;
 		}
 	}
 
@@ -307,6 +466,7 @@ namespace scf::engine::movement
 		if (a_summon->IsDead()) {
 			ApplyTranslationLock(a_summon, id, false, state);
 			ClearKeepOffset(a_summon, id, state);
+			ForgetFollowSpeed(state);
 			return;
 		}
 
@@ -342,14 +502,12 @@ namespace scf::engine::movement
 					id, targetGone ? "target gone" : "combat never started");
 			}
 		} else if (a_model.order == core::SummonOrder::Return) {
-			TrackProgress(state, distanceToOwner, a_now);
-
+			// The walking itself is the ReturnToOwner intent below; its recall and its
+			// pace are decided together with Follow (step 2c).
 			if (distanceToOwner <= a_settings.movement.followMinDistance) {
 				a_model.order = core::SummonOrder::Follow;
 				a_fsm.TransitionTo(a_model, core::SummonState::FollowOwner, "Returned to owner range");
 				logger::info("[Movement] Summon 0x{:08X} reached owner ({:.0f}) -> Follow", id, distanceToOwner);
-			} else {
-				TryCatchUpWarp(a_summon, a_owner, id, distanceToOwner, a_settings, state, a_now);
 			}
 		} else if (a_model.order == core::SummonOrder::MoveTo && a_model.hasMoveTarget) {
 			const float toDestination = std::sqrt(HorizontalDistanceSq(a_model.moveTargetPosition, ownerPosition));
@@ -446,6 +604,40 @@ namespace scf::engine::movement
 			state.catchUpWarped = false;
 		}
 
+		// 2c. Follow race (PoE2 stage M1): three paces by lag, and the recall behind the
+		//     owner when the summon is left too far behind or stops making progress. Only
+		//     the two orders that bring the summon back to the owner take part; every other
+		//     mode keeps the actor's own pace (a Command Rush bonus must survive) and never
+		//     teleports.
+		if (intent.mode == core::MovementMode::FollowSlot || intent.mode == core::MovementMode::ReturnToOwner) {
+			const core::FollowTuning tuning = core::FollowTuningFrom(a_settings);
+			const core::Vec3 goalPoint = intent.mode == core::MovementMode::FollowSlot
+				? core::OwnerLocalToWorldPoint(intent.localOffset, ownerPosition, a_owner->GetAngleZ())
+				: ownerPosition;
+			const float lag = std::sqrt(HorizontalDistanceSq(summonPosition, goalPoint));
+			const float secondsWithoutProgress = TrackFollowProgress(state, lag, intent.followRadius, summonPosition, a_now);
+
+			const core::FollowMotion motion = core::DecideFollowMotion(
+				a_model.order,
+				a_summon->IsInCombat(),
+				a_combatPermitted,
+				lag,
+				distanceToOwner,
+				secondsWithoutProgress,
+				tuning);
+
+			if (TryFollowWarp(a_summon, a_owner, id, a_model, motion, lag, distanceToOwner,
+					a_settings.movement.followMinDistance, tuning, state, a_now)) {
+				// The recall moved the actor: re-sample so the next tick's movement check does
+				// not read the teleport as a sprint.
+				state.lastSamplePosition = ToCore(a_summon->GetPosition());
+				state.positionSampledAt = a_now;
+			}
+			ApplyFollowSpeed(a_summon, id, motion, lag, state);
+		} else {
+			RestoreFollowSpeed(a_summon, id, state);
+		}
+
 		// 3. Apply it.
 		switch (intent.mode) {
 		case core::MovementMode::None:
@@ -487,13 +679,32 @@ namespace scf::engine::movement
 	void RetainOnly(const std::unordered_set<core::EntityID>& a_liveSummons)
 	{
 		std::erase_if(s_applied, [&a_liveSummons](const auto& a_entry) {
-			return a_liveSummons.find(a_entry.first) == a_liveSummons.end();
+			if (a_liveSummons.find(a_entry.first) != a_liveSummons.end()) {
+				return false;
+			}
+			ReleaseLeftoverSpeed(a_entry.first, a_entry.second);
+			return true;
 		});
 		leash::RetainOnly(a_liveSummons);
 	}
 
 	void ResetAll()
 	{
+		// Hand every SpeedMult boost back before the bookkeeping goes away: a load or a new
+		// game drops the records, not the actors, and a summon that is still alive would
+		// otherwise keep running at its last follow pace for the rest of its life.
+		//
+		// Known limitation (the same one the Rush in Engine/CommandActions.cpp carries): the
+		// actor's modifier is saved with the actor, but this module's record of it is not,
+		// so a summon that was running at a boosted pace when the player saved comes back
+		// carrying a modifier this module no longer has a record of. Its amount is unknown, so it cannot be taken
+		// back; the summon keeps the leftover points for the rest of its life (our own pace
+		// writes are relative and never subtract them). The same applies when the engine
+		// drops the modifier behind our back.
+		for (const auto& [id, state] : s_applied) {
+			ReleaseLeftoverSpeed(id, state);
+		}
+
 		s_applied.clear();
 		leash::ResetAll();
 		logger::info("[Movement] Movement state reset.");

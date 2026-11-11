@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **138/138 тестов успешно пройдено (0 failures)**.
+Текущий результат: **193/193 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -143,6 +143,13 @@ xmake run scf_tests
 * `TestFollowLeashReleasedOnlyForAwayOrders`: поводок ванильного `FollowTo` отпускается только для `MoveTo` с точкой, `Attack` и `WaitGuard`; `Follow`/`Return`/`MoveTo` без точки его сохраняют.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
+### Suite S: PoE2 M1/M4/M5/M6 — новые файлы
+* `tests/test_movement_intent.cpp` (+10): темп по отставанию на границах порогов, сломанный порог рывка не превращает бег в рывок, телепорт по дистанции и по застреванию, нет телепорта в бою / в MoveTo / Attack / WaitGuard / при выключенном warp.
+* `tests/test_formation.cpp` (15): для 1..10 призывов слоты уникальны и не ближе минимума, 1–4 совпадают с прежней раскладкой, слоты 0–5 не двигаются при росте отряда, детерминированность, вырожденные настройки.
+* `tests/test_persistence.cpp` (17): таймер возрождения, правило недавней смерти, отмена при выключении/отзыве, таймаут каста и лимит попыток, резерв, восстановление слота и приказа, `ShouldTrackSummonSpell` (мод-заклинания по умолчанию, vanilla-only, чёрный список), round-trip кодека и отказ на битых данных.
+* `tests/test_minion_panel.cpp` (12): цвет и формат здоровья, статус, заголовок, кулдаун, длительность, видимость ушедших записей, сортировка.
+* `tests/test_settings.cpp` (+1): новые секции INI читаются, пишутся и ограничиваются.
+
 ### Suite R: Keyword API (`KeywordApi`) — 7 tests
 Файл `tests/test_keyword_api.cpp`.
 * `TestKeywordEditorIds`: три EditorID API без учёта регистра; прочие — не API.
@@ -217,7 +224,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 138/138 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 193/193 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -344,6 +351,12 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-M2-1 (Attack what I attack):** призывы в `Follow`; ударить врага (меч/лук/заклинание) — в логе `[Assist] Player hit 0x... : N summon(s) switch focus to it`, призывы атакуют именно его. Ударить другого врага — переключаются. В `Passive` и при `Guard`/`MoveTo`/`Return` — не переключаются.
 **Тестовый плагин Keyword API.** `tools/make_keyword_test_esp.py <Skyrim.esm> <out.esp>` собирает `SCF_KeywordApiTest.esp` (ESL-флаг, мастер Skyrim.esm): три `KYWD` API и на каждый — заклинание «SCF Test: …» (огонь-и-забыть по актёру, 120 с, не враждебное) и способность «SCF Test Ability: …» (постоянная, на себя). Развёрнут в MO2 STB как мод `SCF Keyword API Test` (включить мод и плагин). В консоли: `help "SCF Test" 4` — FormID заклинаний; `player.addspell <id>` — выучить заклинание и кастовать в волка/врага; выбрать актёра в консоли и `addspell <id способности>` / `removespell <id>` — повесить/снять правило навсегда.
 
+* **[ ] TEST-M1-1 (Follow paces):** 4 призыва, бег игрока по лесу: в строю идут, при отставании бегут, далеко — заметно быстрее (`follow pace Run/Sprint`), застрявший за препятствием через ~3 с оказывается за спиной (`catch-up warp applied (no walking progress ...)`); в бою и в MoveTo телепортов нет.
+* **[ ] TEST-M4-1 (Persistent):** `bPersistentSummons = true` (FLICK «Persistent Summons»): призыв не исчезает по таймеру > 10 мин (`is now persistent`), максимум магии уменьшен на резерв (`max Magicka reserve`).
+* **[ ] TEST-M4-2 (Revive):** убить постоянного призыва — через ~7 с он появляется снова тем же заклинанием, с прежним приказом (`re-cast summon spell`, `revived from spell`, `order ... restored`); две смерти подряд — второй ждёт окно недавней смерти.
+* **[ ] TEST-M4-3 (Save/Load):** сохранить с постоянными призывами, загрузить: `co-save loaded`, слоты и резерв на месте; выключить режим — резерв снят.
+* **[ ] TEST-M5-1 (Rings):** 6+ призывов (если лимит позволяет) стоят двумя кольцами за спиной без наложения; 1–4 — как раньше.
+* **[ ] TEST-M6-1 (Panel):** FLICK «Show Minion Panel» или клавиша: панель с именами, здоровьем, приказом, целью, кулдауном команды обновляется в бою, не перехватывает мышь/клавиши, скрывается в меню.
 * **[ ] TEST-KW-1 (API idle):** без плагина с кейвордами в логе `[KeywordApi] 0 API keyword record(s) found ... idle`; поведение как раньше.
 * **[ ] TEST-KW-2 (Friends):** тестовый ESP с `KYWD SCF_PassThroughFriends` на базе призыва напарника (или через MGEF способности): призыв проходит сквозь игрока, напарника и других призывов игрока, но упирается в нейтральных NPC.
 * **[ ] TEST-KW-3 (All):** `SCF_PassThroughAll`: актёр проходит сквозь врагов и NPC.

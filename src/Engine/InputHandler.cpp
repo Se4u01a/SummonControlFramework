@@ -1,6 +1,7 @@
 #include "Engine/InputHandler.h"
 #include "Core/CommandQueue.h"
 #include "Core/FrameworkContext.h"
+#include "Integrations/MinionPanel.h"
 #include "PCH.h"
 
 #include <algorithm>
@@ -492,6 +493,10 @@ namespace scf::engine
 				HandleFollow();
 			} else if (key == settings.hotkeys.commandActionKey) {
 				HandleCommandAction();
+			} else if (settings.hotkeys.minionPanelToggleKey != 0 && key == settings.hotkeys.minionPanelToggleKey) {
+				const bool show = !integrations::MinionPanel::IsEnabled();
+				integrations::MinionPanel::SetEnabled(show);
+				Notify(show ? "SCF: Minion panel shown" : "SCF: Minion panel hidden");
 			}
 		}
 

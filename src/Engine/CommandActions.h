@@ -2,6 +2,8 @@
 
 #include "Core/CommandActions.h"
 
+#include <cstdint>
+
 namespace RE
 {
 	class Actor;
@@ -48,6 +50,11 @@ namespace scf::engine::actions
 
 	// After one Command key press has been executed for every summon: HUD summary.
 	void ReportBatch();
+
+	// Minion panel (M6): whether the summon has a command action, and the seconds left
+	// on its cooldown (0 = ready). Main thread.
+	[[nodiscard]] bool HasCommand(RE::Actor* a_summon);
+	[[nodiscard]] float CooldownRemaining(std::uint32_t a_summonId, float a_now);
 
 	// Every tactical tick: end expired Rush speed bonuses.
 	void Tick(float a_now);

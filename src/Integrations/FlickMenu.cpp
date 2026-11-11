@@ -1,4 +1,5 @@
 #include "Integrations/FlickMenu.h"
+#include "Integrations/MinionPanel.h"
 #include "Core/FrameworkContext.h"
 #include "Core/Settings.h"
 #include "PCH.h"
@@ -27,7 +28,8 @@ namespace scf::integrations
 			MoveTo,
 			WaitGuard,
 			Follow,
-			CommandAction
+			CommandAction,
+			MinionPanelToggle
 		};
 
 		class SCFMenuTool final : public FUCK::ITool
@@ -80,6 +82,7 @@ namespace scf::integrations
 						case HotkeySlot::WaitGuard:        data.hotkeys.waitGuardKey = key; break;
 						case HotkeySlot::Follow:           data.hotkeys.followKey = key; break;
 						case HotkeySlot::CommandAction:    data.hotkeys.commandActionKey = key; break;
+						case HotkeySlot::MinionPanelToggle: data.hotkeys.minionPanelToggleKey = key; break;
 						default: break;
 						}
 						settingsObj.ValidateAndSanitize();
@@ -104,6 +107,7 @@ namespace scf::integrations
 				DrawHotkeyRow("Guard / Hold Position", "Hold current position and defend against nearby threats (Default: Numpad 5)", HotkeySlot::WaitGuard, data.hotkeys.waitGuardKey);
 				DrawHotkeyRow("Follow in Formation", "Resume following player in tactical formation (Default: Numpad 6)", HotkeySlot::Follow, data.hotkeys.followKey);
 				DrawHotkeyRow("Command Action", "Each summon performs its type's command at the aimed enemy: rush, cast, detonate (SummonControlFramework_Commands.ini; Default: Numpad 7)", HotkeySlot::CommandAction, data.hotkeys.commandActionKey);
+				DrawHotkeyRow("Toggle Minion Panel", "Show or hide the minion HUD panel (Default: unbound)", HotkeySlot::MinionPanelToggle, data.hotkeys.minionPanelToggleKey);
 
 				FUCK::Spacing();
 
@@ -144,6 +148,33 @@ namespace scf::integrations
 
 				FUCK::Spacing();
 
+				// --- PoE2 minions: follow paces, persistence, panel ---
+				FUCK::SeparatorText("PoE2 Minions");
+				FUCK::SliderFloat("Sprint Distance", &data.movement.sprintDistance, 400.0f, 5000.0f, "%.0f");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("A following summon lagging further than this behind its slot sprints");
+
+				FUCK::SliderFloat("Run Speed (SpeedMult)", &data.movement.followRunSpeed, 100.0f, 300.0f, "%.0f");
+				FUCK::SliderFloat("Sprint Speed (SpeedMult)", &data.movement.sprintSpeed, 100.0f, 400.0f, "%.0f");
+
+				FUCK::SliderFloat("Stuck Recall Seconds", &data.recovery.stuckWarpSeconds, 0.0f, 15.0f, "%.1fs");
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("A following summon that makes no progress this long is recalled behind the player (0 = off)");
+
+				FUCK::Checkbox("Persistent Summons", &data.persistence.persistentSummons);
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Summons do not expire; each reserves max Magicka while it lives");
+
+				FUCK::Checkbox("Auto-Revive", &data.persistence.autoRevive);
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("A persistent summon that dies is re-summoned after the delay, unless another summon died recently");
+
+				FUCK::SliderFloat("Revive Delay", &data.persistence.reviveDelaySeconds, 1.0f, 60.0f, "%.0fs");
+				FUCK::SliderFloat("Magicka Reserve per Summon", &data.persistence.magickaReservePerSummon, 0.0f, 300.0f, "%.0f");
+
+				if (FUCK::Checkbox("Show Minion Panel", &data.minionPanel.enabled)) {
+					MinionPanel::SetEnabled(data.minionPanel.enabled);
+				}
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("HUD panel with every summon's health, order, state, target and command cooldown");
+
+				FUCK::Spacing();
+
 				// --- Section 3: Friendly Fire & Pass-Through ---
 				FUCK::SeparatorText("Friendly Fire Protection & Pass-Through");
 				FUCK::Checkbox("Enable Summon Protection", &data.friendlyFire.enabled);
@@ -179,6 +210,7 @@ namespace scf::integrations
 				FUCK::SameLine();
 				if (FUCK::Button(FUCK::IconText(ICON_FA_ARROWS_ROTATE, "Reload INI"))) {
 					settingsObj.LoadFromFile(iniPath);
+					MinionPanel::SetEnabled(settingsObj.Get().minionPanel.enabled);
 				}
 				FUCK::SameLine();
 				if (FUCK::Button(FUCK::IconText(ICON_FA_ROTATE_LEFT, "Restore Defaults"))) {

@@ -274,6 +274,17 @@ namespace scf::engine::actions
 		s_batch = {};
 	}
 
+	bool HasCommand(RE::Actor* a_summon)
+	{
+		const auto* entry = a_summon ? FindForSummon(a_summon) : nullptr;
+		return entry && entry->action != core::CommandAction::None;
+	}
+
+	float CooldownRemaining(std::uint32_t a_summonId, float a_now)
+	{
+		return s_cooldowns.Remaining(a_summonId, a_now);
+	}
+
 	void Tick(float a_now)
 	{
 		for (auto it = s_rushes.begin(); it != s_rushes.end();) {

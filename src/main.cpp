@@ -1,6 +1,7 @@
 #include "PCH.h"
 #include "Core/FrameworkContext.h"
 #include "Plugin/Messaging.h"
+#include "Engine/Persistence.h"
 #include "Plugin/RuntimeGate.h"
 
 namespace
@@ -45,6 +46,9 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	});
 
 	scf::plugin::RegisterMessaging();
+
+	// PoE2 M4: persistent summon slots and the Magicka reserve live in the SKSE co-save.
+	scf::engine::persistence::Install();
 
 	logger::info("{} has finished loading.", plugin->GetName());
 	return true;

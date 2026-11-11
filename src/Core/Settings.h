@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/Persistence.h"
 #include "Core/Types.h"
 #include "FriendlyFire/FriendlyFireSettings.h"
 
@@ -35,6 +36,12 @@ namespace scf::core
 	{
 		float followMinDistance{ 200.0f };
 		float followMaxDistance{ 450.0f };
+
+		// PoE2 stage M1: follow paces as SpeedMult values (100 = the actor's own pace).
+		float followWalkSpeed{ 100.0f };
+		float followRunSpeed{ 160.0f };
+		float sprintSpeed{ 230.0f };
+		float sprintDistance{ 1200.0f };  // lag beyond which a following summon sprints
 	};
 
 	struct CombatSettings
@@ -59,6 +66,8 @@ namespace scf::core
 	{
 		bool enableCatchUpWarp{ true };
 		float catchUpDistance{ 3500.0f };
+		float stuckWarpSeconds{ 3.0f };        // M1: no progress this long -> recall behind the owner
+		float stuckWarpMinDistance{ 300.0f };  // ...only while still lagging more than this
 	};
 
 	struct SquadSettings
@@ -66,6 +75,12 @@ namespace scf::core
 		std::size_t maxMeleeSlotsPerTarget{ 2 };
 		std::size_t maxRangedSlotsPerTarget{ 3 };
 		float formationSpreadRadius{ 160.0f };
+
+		// PoE2 stage M5: formation rings for large squads (core::FormationLayout).
+		std::size_t formationRingCapacity{ 6 };
+		float formationInnerRingScale{ 0.62f };
+		float formationMinSlotDistance{ 50.0f };
+		float formationMaxExpansion{ 4.0f };
 	};
 
 	struct HotkeySettings
@@ -77,6 +92,22 @@ namespace scf::core
 		std::uint32_t waitGuardKey{ 0x4C };          // Numpad 5 (76)
 		std::uint32_t followKey{ 0x4D };             // Numpad 6 (77)
 		std::uint32_t commandActionKey{ 0x47 };      // Numpad 7 (71): PoE2 "Command" action by summon type
+		std::uint32_t minionPanelToggleKey{ 0 };     // PoE2 M6 panel show/hide; 0 = unbound
+	};
+
+	// PoE2 stage M6: the minion HUD panel (integrations::MinionPanelConfig).
+	struct MinionPanelSettings
+	{
+		bool enabled{ false };
+		bool showHealthNumbers{ true };
+		bool showTarget{ true };
+		bool showCommand{ true };
+		bool showDuration{ true };
+		bool hideWhenEmpty{ false };
+		float posX{ 40.0f };
+		float posY{ 240.0f };
+		float width{ 260.0f };
+		std::size_t maxRows{ 32 };
 	};
 
 	struct SettingsData
@@ -90,6 +121,9 @@ namespace scf::core
 		SquadSettings squad{};
 		HotkeySettings hotkeys{};
 		friendly_fire::FriendlyFireSettings friendlyFire{};
+		PersistenceSettings persistence{};      // PoE2 M4 (blacklist ids resolved by the plugin)
+		std::string persistenceBlacklist{};     // [Persistence] sBlacklistedSpells, "Plugin.esp|0xID, ..."
+		MinionPanelSettings minionPanel{};
 	};
 
 	class Settings

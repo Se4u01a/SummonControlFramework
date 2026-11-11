@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -300,6 +301,23 @@ namespace scf::core
 			}
 			_data.squad.formationSpreadRadius = clamped;
 		}
+
+		// PoE2 stages M1 / M5 / M6: silent clamps (the modules sanitise again on use).
+		const auto clampFloat = [](float& a_value, float a_min, float a_max) {
+			a_value = std::isfinite(a_value) ? std::clamp(a_value, a_min, a_max) : a_min;
+		};
+		clampFloat(_data.movement.followWalkSpeed, 50.0f, 500.0f);
+		clampFloat(_data.movement.followRunSpeed, 50.0f, 500.0f);
+		clampFloat(_data.movement.sprintSpeed, 50.0f, 500.0f);
+		clampFloat(_data.movement.sprintDistance, 100.0f, 20000.0f);
+		clampFloat(_data.recovery.stuckWarpSeconds, 0.0f, 60.0f);
+		clampFloat(_data.recovery.stuckWarpMinDistance, 0.0f, 5000.0f);
+		_data.squad.formationRingCapacity = std::clamp<std::size_t>(_data.squad.formationRingCapacity, 1, 32);
+		clampFloat(_data.squad.formationInnerRingScale, 0.1f, 1.0f);
+		clampFloat(_data.squad.formationMinSlotDistance, 0.0f, 500.0f);
+		clampFloat(_data.squad.formationMaxExpansion, 1.0f, 10.0f);
+		clampFloat(_data.minionPanel.width, 120.0f, 1200.0f);
+		_data.minionPanel.maxRows = std::clamp<std::size_t>(_data.minionPanel.maxRows, 1, 64);
 	}
 
 	bool Settings::LoadFromString(std::string_view a_iniContent)
@@ -362,6 +380,14 @@ namespace scf::core
 					_data.movement.followMinDistance = ParseFloat(val, _data.movement.followMinDistance);
 				} else if (key == "followmaxdistance" || key == "ffollowmaxdistance") {
 					_data.movement.followMaxDistance = ParseFloat(val, _data.movement.followMaxDistance);
+				} else if (key == "followwalkspeed" || key == "ffollowwalkspeed") {
+					_data.movement.followWalkSpeed = ParseFloat(val, _data.movement.followWalkSpeed);
+				} else if (key == "followrunspeed" || key == "ffollowrunspeed") {
+					_data.movement.followRunSpeed = ParseFloat(val, _data.movement.followRunSpeed);
+				} else if (key == "sprintspeed" || key == "fsprintspeed") {
+					_data.movement.sprintSpeed = ParseFloat(val, _data.movement.sprintSpeed);
+				} else if (key == "sprintdistance" || key == "fsprintdistance") {
+					_data.movement.sprintDistance = ParseFloat(val, _data.movement.sprintDistance);
 				}
 			} else if (currentSection == "combat") {
 				if (key == "maxtargetradius" || key == "fmaxtargetradius") {
@@ -390,12 +416,24 @@ namespace scf::core
 					_data.recovery.enableCatchUpWarp = ParseBool(val, _data.recovery.enableCatchUpWarp);
 				} else if (key == "catchupdistance" || key == "fcatchupdistance") {
 					_data.recovery.catchUpDistance = ParseFloat(val, _data.recovery.catchUpDistance);
+				} else if (key == "stuckwarpseconds" || key == "fstuckwarpseconds") {
+					_data.recovery.stuckWarpSeconds = ParseFloat(val, _data.recovery.stuckWarpSeconds);
+				} else if (key == "stuckwarpmindistance" || key == "fstuckwarpmindistance") {
+					_data.recovery.stuckWarpMinDistance = ParseFloat(val, _data.recovery.stuckWarpMinDistance);
 				}
 			} else if (currentSection == "squad") {
 				if (key == "maxmeleeslotspertarget" || key == "umaxmeleeslotspertarget") {
 					_data.squad.maxMeleeSlotsPerTarget = ParseSizeT(val, _data.squad.maxMeleeSlotsPerTarget);
 				} else if (key == "maxrangedslotspertarget" || key == "umaxrangedslotspertarget") {
 					_data.squad.maxRangedSlotsPerTarget = ParseSizeT(val, _data.squad.maxRangedSlotsPerTarget);
+				} else if (key == "formationringcapacity" || key == "uformationringcapacity") {
+					_data.squad.formationRingCapacity = ParseSizeT(val, _data.squad.formationRingCapacity);
+				} else if (key == "formationinnerringscale" || key == "fformationinnerringscale") {
+					_data.squad.formationInnerRingScale = ParseFloat(val, _data.squad.formationInnerRingScale);
+				} else if (key == "formationminslotdistance" || key == "fformationminslotdistance") {
+					_data.squad.formationMinSlotDistance = ParseFloat(val, _data.squad.formationMinSlotDistance);
+				} else if (key == "formationmaxexpansion" || key == "fformationmaxexpansion") {
+					_data.squad.formationMaxExpansion = ParseFloat(val, _data.squad.formationMaxExpansion);
 				} else if (key == "formationspreadradius" || key == "fformationspreadradius") {
 					_data.squad.formationSpreadRadius = ParseFloat(val, _data.squad.formationSpreadRadius);
 				}
@@ -414,6 +452,60 @@ namespace scf::core
 					_data.hotkeys.followKey = ParseUInt32(val, _data.hotkeys.followKey);
 				} else if (key == "commandactionkey" || key == "ucommandactionkey") {
 					_data.hotkeys.commandActionKey = ParseUInt32(val, _data.hotkeys.commandActionKey);
+				} else if (key == "minionpaneltogglekey" || key == "uminionpaneltogglekey") {
+					_data.hotkeys.minionPanelToggleKey = ParseUInt32(val, _data.hotkeys.minionPanelToggleKey);
+				}
+			} else if (currentSection == "persistence") {
+				auto& p = _data.persistence;
+				if (key == "bpersistentsummons" || key == "persistentsummons") {
+					p.persistentSummons = ParseBool(val, p.persistentSummons);
+				} else if (key == "bpersistvanillaspellsonly" || key == "persistvanillaspellsonly") {
+					p.vanillaSpellsOnly = ParseBool(val, p.vanillaSpellsOnly);
+				} else if (key == "bautorevive" || key == "autorevive") {
+					p.autoRevive = ParseBool(val, p.autoRevive);
+				} else if (key == "frevivedelayseconds" || key == "revivedelayseconds") {
+					p.reviveDelaySeconds = ParseFloat(val, p.reviveDelaySeconds);
+				} else if (key == "frecentdeathwindowseconds" || key == "recentdeathwindowseconds") {
+					p.recentDeathWindowSeconds = ParseFloat(val, p.recentDeathWindowSeconds);
+				} else if (key == "fmagickareservepersummon" || key == "magickareservepersummon") {
+					p.magickaReservePerSummon = ParseFloat(val, p.magickaReservePerSummon);
+				} else if (key == "fminmagickafraction" || key == "minmagickafraction") {
+					p.minMagickaFraction = ParseFloat(val, p.minMagickaFraction);
+				} else if (key == "fpersistenteffectseconds" || key == "persistenteffectseconds") {
+					p.persistentEffectSeconds = ParseFloat(val, p.persistentEffectSeconds);
+				} else if (key == "feffectextendbelowseconds" || key == "effectextendbelowseconds") {
+					p.effectExtendBelowSeconds = ParseFloat(val, p.effectExtendBelowSeconds);
+				} else if (key == "frevivecasttimeoutseconds" || key == "revivecasttimeoutseconds") {
+					p.reviveCastTimeoutSeconds = ParseFloat(val, p.reviveCastTimeoutSeconds);
+				} else if (key == "umaxreviveattempts" || key == "maxreviveattempts") {
+					p.maxReviveAttempts = ParseUInt32(val, p.maxReviveAttempts);
+				} else if (key == "umaxtrackedslots" || key == "maxtrackedslots") {
+					p.maxTrackedSlots = ParseSizeT(val, p.maxTrackedSlots);
+				} else if (key == "sblacklistedspells" || key == "blacklistedspells") {
+					_data.persistenceBlacklist = ParseString(val, "");
+				}
+			} else if (currentSection == "minionpanel") {
+				auto& m = _data.minionPanel;
+				if (key == "bshowminionpanel" || key == "showminionpanel") {
+					m.enabled = ParseBool(val, m.enabled);
+				} else if (key == "bminionpanelhealthnumbers" || key == "minionpanelhealthnumbers") {
+					m.showHealthNumbers = ParseBool(val, m.showHealthNumbers);
+				} else if (key == "bminionpaneltargets" || key == "minionpaneltargets") {
+					m.showTarget = ParseBool(val, m.showTarget);
+				} else if (key == "bminionpanelcommand" || key == "minionpanelcommand") {
+					m.showCommand = ParseBool(val, m.showCommand);
+				} else if (key == "bminionpanelduration" || key == "minionpanelduration") {
+					m.showDuration = ParseBool(val, m.showDuration);
+				} else if (key == "bminionpanelhidewhenempty" || key == "minionpanelhidewhenempty") {
+					m.hideWhenEmpty = ParseBool(val, m.hideWhenEmpty);
+				} else if (key == "fminionpanelx" || key == "minionpanelx") {
+					m.posX = ParseFloat(val, m.posX);
+				} else if (key == "fminionpanely" || key == "minionpanely") {
+					m.posY = ParseFloat(val, m.posY);
+				} else if (key == "fminionpanelwidth" || key == "minionpanelwidth") {
+					m.width = ParseFloat(val, m.width);
+				} else if (key == "uminionpanelmaxrows" || key == "minionpanelmaxrows") {
+					m.maxRows = ParseSizeT(val, m.maxRows);
 				}
 			} else if (currentSection == "friendlyfire") {
 				if (key == "enablesummonprotection" || key == "benablesummonprotection" || key == "enabled" || key == "benabled") {
@@ -552,7 +644,12 @@ namespace scf::core
 		out << "[Movement]\n";
 		out << "; Normal follow distance\n";
 		out << "fFollowMinDistance = " << _data.movement.followMinDistance << "\n";
-		out << "fFollowMaxDistance = " << _data.movement.followMaxDistance << "\n\n";
+		out << "fFollowMaxDistance = " << _data.movement.followMaxDistance << "\n";
+		out << "; PoE2 follow paces (SpeedMult; 100 = own pace) and the lag that starts a sprint\n";
+		out << "fFollowWalkSpeed = " << _data.movement.followWalkSpeed << "\n";
+		out << "fFollowRunSpeed = " << _data.movement.followRunSpeed << "\n";
+		out << "fSprintSpeed = " << _data.movement.sprintSpeed << "\n";
+		out << "fSprintDistance = " << _data.movement.sprintDistance << "\n\n";
 
 		out << "[Combat]\n";
 		out << "; Combat pursuit leash\n";
@@ -572,12 +669,20 @@ namespace scf::core
 		out << "[Recovery]\n";
 		out << "; Emergency warp catch-up if summon gets stuck\n";
 		out << "bEnableCatchUpWarp = " << (_data.recovery.enableCatchUpWarp ? "true" : "false") << "\n";
-		out << "fCatchUpDistance = " << _data.recovery.catchUpDistance << "\n\n";
+		out << "fCatchUpDistance = " << _data.recovery.catchUpDistance << "\n";
+		out << "; Recall behind the player after this many seconds without progress (while still lagging)\n";
+		out << "fStuckWarpSeconds = " << _data.recovery.stuckWarpSeconds << "\n";
+		out << "fStuckWarpMinDistance = " << _data.recovery.stuckWarpMinDistance << "\n\n";
 
 		out << "[Squad]\n";
 		out << "uMaxMeleeSlotsPerTarget = " << _data.squad.maxMeleeSlotsPerTarget << "\n";
 		out << "uMaxRangedSlotsPerTarget = " << _data.squad.maxRangedSlotsPerTarget << "\n";
-		out << "fFormationSpreadRadius = " << _data.squad.formationSpreadRadius << "\n\n";
+		out << "fFormationSpreadRadius = " << _data.squad.formationSpreadRadius << "\n";
+		out << "; Large squads stand in rings: slots per ring, inner ring radius factor, minimum spacing, max expansion\n";
+		out << "uFormationRingCapacity = " << _data.squad.formationRingCapacity << "\n";
+		out << "fFormationInnerRingScale = " << _data.squad.formationInnerRingScale << "\n";
+		out << "fFormationMinSlotDistance = " << _data.squad.formationMinSlotDistance << "\n";
+		out << "fFormationMaxExpansion = " << _data.squad.formationMaxExpansion << "\n\n";
 
 		out << "[Hotkeys]\n";
 		out << "uFocusTargetKey = " << _data.hotkeys.focusTargetKey << "\n";
@@ -586,7 +691,37 @@ namespace scf::core
 		out << "uMoveToKey = " << _data.hotkeys.moveToKey << "\n";
 		out << "uWaitGuardKey = " << _data.hotkeys.waitGuardKey << "\n";
 		out << "uFollowKey = " << _data.hotkeys.followKey << "\n";
-		out << "uCommandActionKey = " << _data.hotkeys.commandActionKey << "\n\n";
+		out << "uCommandActionKey = " << _data.hotkeys.commandActionKey << "\n";
+		out << "uMinionPanelToggleKey = " << _data.hotkeys.minionPanelToggleKey << "\n\n";
+
+		out << "[Persistence]\n";
+		out << "; PoE2 persistent summons: no timer, Magicka reserve, auto-revive after a death\n";
+		out << "bPersistentSummons = " << (_data.persistence.persistentSummons ? "true" : "false") << "\n";
+		out << "bPersistVanillaSpellsOnly = " << (_data.persistence.vanillaSpellsOnly ? "true" : "false") << "\n";
+		out << "bAutoRevive = " << (_data.persistence.autoRevive ? "true" : "false") << "\n";
+		out << "fReviveDelaySeconds = " << _data.persistence.reviveDelaySeconds << "\n";
+		out << "fRecentDeathWindowSeconds = " << _data.persistence.recentDeathWindowSeconds << "\n";
+		out << "fMagickaReservePerSummon = " << _data.persistence.magickaReservePerSummon << "\n";
+		out << "fMinMagickaFraction = " << _data.persistence.minMagickaFraction << "\n";
+		out << "fPersistentEffectSeconds = " << _data.persistence.persistentEffectSeconds << "\n";
+		out << "fEffectExtendBelowSeconds = " << _data.persistence.effectExtendBelowSeconds << "\n";
+		out << "fReviveCastTimeoutSeconds = " << _data.persistence.reviveCastTimeoutSeconds << "\n";
+		out << "uMaxReviveAttempts = " << _data.persistence.maxReviveAttempts << "\n";
+		out << "uMaxTrackedSlots = " << _data.persistence.maxTrackedSlots << "\n";
+		out << "; Comma-separated Plugin.esp|0xID summon spells never made persistent\n";
+		out << "sBlacklistedSpells = " << _data.persistenceBlacklist << "\n\n";
+
+		out << "[MinionPanel]\n";
+		out << "bShowMinionPanel = " << (_data.minionPanel.enabled ? "true" : "false") << "\n";
+		out << "bMinionPanelHealthNumbers = " << (_data.minionPanel.showHealthNumbers ? "true" : "false") << "\n";
+		out << "bMinionPanelTargets = " << (_data.minionPanel.showTarget ? "true" : "false") << "\n";
+		out << "bMinionPanelCommand = " << (_data.minionPanel.showCommand ? "true" : "false") << "\n";
+		out << "bMinionPanelDuration = " << (_data.minionPanel.showDuration ? "true" : "false") << "\n";
+		out << "bMinionPanelHideWhenEmpty = " << (_data.minionPanel.hideWhenEmpty ? "true" : "false") << "\n";
+		out << "fMinionPanelX = " << _data.minionPanel.posX << "\n";
+		out << "fMinionPanelY = " << _data.minionPanel.posY << "\n";
+		out << "fMinionPanelWidth = " << _data.minionPanel.width << "\n";
+		out << "uMinionPanelMaxRows = " << _data.minionPanel.maxRows << "\n\n";
 
 		out << "[FriendlyFire]\n";
 		out << "bEnableSummonProtection = " << (_data.friendlyFire.enabled ? "true" : "false") << "\n";
