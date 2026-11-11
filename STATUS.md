@@ -145,6 +145,9 @@
 * **Stage 7: catch-up / warp hardening — 2026-11-11 (DSH agent):**
   * Pure rules in `src/Core/CatchUp.*`: distance or no-progress triggers, hysteresis, `fCatchUpCooldownSeconds`, combat / space / airborne-swimming-mounted refusals, landing candidates behind the player checked by ray casts; one `SetPosition` + navmesh snap per event; per-reason statistics. New INI keys `fCatchUpCooldownSeconds`, `bCatchUpWarpSummonCombat`, `bCatchUpWarpOwnerCombat` (FLICK). 27 catch-up tests.
   * **Field status:** built and deployed, NOT tested in game (TEST-CU-1).
+* **Stage 8 TrueHUD focus indicator and Stage 0 test scene — 2026-11-11 (DSH agent):**
+  * Optional TrueHUD info bar on the FocusTarget (`TrueHUDBackend`, synced every tick from the Attack order); console scene `tools/scene/` (two summons, neutral and hostile NPCs, reset).
+  * **Field status:** built and deployed, NOT tested in game (TEST-TH-1); enemy FormIDs in the scene unverified.
 * **Stage 9: Papyrus API and reanimates — 2026-11-11:**
   * `scripts/Source/SCF.psc` + `src/Integrations/Papyrus.{h,cpp}`: `SCF.RegisterSummon / UnregisterSummon / IsRegistered / GetSummons / GetSummonCount` (class `SCF`, global natives, not callable from tasklets), registered from `SKSEPluginLoad`. Owner policy: the player only; no owner argument means the player.
   * `SummonRegistry`: `explicitRegistration` (survives the 15 Hz refresh), `IsRosterIndependent`, `GetOrphanedSummons`; `explicit`/`Reanimate` records are outside the owner's conjuration limit — they never consume a slot and are never displaced.

@@ -1,0 +1,35 @@
+; =============================================================================
+; SCF test scene - clean up
+; =============================================================================
+;
+; Run when the scene is over:
+;   bat scf_reset
+;
+; This does NOT remove actors one by one - 'killall' is the convenient one-liner.
+; Everything that is permanent (spells, perk) is undone in step 4.
+
+; --- 1. remove the spawned actors -------------------------------------------
+; TODO(verify): 'killall' - if the console rejects it, click each spawned actor
+; and type 'kill' (or just leave the cell, QASmoke is not used by the game).
+killall
+
+; --- 2. leave the test cell --------------------------------------------------
+; TODO(verify): 'coc Dragonsreach' - replace with any interior cell that works
+; in your load order, e.g. 'coc HelgenKeep01'.
+coc Dragonsreach
+
+; --- 3. god mode off --------------------------------------------------------
+; tgm is a toggle; if you turned it on yourself before the scene, skip this line.
+tgm
+
+; --- 4. undo the save changes made by scf_scene -----------------------------
+; SKIP the line for anything the character already had before the scene
+; (removeperk/removespell would take away a legitimately earned perk/spell).
+player.removespell 000640B6
+player.removespell 000204C3
+player.removeperk 000581DE
+
+; --- 5. framework state -----------------------------------------------------
+; Summons are dispelled together with the spells above; 'scf status' must report
+; no tracked summons afterwards.
+scf status

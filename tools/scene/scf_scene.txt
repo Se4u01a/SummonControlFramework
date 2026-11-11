@@ -1,0 +1,60 @@
+; =============================================================================
+; SCF test scene - PLAN.md section 14, "Stage 0" (small reproducible test scene)
+; =============================================================================
+;
+; USAGE
+;   1. copy this file into the Skyrim folder - the one that holds SkyrimSE.exe,
+;      NOT into Data/ (the console 'bat' command only reads from the game folder)
+;   2. in game open the console (~) and type:   bat scf_scene
+;   3. continue with scf_enemies.txt / scf_reset.txt, see README.md
+;
+; Lines that start with ';' are comments. If the console answers "unknown command"
+; for them, ignore it - the commands themselves still run in order.
+;
+; WARNING - this scene CHANGES THE SAVE: it adds two spells and the Twin Souls
+; perk to the player and moves him to QASmoke. Use a disposable test save.
+; scf_reset.txt removes the spells and the perk again.
+
+; --- 1. quiet empty test cell ------------------------------------------------
+; QASmoke is the vanilla QA cell: no NPCs, no navmesh traffic, nothing that
+; fights on its own. TODO(verify): if 'coc QASmoke' is rejected, use any empty
+; interior cell instead.
+coc QASmoke
+
+; --- 2. free casting ---------------------------------------------------------
+; tgm is a toggle: it gives unlimited Magicka, so the scene does not have to
+; touch the player's Magicka or Conjuration skill (and does not leave raised
+; stats behind). scf_reset.txt toggles it off again.
+tgm
+
+; --- 3. two summons at once --------------------------------------------------
+; Twin Souls raises iMaxSummonedCreatures to 2.
+; NOTE: the project's own TESTING.md verified 000581DE in gameplay;
+; 000D5F1C (from the task description) is NOT confirmed - see README.md.
+player.addperk 000581DE
+
+; --- 4. the two summon spells ------------------------------------------------
+; TODO(verify): both ids come from the task description.
+player.addspell 000640B6
+player.addspell 000204C3
+
+; --- 5. equip them -----------------------------------------------------------
+; TODO(verify): 'equipspell' is the least certain command in this file. If the
+; console rejects these two lines, equip both spells by hand from the Magic menu
+; (one in each hand) - everything else in the scene still works.
+player.equipspell 000640B6 left
+player.equipspell 000204C3 right
+
+; --- 6. neutral actor --------------------------------------------------------
+; A follower placed in the cell. He does not attack the player, so he is the
+; "neutral NPC" of the scene: summons must not start a fight with him.
+; TODO(verify): 000A2C8E is Lydia from memory.
+player.placeatme 000A2C8E 1
+
+; --- 7. hostile actors -------------------------------------------------------
+; Kept in a separate file so it can be run again after the player looked around:
+;   bat scf_enemies
+
+; --- 8. framework diagnostics ------------------------------------------------
+; SCF console command: prints tracked summons, limits and tick state.
+scf status

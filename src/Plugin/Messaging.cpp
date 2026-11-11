@@ -18,6 +18,7 @@
 #include "Integrations/FlickMenu.h"
 #include "Integrations/MinionPanel.h"
 #include "Integrations/PrecisionBackend.h"
+#include "Integrations/TrueHUDBackend.h"
 #include "Core/CommandActions.h"
 #include "PCH.h"
 
@@ -148,6 +149,7 @@ namespace scf::plugin
 			friendly_fire::MagicHook::Install();
 			friendly_fire::ProjectileHook::Install();
 			integrations::PrecisionBackend::Initialize();
+			integrations::TrueHUDBackend::Initialize();
 			integrations::FlickMenu::Install();
 			integrations::MinionPanel::Install();
 			integrations::MinionPanel::Configure(ToPanelConfig(core::FrameworkContext::GetSingleton().GetSettings().Get().minionPanel));

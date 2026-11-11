@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **233/233 тестов успешно пройдено (0 failures)** в общем рабочем дереве (счёт включает тесты параллельно разрабатываемых задач других агентов; в HEAD было 195).
+Текущий результат: **233/233 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -373,6 +373,8 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-FF-KM-1 (Friendly killmove):** `bSuppressFriendlyKillmoves = true`; довести своего призыва до низкого здоровья своими ударами (защита урона выключена) — добивания нет, в логе `[KillmoveHook] Refused friendly killmove on protected summon ...`; по врагам killmove работают как обычно. В логе при загрузке `[KillmoveHook] killmove-refusal seat installed on 4 call site(s)`.
 * **[ ] TEST-FF-HR-1 (Friendly stagger):** `bSuppressFriendlyHitReactions = true`, урон по призывам разрешён: силовая атака игрока по призыву не вызывает стаггер (`[HitReactionHook] Suppressed hit reaction ...`); по врагам стаггер обычный; при `false` — ваниль. После дружественного удара призыв не нападает на игрока (`[HitHook] Cleared aggressor reaction ...`).
 * **[ ] TEST-CU-1 (Catch-up warp):** убежать от призыва на > 3500 или запереть его за дверью/в яме — перенос за спину (`[Movement] Summon ... catch-up warp applied (...)`), не чаще раза в 5 с; в бою переноса нет (`refused: ...Combat`), в воздухе/воде/верхом — нет; на узком мосту/у обрыва — `refused: NoSafeSpot`, а не перенос в пустоту; призыв не оказывается в стене.
+* **[ ] TEST-TH-1 (TrueHUD focus):** с TrueHUD: Numpad 1 по врагу — над ним появляется полоска здоровья и мигает (`[TrueHUDBackend] Info bar added for focus target ...`); Return/смерть цели — полоска уходит. Без TrueHUD — одна строка `TrueHUD not found`, ничего не ломается.
+* **Тестовая сцена:** `tools/scene/README.md` — скопировать `scf_*.txt` в папку игры и выполнить `bat scf_scene`, затем `bat scf_enemies`; после — `bat scf_reset`.
 * **[ ] TEST-M5-2 (Engine limit):** `uPlayerSummonLimit = 6` (FLICK «Player Summon Limit»): шесть кастов призыва подряд — все шесть остаются (`[SummonLimit] player summon limit raised: perks give 1 ...`), седьмой снимает самого старого; `0` — снова ванильный лимит; NPC-призыватели не меняются. В логе нет `Displacing oldest summon` от реестра SCF.
 * **[ ] TEST-M5-1 (Rings):** 6+ призывов (если лимит позволяет) стоят двумя кольцами за спиной без наложения; 1–4 — как раньше.
 * **[ ] TEST-M6-1 (Panel):** FLICK «Show Minion Panel» или клавиша: панель с именами, здоровьем, приказом, целью, кулдауном команды обновляется в бою, не перехватывает мышь/клавиши, скрывается в меню.

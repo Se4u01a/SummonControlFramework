@@ -13,6 +13,7 @@
 #include "Engine/SummonLimit.h"
 #include "Core/SummonLimit.h"
 #include "Integrations/MinionPanel.h"
+#include "Integrations/TrueHUDBackend.h"
 #include "Integrations/Papyrus.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
@@ -498,6 +499,20 @@ namespace scf::engine::update
 				}
 				integrations::MinionPanel::PublishSnapshot(ownerId, a_timestamp, cooldowns);
 			}
+
+			// Stage 8: TrueHUD info bar on the FocusTarget. currentTargetId also holds targets
+			// the AI picked itself, so only an Attack order (FocusTarget) counts as a focus.
+			{
+				core::EntityID focusId = core::InvalidEntityID;
+				for (const auto& [id, actor] : orderedSummons) {
+					const auto* model = registry.GetModel(id);
+					if (model && model->order == core::SummonOrder::Attack && model->currentTargetId != core::InvalidEntityID) {
+						focusId = model->currentTargetId;
+						break;
+					}
+				}
+				integrations::TrueHUDBackend::Sync(focusId);
+			}
 		}
 
 		struct PlayerUpdate
@@ -559,6 +574,7 @@ namespace scf::engine::update
 		actions::Reset();
 		persistence::Reset();
 		integrations::MinionPanel::ClearSnapshot();
+		integrations::TrueHUDBackend::ClearFocusTarget();
 		core::FrameworkContext::GetSingleton().ResetRuntimeState();
 	}
 }

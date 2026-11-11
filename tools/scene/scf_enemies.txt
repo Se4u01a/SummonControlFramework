@@ -1,0 +1,35 @@
+; =============================================================================
+; SCF test scene - hostile actors
+; =============================================================================
+;
+; Run AFTER scf_scene.txt (the player is then in QASmoke with two summons):
+;   bat scf_enemies
+;
+; The base ids below are from memory, not from Skyrim.esm - each one is marked
+; TODO(verify). If a line is rejected, only that line fails (the console prints
+; an error and the rest of the file still runs). README.md has the recipe for
+; finding the real id in game ('help <name> 0').
+;
+; NOTE: placeatme spawns the actor at the player's position; the count argument
+; spawns several copies. Do not place more than the summons can handle.
+
+; bandit - melee hostile, the default combat target
+; TODO(verify): 00037B8C
+player.placeatme 00037B8C 2
+
+; draugr - undead, hits harder, useful for the "attack ends when the target
+; dies" test
+; TODO(verify): 0001B0FB
+player.placeatme 0001B0FB 1
+
+; wolf - fast creature: the movement / follow-pace / catch-up tests want it
+; TODO(verify): 00023ABE
+player.placeatme 00023ABE 2
+
+; -----------------------------------------------------------------------------
+; FALLBACK if none of the ids above resolve: place a neutral actor and force
+; him into combat. Select the actor in the console (click it), then run:
+;   startcombat player
+; TODO(verify): 'startcombat' is a console command used with a selected
+; reference; if it is unknown, place a hostile actor by hand instead.
+; -----------------------------------------------------------------------------

@@ -1024,7 +1024,7 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [x] Добавить runtime gate и лог версии игры.
 - [x] Настроить spdlog.
 - [x] Добавить консольные команды (реализована команда scf с status, registry, reload, help).
-- [ ] Создать маленькую тестовую сцену и `bat`-скрипты для вызова двух призывов и нескольких NPC.
+- [x] **[2026-11-11]** Тестовая сцена: `tools/scene/` (`bat scf_scene`, `scf_enemies`, `scf_reset`, README). В игре не запускалась; FormID врагов помечены `TODO(verify)`.
 - [x] Проверить чистые Unit-тесты без Skyrim runtime (50/50 тестов проходят).
 
 **Результат:** минимальный DLL, воспроизводимая тестовая сцена, диагностика и автоматические тесты Core.
@@ -1189,8 +1189,8 @@ JSON-профили по race, actor base, keyword и типу призыва:
 
 - [x] Назначаемые hotkeys для всех приказов отряда через FLICK Menu (F7) и INI-конфигурацию.
 - [x] Внутриигровое интерактивное меню FLICK (`FUCK.dll`) и INI для управления параметрами AI, коллизий и FriendlyFire на лету.
-- [ ] Индикатор FocusTarget через TrueHUD при наличии зависимости.
-- [ ] Отображение активных призывов и текущих приказов.
+- [x] **[РЕАЛИЗОВАНО 2026-11-11, ждёт полевого теста]** Индикатор FocusTarget через TrueHUD: `src/Integrations/TrueHUDBackend.*` — info bar у цели приказа Focus (без захвата target control); без TrueHUD — одна строка лога.
+- [x] **[РЕАЛИЗОВАНО 2026-11-11]** Отображение активных призывов и приказов — панель миньонов PoE2 M6 (`src/Integrations/MinionPanel.*`).
 - [x] Serialization долговременных настроек (SaveToFile/LoadFromFile).
 - [ ] Проверка совместимости с APMF, Precision, I'm Walkin' Here, TrueHUD, Ordinator, Apocalypse, Adamant и популярными follower frameworks.
 - [ ] Документировать несовместимости и порядок загрузки только после тестов.
