@@ -3,6 +3,7 @@
 #include "Core/FrameworkContext.h"
 #include "Engine/CombatGate.h"
 #include "Engine/CommandActions.h"
+#include "Engine/KeywordApi.h"
 #include "Engine/FollowLeash.h"
 #include "Engine/PassThrough.h"
 #include "Engine/EventAdapter.h"
@@ -79,6 +80,7 @@ namespace scf::plugin
 			engine::EventAdapter::RegisterEventSinks();
 			engine::InputHandler::Register();
 			engine::actions::Load();
+			engine::keywords::Load();
 			engine::combat::Install();
 			engine::leash::Install();
 			engine::passthrough::Install();

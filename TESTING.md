@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **131/131 тестов успешно пройдено (0 failures)**.
+Текущий результат: **138/138 тестов успешно пройдено (0 failures)**.
 
 ### Запуск тестов
 ```powershell
@@ -143,6 +143,16 @@ xmake run scf_tests
 * `TestFollowLeashReleasedOnlyForAwayOrders`: поводок ванильного `FollowTo` отпускается только для `MoveTo` с точкой, `Attack` и `WaitGuard`; `Follow`/`Return`/`MoveTo` без точки его сохраняют.
 * `TestMoveToArrivalRadiusIsHorizontal`: Проверяет горизонтальный критерий прибытия (перепад высоты не удерживает приказ в движении).
 
+### Suite R: Keyword API (`KeywordApi`) — 7 tests
+Файл `tests/test_keyword_api.cpp`.
+* `TestKeywordEditorIds`: три EditorID API без учёта регистра; прочие — не API.
+* `TestKeywordPassThroughFriends`: призыв напарника с кейвордом проходит сквозь игрока и напарника, но не сквозь бандита; без кейворда — нет; неизвестный лидер не совпадает.
+* `TestKeywordPassThroughAll`: проходит сквозь всех, даже при выключенном `bEnableCollisionBypass`.
+* `TestKeywordUntargetableHostilesPass`: враги проходят сквозь недоступного, союзники — нет.
+* `TestSelectorAvoidsUntargetable`: недоступный ответ селектора заменяется следующей годной целью, иначе 0.
+* `TestRefilterOnlyRelevantRows`: обычные актёры не перефильтровываются; появление/смена/потеря флага — да.
+* `TestPassThroughSignature`: подпись зависит от флагов, лидера и множества врагов, но не от их порядка.
+
 ### Suite Q: PoE2 command actions (`CommandActions`) — 5 tests
 Файл `tests/test_command_actions.cpp`, этап M3.
 * `TestCommandCatalogDefaultsParse`: файл по умолчанию разбирается без предупреждений (6 атронахов, `Default = Rush`, 8 с, рывок +60 на 3 с).
@@ -207,7 +217,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 131/131 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 138/138 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -332,6 +342,11 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-5 (Only the focused target):** После приказа `Numpad 1` суммон не переключается на других врагов, рядом стоящих: `StartCombat refused ... (focus-target-only)` для чужих целей.
 * **[ ] TEST-COMBAT-6 (Attack ends):** Когда цель умирает, приказ завершается сам: `attack order finished (target gone) -> Follow`, суммон возвращается в строй.
 * **[ ] TEST-M2-1 (Attack what I attack):** призывы в `Follow`; ударить врага (меч/лук/заклинание) — в логе `[Assist] Player hit 0x... : N summon(s) switch focus to it`, призывы атакуют именно его. Ударить другого врага — переключаются. В `Passive` и при `Guard`/`MoveTo`/`Return` — не переключаются.
+* **[ ] TEST-KW-1 (API idle):** без плагина с кейвордами в логе `[KeywordApi] 0 API keyword record(s) found ... idle`; поведение как раньше.
+* **[ ] TEST-KW-2 (Friends):** тестовый ESP с `KYWD SCF_PassThroughFriends` на базе призыва напарника (или через MGEF способности): призыв проходит сквозь игрока, напарника и других призывов игрока, но упирается в нейтральных NPC.
+* **[ ] TEST-KW-3 (All):** `SCF_PassThroughAll`: актёр проходит сквозь врагов и NPC.
+* **[ ] TEST-KW-4 (Untargetable):** `SCF_Untargetable` на призыве: враги его не атакуют и проходят сквозь, переключаются на игрока; если других целей нет — выходят из боя (`leaves combat ... SCF_Untargetable`); `StartCombat refused ... SCF_Untargetable` в логе.
+* **[ ] TEST-KW-5 (Effect-driven):** кейворд на MGEF: правило действует, пока эффект активен, и снимается после (поведение возвращается к ванильному).
 * **[ ] TEST-M3-1 (Command: catalog):** после первого запуска появился `SummonControlFramework_Commands.ini`; в логе `[Command] catalog: 6 summon types, default Rush`.
 * **[ ] TEST-M3-2 (Command: rush):** волки, враг под прицелом, `Numpad 7`: HUD `SCF: Command | N rush`, волки заметно быстрее бегут к врагу и атакуют его; через 3 с в логе `rush over`; повторное нажатие до 8 с — `on cooldown`.
 * **[ ] TEST-M3-3 (Command: cast):** огненный атронах, `Numpad 7` по врагу — атронах сразу бросает огненный шар в цель (`casts 'Fireball'`); другие призывы рядом не получают урона от взрыва.

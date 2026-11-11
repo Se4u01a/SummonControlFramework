@@ -20,12 +20,34 @@ namespace scf::core
 		return a_rayLayer == 30 && a_targetLayer == 30;
 	}
 
+	bool IsUntargetablePair(const PassThroughParty& a_lhs, const PassThroughParty& a_rhs) noexcept
+	{
+		const auto hostileTo = [](const PassThroughParty& a_untargetable, EntityID a_other) {
+			return a_untargetable.Has(kUntargetable) &&
+			       std::find(a_untargetable.hostileIds.begin(), a_untargetable.hostileIds.end(), a_other) != a_untargetable.hostileIds.end();
+		};
+		return hostileTo(a_lhs, a_rhs.id) || hostileTo(a_rhs, a_lhs.id);
+	}
+
 	bool ShouldPassThrough(const PassThroughParty& a_lhs, const PassThroughParty& a_rhs, const CollisionSettings& a_settings) noexcept
 	{
-		if (!a_settings.enableCollisionBypass) {
+		if (a_lhs.id == InvalidEntityID || a_rhs.id == InvalidEntityID || a_lhs.id == a_rhs.id) {
 			return false;
 		}
-		if (a_lhs.id == InvalidEntityID || a_rhs.id == InvalidEntityID || a_lhs.id == a_rhs.id) {
+
+		// Keyword API: explicit requests from data, not gated by the INI switches.
+		if (a_lhs.Has(kPassThroughAll) || a_rhs.Has(kPassThroughAll)) {
+			return true;
+		}
+		if (IsUntargetablePair(a_lhs, a_rhs)) {
+			return true;
+		}
+		if ((a_lhs.Has(kPassThroughFriends) || a_rhs.Has(kPassThroughFriends)) &&
+			a_lhs.leaderId != InvalidEntityID && a_lhs.leaderId == a_rhs.leaderId) {
+			return true;
+		}
+
+		if (!a_settings.enableCollisionBypass) {
 			return false;
 		}
 
@@ -39,6 +61,26 @@ namespace scf::core
 			return a_rhs.ownerId == a_lhs.id;
 		}
 		return false;
+	}
+
+	std::uint64_t PassThroughSignature(const PassThroughParty& a_party) noexcept
+	{
+		// FNV-1a over flags and leader, plus an order-independent sum over the hostile set.
+		std::uint64_t hash = 1469598103934665603ull;
+		const auto mix = [&](std::uint64_t a_value) {
+			hash ^= a_value;
+			hash *= 1099511628211ull;
+		};
+		mix(a_party.flags);
+		mix(a_party.leaderId);
+		mix(a_party.ownerId);
+		std::uint64_t hostile = 0;
+		for (const auto id : a_party.hostileIds) {
+			hostile += (static_cast<std::uint64_t>(id) * 0x9E3779B97F4A7C15ull) | 1ull;
+		}
+		mix(hostile);
+		mix(a_party.hostileIds.size());
+		return hash;
 	}
 
 	std::vector<EntityID> RowsToRefilter(const std::vector<PassThroughRow>& a_previous, const CollisionSettings& a_previousSettings,
@@ -65,12 +107,19 @@ namespace scf::core
 
 		for (const auto& row : a_current) {
 			const auto* before = find(a_previous, row.id);
-			if (settingsChanged || (row.systemGroup != 0 && (!before || before->systemGroup != row.systemGroup))) {
+			if (!row.relevant) {
+				if (before && before->relevant) {
+					add(row.id);  // stopped being relevant: back to vanilla
+				}
+				continue;
+			}
+			const bool changed = !before || !before->relevant || before->systemGroup != row.systemGroup || before->signature != row.signature;
+			if (settingsChanged || (row.systemGroup != 0 && changed)) {
 				add(row.id);
 			}
 		}
 		for (const auto& row : a_previous) {
-			if (settingsChanged || !find(a_current, row.id)) {
+			if (row.relevant && (settingsChanged || !find(a_current, row.id))) {
 				add(row.id);
 			}
 		}

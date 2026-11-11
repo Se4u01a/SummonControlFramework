@@ -2,6 +2,7 @@
 
 #include "Core/PassThrough.h"
 #include "Core/Settings.h"
+#include "Engine/KeywordApi.h"
 
 #include <vector>
 
@@ -57,8 +58,11 @@ namespace scf::engine::passthrough
 		RE::Actor* actor{ nullptr };  // main thread only, for the filter-info read
 	};
 
-	// Main thread, every tactical tick: the owner and its live summons.
-	void Publish(const std::vector<Member>& a_members, const core::CollisionSettings& a_settings);
+	// Main thread, every tactical tick: the owner and its live summons (SCF rule), plus
+	// every loaded actor with its keyword flags and leader (keyword API; empty while no
+	// mod defines the keywords). An SCF_Untargetable actor's hostile set is computed
+	// here (IsHostileToActor in either direction).
+	void Publish(const std::vector<Member>& a_members, const std::vector<keywords::WorldActor>& a_world, const core::CollisionSettings& a_settings);
 
 	void ResetAll();
 }

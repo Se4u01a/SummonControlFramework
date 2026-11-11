@@ -7,6 +7,7 @@
 #include "Engine/ActorSpace.h"
 #include "Engine/CombatGate.h"
 #include "Engine/CommandActions.h"
+#include "Engine/KeywordApi.h"
 #include "Engine/PassThrough.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
@@ -283,7 +284,10 @@ namespace scf::engine::update
 				for (const auto& [id, actor] : orderedSummons) {
 					members.push_back({ core::PassThroughParty{ id, ownerId }, actor });
 				}
-				passthrough::Publish(members, settings.collision);
+				// Keyword API snapshot (empty while no mod defines the keywords).
+				const auto world = keywords::ScanWorld(a_player);
+				passthrough::Publish(members, world, settings.collision);
+				combat::PublishUntargetable(world);
 			}
 
 			// PoE2-style aggression radius around the owner for engine-chosen fights.

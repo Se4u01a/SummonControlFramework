@@ -13,6 +13,7 @@
 #include <format>
 #include <string>
 #include <shared_mutex>
+#include <unordered_map>
 #include <vector>
 
 namespace scf::engine::passthrough
@@ -34,8 +35,11 @@ namespace scf::engine::passthrough
 
 		std::shared_mutex s_tableLock;
 		std::vector<Entry> s_table;
+		std::unordered_map<RE::FormID, std::size_t> s_byId;          // into s_table
+		std::unordered_map<std::uint32_t, std::size_t> s_byGroup;    // system group -> s_table
+		std::vector<core::PassThroughRow> s_rows;                     // last published rows (re-filter diff)
 		core::CollisionSettings s_settings{};
-		std::atomic<bool> s_hasSummons{ false };
+		std::atomic<bool> s_hasSummons{ false };  // any rule can apply (SCF summon or keyword flag)
 
 		std::atomic<std::uint64_t> s_avoidSkipped{ 0 };
 		std::atomic<std::uint64_t> s_collisionSkipped{ 0 };
@@ -53,12 +57,8 @@ namespace scf::engine::passthrough
 
 		const Entry* FindById(RE::FormID a_id)
 		{
-			for (const auto& entry : s_table) {
-				if (entry.party.id == a_id) {
-					return &entry;
-				}
-			}
-			return nullptr;
+			const auto it = s_byId.find(a_id);
+			return it != s_byId.end() ? &s_table[it->second] : nullptr;
 		}
 
 		const Entry* FindByGroup(std::uint32_t a_group)
@@ -66,12 +66,15 @@ namespace scf::engine::passthrough
 			if (a_group == 0) {
 				return nullptr;
 			}
-			for (const auto& entry : s_table) {
-				if (entry.systemGroup == a_group) {
-					return &entry;
-				}
-			}
-			return nullptr;
+			const auto it = s_byGroup.find(a_group);
+			return it != s_byGroup.end() ? &s_table[it->second] : nullptr;
+		}
+
+		// Diagnostics only for SCF summons (the keyword table also holds every NPC).
+		const Entry* FindSummonByGroup(std::uint32_t a_group)
+		{
+			const auto* entry = FindByGroup(a_group);
+			return entry && entry->party.IsSummon() ? entry : nullptr;
 		}
 
 		// ---------------------------------------------------------------- seat 1
@@ -125,7 +128,7 @@ namespace scf::engine::passthrough
 						const auto bit = other < 64 ? (1ull << other) : 0ull;
 						if (bit && !(bit & kWorldLayers) && !(s_unmatchedLayersSeen.fetch_or(bit, std::memory_order_relaxed) & bit)) {
 							std::shared_lock lock(s_tableLock);
-							const auto* ours = FindByGroup((ourL ? infoL : infoR) >> 16);
+							const auto* ours = FindSummonByGroup((ourL ? infoL : infoR) >> 16);
 							const auto* theirs = FindByGroup((ourL ? infoR : infoL) >> 16);
 							if (ours) {
 								logger::info("[PassThrough] diag: controller of 0x{:08X} collides with layer {} (group {}, {}).",
@@ -154,10 +157,10 @@ namespace scf::engine::passthrough
 					pass = rhs && core::ShouldPassThrough(lhs->party, rhs->party, s_settings);
 					// Diagnostic: a body pair kept enabled although one side is ours and the
 					// other side is a controller/body we do not recognise by group.
-					if (!pass && (lhs || FindByGroup(infoR >> 16))) {
-						const auto* ours = lhs ? lhs : FindByGroup(infoR >> 16);
-						const auto* other = lhs ? rhs : nullptr;
-						if (!other && s_keptPairLogs.fetch_add(1, std::memory_order_relaxed) < 12) {
+					if (!pass && (FindSummonByGroup(infoL >> 16) || FindSummonByGroup(infoR >> 16))) {
+						const auto* ours = FindSummonByGroup(infoL >> 16) ? lhs : FindSummonByGroup(infoR >> 16);
+						const auto* other = ours == lhs ? FindByGroup(infoR >> 16) : lhs;
+						if (ours && !other && s_keptPairLogs.fetch_add(1, std::memory_order_relaxed) < 12) {
 							logger::info("[PassThrough] diag: kept body pair layers {}/{}: table actor 0x{:08X} vs unknown group {} (infos 0x{:08X} / 0x{:08X}).",
 								layerL, layerR, ours->party.id, (lhs ? infoR : infoL) >> 16, infoL, infoR);
 						}
@@ -424,50 +427,94 @@ namespace scf::engine::passthrough
 		return any;
 	}
 
-	void Publish(const std::vector<Member>& a_members, const core::CollisionSettings& a_settings)
+	void Publish(const std::vector<Member>& a_members, const std::vector<keywords::WorldActor>& a_world, const core::CollisionSettings& a_settings)
 	{
+		// 1. One entry per actor: the keyword snapshot (every loaded actor) merged with the
+		//    SCF members (owner + live summons), which may be missing from the snapshot.
 		std::vector<Entry> table;
-		table.reserve(a_members.size());
-		bool hasSummons = false;
-		for (const auto& member : a_members) {
-			Entry entry{ member.party, 0 };
-			if (member.actor) {
-				RE::CFilter info{};
-				member.actor->GetCollisionFilterInfo(info);
-				entry.systemGroup = info.GetSystemGroup();
+		std::vector<RE::Actor*> actors;
+		std::unordered_map<RE::FormID, std::size_t> byId;
+		table.reserve(a_world.size() + a_members.size());
+		actors.reserve(a_world.size() + a_members.size());
+		const auto entryFor = [&](RE::Actor* a_actor, RE::FormID a_id) -> Entry& {
+			if (const auto it = byId.find(a_id); it != byId.end()) {
+				return table[it->second];
 			}
-			hasSummons = hasSummons || member.party.IsSummon();
-			table.push_back(entry);
+			byId.emplace(a_id, table.size());
+			Entry entry{};
+			entry.party.id = a_id;
+			table.push_back(std::move(entry));
+			actors.push_back(a_actor);
+			return table.back();
+		};
+		for (const auto& world : a_world) {
+			auto& entry = entryFor(world.actor, world.id);
+			entry.party.leaderId = world.leader;
+			entry.party.flags = world.flags;
+		}
+		std::unordered_map<RE::FormID, bool> scfOwners;
+		for (const auto& member : a_members) {
+			auto& entry = entryFor(member.actor, member.party.id);
+			entry.party.ownerId = member.party.ownerId;
+			if (member.party.IsSummon()) {
+				scfOwners[member.party.ownerId] = true;
+			}
 		}
 
-		std::vector<core::PassThroughRow> previousRows;
+		// 2. Controller groups, hostile sets of untargetable actors, relevance.
+		bool hasRules = false;
 		std::vector<core::PassThroughRow> currentRows;
+		currentRows.reserve(table.size());
+		for (std::size_t i = 0; i < table.size(); ++i) {
+			auto& entry = table[i];
+			auto* actor = actors[i];
+			if (actor) {
+				RE::CFilter info{};
+				actor->GetCollisionFilterInfo(info);
+				entry.systemGroup = info.GetSystemGroup();
+			}
+			if (actor && entry.party.Has(core::kUntargetable)) {
+				for (std::size_t j = 0; j < table.size(); ++j) {
+					auto* other = actors[j];
+					if (j != i && other && (other->IsHostileToActor(actor) || actor->IsHostileToActor(other))) {
+						entry.party.hostileIds.push_back(table[j].party.id);
+					}
+				}
+			}
+			const bool relevant = entry.party.flags != 0 || entry.party.IsSummon() || scfOwners.contains(entry.party.id);
+			hasRules = hasRules || relevant;
+			currentRows.push_back({ entry.party.id, entry.systemGroup, relevant, core::PassThroughSignature(entry.party) });
+		}
+
+		std::unordered_map<std::uint32_t, std::size_t> byGroup;
+		for (std::size_t i = 0; i < table.size(); ++i) {
+			if (table[i].systemGroup != 0) {
+				byGroup.emplace(table[i].systemGroup, i);
+			}
+		}
+
+		// 3. Swap in the new table.
+		const auto actorIndex = byId;
+		std::vector<core::PassThroughRow> previousRows;
 		core::CollisionSettings previousSettings{};
 		{
 			std::unique_lock lock(s_tableLock);
-			previousRows.reserve(s_table.size());
-			for (const auto& entry : s_table) {
-				previousRows.push_back({ entry.party.id, entry.systemGroup });
-			}
+			previousRows = std::move(s_rows);
 			previousSettings = s_settings;
 			s_table = std::move(table);
+			s_byId = std::move(byId);
+			s_byGroup = std::move(byGroup);
 			s_settings = a_settings;
-			currentRows.reserve(s_table.size());
-			for (const auto& entry : s_table) {
-				currentRows.push_back({ entry.party.id, entry.systemGroup });
-			}
+			s_rows = currentRows;
 		}
-		s_hasSummons.store(hasSummons, std::memory_order_relaxed);
+		s_hasSummons.store(hasRules, std::memory_order_relaxed);
 
-		// After the swap (the filter must already give the new answer) and outside the
-		// table lock (re-filtering calls the filter seat, which takes it shared).
+		// 4. After the swap (the filter must already give the new answer) and outside the
+		//    table lock (re-filtering calls the filter seat, which takes it shared).
 		for (const auto id : core::RowsToRefilter(previousRows, previousSettings, currentRows, a_settings)) {
 			RE::Actor* actor = nullptr;
-			for (const auto& member : a_members) {
-				if (member.party.id == id) {
-					actor = member.actor;
-					break;
-				}
+			if (const auto it = actorIndex.find(id); it != actorIndex.end()) {
+				actor = actors[it->second];
 			}
 			Refilter(actor ? actor : RE::TESForm::LookupByID<RE::Actor>(id));
 		}
@@ -502,6 +549,9 @@ namespace scf::engine::passthrough
 		{
 			std::unique_lock lock(s_tableLock);
 			s_table.clear();
+			s_byId.clear();
+			s_byGroup.clear();
+			s_rows.clear();
 		}
 		s_hasSummons.store(false, std::memory_order_relaxed);
 	}

@@ -1,5 +1,6 @@
 #include "Engine/CombatGate.h"
 #include "Core/Assist.h"
+#include "Core/KeywordApi.h"
 #include "Core/TargetPin.h"
 #include "PCH.h"
 
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace scf::engine::combat
@@ -63,6 +65,17 @@ namespace scf::engine::combat
 		// Shared with the StartCombat call sites and the selector seat (any thread).
 		std::mutex                                 s_mutex;
 		std::unordered_map<RE::FormID, Permission> s_permissions;
+
+		// Keyword API SCF_Untargetable: actors nobody may pick as a combat target,
+		// guarded by s_mutex; the count lets the seats skip the lock when empty.
+		std::unordered_set<RE::FormID> s_untargetable;
+		std::atomic<std::uint32_t> s_untargetableCount{ 0 };
+		std::chrono::steady_clock::time_point s_lastUntargetableDenyLog{};
+		std::atomic<std::uint64_t> s_untargetableReplaced{ 0 };
+		std::atomic<std::uint64_t> s_untargetableCleared{ 0 };
+		std::uint64_t s_lastReplacedReported{ 0 };
+		std::uint64_t s_lastClearedReported{ 0 };
+		std::chrono::steady_clock::time_point s_lastUntargetableReport{};
 
 		// Aggression area (owner position + radius), guarded by s_mutex.
 		core::Vec3 s_aggressionCentre{};
@@ -194,11 +207,60 @@ namespace scf::engine::combat
 			}
 		}
 
+		// SCF_Untargetable in ANY actor's target selection (same seat, before the pin):
+		// an untargetable answer becomes another usable group target, or none.
+		void AvoidUntargetable(void* a_selector, std::uint32_t* a_out, std::uintptr_t a_expectedVtable) noexcept
+		{
+			try {
+				if (s_untargetableCount.load(std::memory_order_relaxed) == 0 || !a_selector || !a_out || *a_out == 0) {
+					return;
+				}
+				if (*reinterpret_cast<const std::uintptr_t*>(a_selector) != a_expectedVtable) {
+					return;
+				}
+				auto* controller = *reinterpret_cast<RE::CombatController* const*>(
+					reinterpret_cast<std::uintptr_t>(a_selector) + kSelectorControllerOffset);
+				auto* group = controller ? controller->combatGroup : nullptr;
+				if (!group) {
+					return;
+				}
+
+				const std::uint32_t engineAnswer = *a_out;
+				std::vector<core::SelectorCandidate> candidates;
+				std::vector<RE::FormID> ids;
+				{
+					RE::BSReadLockGuard guard(group->lock);
+					candidates.reserve(group->targets.size());
+					for (const auto& entry : group->targets) {
+						const auto actor = entry.targetHandle.get();
+						candidates.push_back({ entry.targetHandle.native_handle(), false, entry.flags.any(RE::CombatTarget::Flags::kTargetLost) });
+						ids.push_back(actor ? actor->GetFormID() : 0);
+					}
+				}
+				bool answerUntargetable = false;
+				{
+					std::lock_guard lock(s_mutex);
+					for (std::size_t i = 0; i < candidates.size(); ++i) {
+						candidates[i].untargetable = ids[i] != 0 && s_untargetable.contains(ids[i]);
+						answerUntargetable = answerUntargetable || (candidates[i].handle == engineAnswer && candidates[i].untargetable);
+					}
+				}
+				const auto answer = core::ChooseTargetAvoidingUntargetable(engineAnswer, answerUntargetable, candidates);
+				if (answer != engineAnswer) {
+					*a_out = answer;
+					(answer != 0 ? s_untargetableReplaced : s_untargetableCleared).fetch_add(1, std::memory_order_relaxed);
+				}
+			} catch (...) {
+				// Never throw into engine code; the engine's answer stands.
+			}
+		}
+
 		struct SelectStandardHook
 		{
 			static std::uint32_t* thunk(void* a_self, std::uint32_t* a_out)
 			{
 				std::uint32_t* result = func(a_self, a_out);
+				AvoidUntargetable(a_self, result, s_vtSelectorStandard);
 				AnswerSelection(a_self, result, s_vtSelectorStandard);
 				return result;
 			}
@@ -210,6 +272,7 @@ namespace scf::engine::combat
 			static std::uint32_t* thunk(void* a_self, std::uint32_t* a_out)
 			{
 				std::uint32_t* result = func(a_self, a_out);
+				AvoidUntargetable(a_self, result, s_vtSelectorFixed);
 				AnswerSelection(a_self, result, s_vtSelectorFixed);
 				return result;
 			}
@@ -266,6 +329,18 @@ namespace scf::engine::combat
 	{
 		try {
 			std::lock_guard lock(s_mutex);
+
+			// Keyword API: nobody starts a fight against an SCF_Untargetable actor.
+			if (a_target && s_untargetableCount.load(std::memory_order_relaxed) != 0 &&
+				a_target->GetFormID() != a_self && s_untargetable.contains(a_target->GetFormID())) {
+				const auto now = std::chrono::steady_clock::now();
+				if (now - s_lastUntargetableDenyLog >= std::chrono::seconds(2)) {
+					s_lastUntargetableDenyLog = now;
+					logger::info("[CombatGate] StartCombat refused: 0x{:08X} -> 0x{:08X} (target is SCF_Untargetable)",
+						a_self, a_target->GetFormID());
+				}
+				return true;
+			}
 
 			const auto it = s_permissions.find(a_self);
 			if (it == s_permissions.end()) {
@@ -404,6 +479,72 @@ namespace scf::engine::combat
 		a_actor->GetActorRuntimeData().currentCombatTarget.reset();
 	}
 
+	void PublishUntargetable(const std::vector<keywords::WorldActor>& a_world)
+	{
+		std::unordered_set<RE::FormID> untargetable;
+		for (const auto& world : a_world) {
+			if (world.flags & core::kUntargetable) {
+				untargetable.insert(world.id);
+			}
+		}
+		{
+			std::lock_guard lock(s_mutex);
+			if (untargetable != s_untargetable) {
+				logger::info("[CombatGate] SCF_Untargetable actors: {} (was {}).", untargetable.size(), s_untargetable.size());
+			}
+			s_untargetable = untargetable;
+		}
+		s_untargetableCount.store(static_cast<std::uint32_t>(untargetable.size()), std::memory_order_relaxed);
+		if (untargetable.empty()) {
+			return;
+		}
+
+		// An actor already fighting an untargetable one: the selector seat moves it to
+		// another target on its next combat update; one with nothing else to fight leaves
+		// combat (the StartCombat seat keeps it from re-engaging).
+		for (const auto& world : a_world) {
+			auto* actor = world.actor;
+			if (!actor || actor->IsPlayerRef() || !actor->IsInCombat()) {
+				continue;
+			}
+			const auto target = actor->GetActorRuntimeData().currentCombatTarget.get();
+			if (!target || !untargetable.contains(target->GetFormID())) {
+				continue;
+			}
+			bool alternative = false;
+			auto* controller = actor->GetActorRuntimeData().combatController;
+			if (auto* group = controller ? controller->combatGroup : nullptr) {
+				RE::BSReadLockGuard guard(group->lock);
+				for (const auto& entry : group->targets) {
+					const auto other = entry.targetHandle.get();
+					if (other && !untargetable.contains(other->GetFormID()) && !other->IsDead() &&
+						!entry.flags.any(RE::CombatTarget::Flags::kTargetLost)) {
+						alternative = true;
+						break;
+					}
+				}
+			}
+			if (!alternative) {
+				logger::info("[CombatGate] 0x{:08X} ({}) leaves combat: its only target 0x{:08X} is SCF_Untargetable.",
+					world.id, actor->GetName(), target->GetFormID());
+				BreakCombat(actor);
+			}
+		}
+
+		const auto now = std::chrono::steady_clock::now();
+		if (now - s_lastUntargetableReport >= std::chrono::seconds(10)) {
+			const auto replaced = s_untargetableReplaced.load(std::memory_order_relaxed);
+			const auto cleared = s_untargetableCleared.load(std::memory_order_relaxed);
+			if (replaced != s_lastReplacedReported || cleared != s_lastClearedReported) {
+				logger::info("[CombatGate] last 10 s: {} selector answers moved off an SCF_Untargetable actor, {} cleared (no other target).",
+					replaced - s_lastReplacedReported, cleared - s_lastClearedReported);
+				s_lastReplacedReported = replaced;
+				s_lastClearedReported = cleared;
+			}
+			s_lastUntargetableReport = now;
+		}
+	}
+
 	void UpdateForSummon(RE::Actor* a_summon, const core::CombatPolicy& a_policy)
 	{
 		if (!a_summon) {
@@ -487,7 +628,9 @@ namespace scf::engine::combat
 			std::lock_guard lock(s_mutex);
 			s_permissions.clear();
 			RecountPins();
+			s_untargetable.clear();
 		}
+		s_untargetableCount.store(0, std::memory_order_relaxed);
 		s_applied.clear();
 		logger::info("[CombatGate] Combat policy state reset.");
 	}

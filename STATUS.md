@@ -128,6 +128,10 @@
   * Follow-up: pairs Havok accepted before the table knew both actors keep colliding while they overlap. Every publish now re-filters the existing pairs of new / regrouped / removed actors through `bhkWorld::UpdateCollisionFilter` (id 76091) (`core::RowsToRefilter`, 3 tests — **125/125 passing**).
   * Field (screenshot): wolves still pile into a column; re-filter ran (26 bodies). Same rule added on the shape-collection (id 76677) and ray-collidable (id 76679) filter slots (controller ray vs partner controller only), plus `diag:` log lines naming what our controllers still touch (1 test — **126/126 passing**).
   * **Field status:** built and deployed, NOT tested in game (TEST-PASS-4).
+* **Keyword API: collision and untargetable — 2026-11-11:**
+  * Any actor with a keyword whose EditorID is `SCF_PassThroughFriends` (through its own side), `SCF_PassThroughAll` (through everyone) or `SCF_Untargetable` (enemies neither target nor block it) — on its base, race or an active magic effect. No SCF plugin file: mods define the KYWD themselves. Contract in README.
+  * Collision/avoidance table now holds every loaded actor while the API is active; untargetable handled in the StartCombat seat, the target-selector seat and by ending fights that have no other target. Core rules: 7 tests — **138/138 passing**.
+  * **Field status:** built and deployed, NOT tested in game (TEST-KW-1..5; needs a test plugin with the keywords).
 * **PoE2 stage M3: command actions by summon type — 2026-11-11:**
   * `Numpad 7` (FLICK-bindable): every own summon performs the action of its type at the aimed enemy — `Rush` (Focus + temporary SpeedMult bonus), `CastAtTarget` (the summon casts a spell), `Detonate` (cast, then dispelled); per-summon cooldown, HUD summary.
   * Catalog `Data/SKSE/Plugins/SummonControlFramework_Commands.ini` (written with vanilla atronach defaults when missing; `Default = Rush` for everything else, e.g. the wolves). Core parser + cooldowns: 5 tests — **131/131 passing**.
@@ -196,7 +200,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **131/131 test cases passing** (0 failures, execution time < 2 ms).
+  * **138/138 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

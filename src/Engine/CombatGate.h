@@ -3,6 +3,7 @@
 #include "Core/CombatPolicy.h"
 #include "Core/EntityID.h"
 #include "Core/Types.h"
+#include "Engine/KeywordApi.h"
 
 #include <cstdint>
 #include <unordered_set>
@@ -45,6 +46,14 @@ namespace scf::engine::combat
 	// Main thread, every tick: the owner's position and the aggression radius used for
 	// engine-chosen fights (Follow / Guard). Radius <= 0 disables the rule.
 	void PublishAggressionArea(const core::Vec3& a_ownerPosition, float a_radius);
+
+	// Keyword API, SCF_Untargetable (main thread, every tactical tick):
+	//   * the StartCombat seat refuses any fight whose target is untargetable;
+	//   * the CombatTargetSelector seat replaces an untargetable answer with another
+	//     group target (core::ChooseTargetAvoidingUntargetable), or none;
+	//   * an actor whose current combat target is untargetable and whose group has no
+	//     other usable target leaves combat here (BreakCombat).
+	void PublishUntargetable(const std::vector<keywords::WorldActor>& a_world);
 
 	// Leave combat through the engine's own StopCombat (main thread). Never writes the
 	// CombatController members: the combat workers own them.
