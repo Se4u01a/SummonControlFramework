@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **195/195 тестов успешно пройдено (0 failures)**.
+Текущий результат: **233/233 тестов успешно пройдено (0 failures)** в общем рабочем дереве (счёт включает тесты параллельно разрабатываемых задач других агентов; в HEAD было 195).
 
 ### Запуск тестов
 ```powershell
@@ -40,13 +40,24 @@ xmake run scf_tests
 * `TestRangedAndMeleeIndependentSlots`: Проверяет независимость лимитов: стрелки занимают дальние слоты (до 3), не блокируя бойцов ближнего боя.
 * `TestSquadCoordinatorLogging`: Проверяет диагностическое логирование захвата и освобождения боевых слотов.
 
-### Suite D: Registry & Lifecycle (`SummonRegistry`) — 6 tests
+### Suite D: Registry & Lifecycle (`SummonRegistry`) — 14 tests
 * `TestIdempotentRegistration`: Проверяет устойчивость к дублирующим событиям движка: повторная регистрация обновляет метаданные, не создавая клонов.
 * `TestCellDetachSuspendsWithoutDeleting`: Проверяет двухфазный жизненный цикл: выгрузка ячейки (`Cell Detach`) переводит существо в `Suspended`, а повторная загрузка возвращает в `Active`.
 * `TestReCastExceedingLimitDisplacesOldest`: Проверяет вытеснение при превышении лимита призывов владельца (вытесняется самый старый активный призыв с выдачей команды на dispel).
 * `TestDeathAndDispelLifecycle`: Проверяет события смерти (`Dead`) и снятия эффекта (`Dispatched`), а также сборку мусора `ClearStaleRecords()`.
 * `TestResetClearsAll`: Проверяет очистку реестра при перезагрузке сохранения или начале новой игры.
 * `TestRegistryLogging`: Проверяет логирование всех операций жизненного цикла.
+* `TestRemainingDurationFromEffectPolicy`: эффект без длительности (0, отрицательная) остаётся постоянным (`kPermanentDuration`), положительная длительность становится остатком, прошедшая — клампится в 0.
+* `ExplicitRegistrationSurvivesRosterRefresh`: Papyrus-регистрация не снимается повторной регистрацией из росписи движка (тактический тик перерегистрирует каждую запись 15 раз в секунду).
+* `ReanimateIsRosterIndependent`: поднятый труп не освобождается по росписи.
+* `OrphanedSummonsSkipRosterIndependentAndDead`: `GetOrphanedSummons` отдаёт только активные живые записи владельца, которых нет в росписи и чей цикл принадлежит росписи.
+* `OrphanedSummonsAreSortedAscending`: порядок освобождения не зависит от порядка `unordered_map`.
+* `ExplicitRegistrationDoesNotConsumeSummonSlot`: скриптовая регистрация не занимает слот лимита и не вытесняет ванильного призыва.
+* `ReanimateDoesNotDisplaceVanillaSummon`: труп не вытесняет ванильного призыва.
+* `LimitDisplacesOldestRosterBackedOnly`: лимит по-прежнему вытесняет самый старый roster-backed призыв и никогда не выбирает roster-independent запись.
+* `UnregisterReleasesExplicitRegistration`: `UnregisterSummon` — сигнал освобождения скриптовой регистрации.
+
+> Нативы Papyrus (`src/Integrations/Papyrus.cpp`) и движковые пути (`LookupByID`, `GetActiveEffectList`, `GetCommandingActor`) юнит-тестами не покрыты — их проверяет только поле (TEST-P9-1/2). `.psc` в репозитории не компилировался: Papyrus Compiler на машине отсутствует.
 
 ### Suite E: Command Queue & Priority (`CommandQueue`) — 6 tests
 * `TestPriorityArbitrationOrder`: Проверяет строгую иерархию обработки: `Lifecycle` (0) -> `PlayerDirect` (1) -> `ModeChange` (2) -> `Tactical` (3).
@@ -342,6 +353,9 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 ### 6.5. Полный контроль боя (`CombatGate`)
 
 Проверка в логе: при загрузке должна быть строка `[CombatGate] StartCombat denial seat installed on 10 site(s) (1 tail call(s)) of 0x...; function entry untouched.`. Если вместо неё `did not resolve`/`no direct call sites`/`disabled` — остаётся только второй слой (биты + StopCombat), `Passive`/`Return` всё равно работают.
+
+* **[ ] TEST-P9-1 (Papyrus registration):** тестовый скрипт (или консольный `cqf` на скрипте с `SCF.RegisterSummon`) регистрирует актёра, которого движок не числит призывом (например, заспавненного через `player.placeatme` волка без заклинания). В логе `[Papyrus] SCF.RegisterSummon: actor 0x... (...) registered for owner 0x... (roster-independent ...)`; `SCF.IsRegistered`/`GetSummonCount` в скрипте возвращают `true`/1; `scf registry` показывает запись; панель миньонов рисует строку с пометкой `[Scripted]`; Numpad 2/4/5/6 двигают этого актёра так же, как ванильного призыва. `SCF.UnregisterSummon` → запись исчезает (`[Registry] Unregistered ...`), актёр остаётся в мире. Проверить в логе, что `[UpdateHook]` не освобождает запись при обновлении росписи (нет `magic effect expired/removed`).
+* **[ ] TEST-P9-2 (Dead Thrall):** поднять труп игроком (`Dead Thrall` / другой reanimate): в логе `[EventAdapter] Actor 0x... was reanimated by the player; tracked as a reanimate` и/или `[UpdateHook]` без `Displacing oldest summon`; труп следует за игроком и получает приказы, не занимая слот призыва (ванильный атронах рядом при этом не исчезает). Убить труп — запись уходит в `Dead` и через 3 с собирается; повторно поднять — новая запись. Труп, поднятый NPC рядом, в реестр SCF не попадает.
 
 * **[ ] TEST-COMBAT-1 (Passive absolute):** Переключить режим на `Passive` (Numpad 3 до `SCF: Aggression Mode -> Passive`). Суммон не атакует ни при каких обстоятельствах: не входит в бой, не машет, не кастует, даже если враг бьёт его первым. В логе: `[CombatGate] attacks/casts disabled=true` и, при попытках движка, `StartCombat refused ... (combat forbidden)`.
 * **[ ] TEST-COMBAT-2 (Passive blocks Focus):** Нажать `Numpad 1` в `Passive`: HUD `SCF: Passive mode - attack suppressed`, приказа нет, суммон продолжает следовать. (Приказ `FocusTarget` не должен доходить до движка.)

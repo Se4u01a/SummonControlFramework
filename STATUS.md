@@ -139,6 +139,12 @@
   * Any actor with a keyword whose EditorID is `SCF_PassThroughFriends` (through its own side), `SCF_PassThroughAll` (through everyone) or `SCF_Untargetable` (enemies neither target nor block it) — on its base, race or an active magic effect. No SCF plugin file: mods define the KYWD themselves. Contract in README.
   * Collision/avoidance table now holds every loaded actor while the API is active; untargetable handled in the StartCombat seat, the target-selector seat and by ending fights that have no other target. Core rules: 7 tests — **138/138 passing**.
   * **Field status:** built and deployed, NOT tested in game (TEST-KW-1..5; needs a test plugin with the keywords).
+* **Stage 9: Papyrus API and reanimates — 2026-11-11:**
+  * `scripts/Source/SCF.psc` + `src/Integrations/Papyrus.{h,cpp}`: `SCF.RegisterSummon / UnregisterSummon / IsRegistered / GetSummons / GetSummonCount` (class `SCF`, global natives, not callable from tasklets), registered from `SKSEPluginLoad`. Owner policy: the player only; no owner argument means the player.
+  * `SummonRegistry`: `explicitRegistration` (survives the 15 Hz refresh), `IsRosterIndependent`, `GetOrphanedSummons`; `explicit`/`Reanimate` records are outside the owner's conjuration limit — they never consume a slot and are never displaced.
+  * `UpdateHook`: drives explicitly registered summons like roster summons (commands, movement, combat policy, panel) while they share the player's loaded space; step 2b releases them on `UnregisterSummon`, death, a vanished form, or the end of the reanimate effect. `EventAdapter`/`ClassifySummon` mark a corpse raised by the player as `Reanimate`; `core::RemainingDurationFromEffect` keeps a duration-less effect permanent.
+  * 8 new unit tests (duration policy, roster-independent lifecycle, limit semantics) — **233/233 passing** in the shared tree (the count includes the other agents' in-flight tests; HEAD had 195). `.psc` is NOT compiled: no Papyrus compiler on this machine.
+  * **Field status:** built and deployed to both MO2 instances, NOT tested in game (TEST-P9-1/2). The tree is shared with the other agents' in-flight work (friendly-fire hit/killmove hooks, movement/catch-up, TrueHUD), so the deployed DLL contains their uncommitted features as well; the plugin target builds and links, and every SCF file of this stage was compile-checked on its own.
 * **PoE2 stage M3: command actions by summon type — 2026-11-11:**
   * `Numpad 7` (FLICK-bindable): every own summon performs the action of its type at the aimed enemy — `Rush` (Focus + temporary SpeedMult bonus), `CastAtTarget` (the summon casts a spell), `Detonate` (cast, then dispelled); per-summon cooldown, HUD summary.
   * Catalog `Data/SKSE/Plugins/SummonControlFramework_Commands.ini` (written with vanilla atronach defaults when missing; `Default = Rush` for everything else, e.g. the wolves). Core parser + cooldowns: 5 tests — **131/131 passing**.
@@ -207,7 +213,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **195/195 test cases passing** (0 failures, execution time < 2 ms).
+  * **233/233 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

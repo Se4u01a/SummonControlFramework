@@ -1199,8 +1199,8 @@ JSON-профили по race, actor base, keyword и типу призыва:
 
 ### Этап 9 — Дополнительные архетипы
 
-- [ ] Reanimate / Dead Thrall.
-- [ ] Явная Papyrus-регистрация скриптовых summon references.
+- [x] **[РЕАЛИЗОВАНО 2026-11-11, ждёт полевого теста]** Reanimate / Dead Thrall: архетип `Reanimate` в реестре (`SummonType::Reanimate`), классификация по `EffectSetting::Archetype::kReanimate` в `UpdateHook::ClassifySummon` и в `EventAdapter`, постоянная длительность `core::RemainingDurationFromEffect`, освобождение по смерти/концу эффекта/исчезновению формы (шаг 2b синхронизации). Критерий: TEST-P9-2.
+- [x] **[РЕАЛИЗОВАНО 2026-11-11, ждёт полевого теста]** Явная Papyrus-регистрация скриптовых summon references: `scripts/Source/SCF.psc` (`RegisterSummon` / `UnregisterSummon` / `IsRegistered` / `GetSummons` / `GetSummonCount`, класс `SCF`), нативы в `src/Integrations/Papyrus.*`, регистрация через `SKSE::GetPapyrusInterface()` в `SKSEPluginLoad`; запись `explicitRegistration` переживает обновление росписи, призыв ведётся тиком как обычный и не занимает слот лимита. Критерий: TEST-P9-1.
 - [ ] Профили поведения по типу/ключевым словам.
 - [ ] Поддержка специальных модовых существ.
 
@@ -1218,6 +1218,8 @@ JSON-профили по race, actor base, keyword и типу призыва:
 - [x] Смерть не оставляет активный binding.
 - [x] Cell detach/attach не вызывает преждевременного удаления записи.
 - [x] Save/load не восстанавливает stale handles.
+- [x] Papyrus-регистрация не теряется при обновлении росписи и не занимает слот лимита призывов.
+- [x] Reanimate не вытесняется лимитом и не освобождается по росписи (свои сигналы освобождения).
 
 ### Collision
 

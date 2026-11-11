@@ -51,6 +51,26 @@ namespace scf::core
 		}
 	}
 
+	// A negative remaining duration means "no timer at all": the summon is not measured
+	// against SCF's clock (Dead Thrall, a Papyrus registration without an engine effect).
+	constexpr float kPermanentDuration{ -1.0f };
+
+	// Duration policy for a record refreshed from an engine active effect.
+	//
+	// A duration of 0 is not "expires now": a conjuration effect without duration is a
+	// permanent one, and Dead Thrall - the vanilla permanent reanimate - reports no timer.
+	// Such an effect keeps kPermanentDuration, so nothing can read the record as a summon
+	// about to expire. A positive duration becomes the remaining time, clamped at zero:
+	// the engine ends the effect itself, the registry only reports what is left.
+	[[nodiscard]] inline float RemainingDurationFromEffect(float a_effectDuration, float a_effectElapsed) noexcept
+	{
+		if (!(a_effectDuration > 0.0f)) {
+			return kPermanentDuration;
+		}
+		const float remaining = a_effectDuration - a_effectElapsed;
+		return remaining > 0.0f ? remaining : 0.0f;
+	}
+
 	struct SummonRecord
 	{
 		EntityID summonId{ InvalidEntityID };
@@ -58,12 +78,18 @@ namespace scf::core
 		SummonType type{ SummonType::SummonCreature };
 		SummonLifecycleState lifecycle{ SummonLifecycleState::Active };
 
-		float remainingDuration{ -1.0f }; // Negative = permanent
+		float remainingDuration{ kPermanentDuration }; // Negative = permanent
 		float registrationTimestamp{ 0.0f };
 		float deathTimestamp{ 0.0f };     // Time when actor died or effect dispelled
 
 		bool isDead{ false };
 		bool isSuspended{ false };
+
+		// Registered through the Papyrus API (SCF.RegisterSummon): the script, not the
+		// engine's commanded-actor roster, owns the record's lifetime. The tactical sync
+		// therefore never drops it for "not in the roster"; it goes away on
+		// UnregisterSummon, on the actor's death, or when the form itself is gone.
+		bool explicitRegistration{ false };
 
 		SummonModel model{};
 	};
@@ -90,15 +116,42 @@ namespace scf::core
 
 		[[nodiscard]] std::size_t GetOwnerMaxSummons(EntityID a_ownerId) const noexcept;
 
+		// a_explicitRegistration marks a record whose lifetime SCF owns instead of the
+		// engine roster (Papyrus registration). A roster refresh never clears the flag: the
+		// sync re-registers every tracked summon on every tick and would otherwise wipe it.
+		//
+		// The owner's conjuration limit applies to roster-backed summons only: a
+		// roster-independent record (see IsRosterIndependent) never displaces one and is
+		// never displaced itself, so registering a scripted summon cannot cost the player a
+		// conjuration slot and a full roster cannot silently drop it.
 		bool RegisterSummon(
 			EntityID a_ownerId,
 			EntityID a_summonId,
 			SummonType a_type,
 			float a_duration,
 			float a_timestamp,
-			EntityID* a_outDisplaced = nullptr);
+			EntityID* a_outDisplaced = nullptr,
+			bool a_explicitRegistration = false);
 
 		bool UnregisterSummon(EntityID a_summonId, const char* a_reason);
+
+		// True when the engine's commanded-actor roster is not authoritative for this
+		// record's lifetime: an explicitly registered summon (released by UnregisterSummon,
+		// death or a vanished form) or a reanimated corpse (released when the reanimate
+		// effect ends and the engine stops reporting the owner as its commanding actor).
+		//
+		// Such a record also does not occupy a conjuration slot: it never displaces a
+		// roster-backed summon to make room, and it is never displaced itself - nothing but
+		// its own signal would release it, so a displacement would leak a dead record.
+		[[nodiscard]] bool IsRosterIndependent(EntityID a_summonId) const noexcept;
+
+		// The records the tactical sync releases: active summons of a_ownerId that the
+		// engine roster no longer lists and whose lifetime the roster owns. Explicitly
+		// registered summons and reanimated corpses are never returned (see
+		// IsRosterIndependent). Sorted ascending, so the release order is stable.
+		[[nodiscard]] std::vector<EntityID> GetOrphanedSummons(
+			EntityID a_ownerId,
+			const std::vector<EntityID>& a_engineRoster) const;
 
 		void NotifyCellDetach(EntityID a_summonId);
 

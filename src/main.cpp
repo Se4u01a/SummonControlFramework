@@ -1,5 +1,6 @@
 #include "PCH.h"
 #include "Core/FrameworkContext.h"
+#include "Integrations/Papyrus.h"
 #include "Plugin/Messaging.h"
 #include "Engine/Persistence.h"
 #include "Plugin/RuntimeGate.h"
@@ -46,6 +47,15 @@ SKSEPluginLoad(const SKSE::LoadInterface* a_skse)
 	});
 
 	scf::plugin::RegisterMessaging();
+
+	// Stage 9: the SCF.* global natives declared in scripts/Source/SCF.psc. They are
+	// registered during plugin load, where the Papyrus interface is guaranteed to exist;
+	// the VM binds natives once and never re-reads them.
+	if (auto* papyrus = SKSE::GetPapyrusInterface(); papyrus && papyrus->Register(scf::papyrus::Register)) {
+		logger::info("[main] SCF Papyrus natives registered (class 'SCF').");
+	} else {
+		logger::error("[main] SCF Papyrus natives were not registered; scripts calling SCF.* will fail.");
+	}
 
 	// PoE2 M4: persistent summon slots and the Magicka reserve live in the SKSE co-save.
 	scf::engine::persistence::Install();

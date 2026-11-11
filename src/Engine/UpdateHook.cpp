@@ -13,6 +13,7 @@
 #include "Engine/SummonLimit.h"
 #include "Core/SummonLimit.h"
 #include "Integrations/MinionPanel.h"
+#include "Integrations/Papyrus.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
 
@@ -21,6 +22,7 @@
 #include <RE/A/AIProcess.h>
 #include <RE/B/BSContainer.h>
 #include <RE/C/CombatController.h>
+#include <RE/E/EffectSetting.h>
 #include <RE/M/MiddleHighProcessData.h>
 #include <RE/N/NiPoint3.h>
 #include <RE/P/PlayerCharacter.h>
@@ -165,6 +167,20 @@ namespace scf::engine::update
 			}
 		}
 
+		// Which archetype does the effect the engine attached to a commanded actor carry?
+		// A raised corpse is the same "command" machinery as a summon (RE::ReanimateEffect
+		// derives from RE::CommandEffect, which owns the commandedActor handle), only its
+		// magic effect archetype differs. Everything that is not a reanimate keeps the
+		// existing classification, so unknown modded commands behave as before.
+		[[nodiscard]] core::SummonType ClassifySummon(const RE::ActiveEffect* a_effect) noexcept
+		{
+			const auto* base = a_effect ? a_effect->GetBaseObject() : nullptr;
+			if (base && base->HasArchetype(RE::EffectSetting::Archetype::kReanimate)) {
+				return core::SummonType::Reanimate;
+			}
+			return core::SummonType::SummonCreature;
+		}
+
 		void InternalSyncPlayerSummons(RE::PlayerCharacter* a_player, float a_timestamp)
 		{
 			if (!a_player) {
@@ -180,6 +196,10 @@ namespace scf::engine::update
 			auto& registry = ctx.GetRegistry();
 			auto& cmdQueue = ctx.GetCommandQueue();
 			const auto ownerId = a_player->GetFormID();
+
+			// The tactical tick runs on the game thread; the Papyrus natives use this call
+			// to tell the registry-owning thread from any other one (see Integrations/Papyrus.cpp).
+			papyrus::MarkGameThread();
 
 			const auto& commanded = currentProcess->middleHigh->commandedActors;
 			std::unordered_set<core::EntityID> currentEngineSummons;
@@ -217,32 +237,105 @@ namespace scf::engine::update
 				currentEngineSummons.insert(summonId);
 				liveActors[summonId] = actorPtr.get();
 
-				float remainingDuration = -1.0f;
+				// A reanimated corpse is a commanded actor like a summoned creature; only
+				// the archetype of the effect the engine linked to it tells them apart.
+				const auto type = ClassifySummon(data.activeEffect);
+				float remainingDuration = core::kPermanentDuration;
 				if (data.activeEffect) {
-					remainingDuration = data.activeEffect->duration - data.activeEffect->elapsedSeconds;
+					remainingDuration = core::RemainingDurationFromEffect(
+						data.activeEffect->duration,
+						data.activeEffect->elapsedSeconds);
 				}
 
 				core::EntityID displaced = core::InvalidEntityID;
 				registry.RegisterSummon(
 					ownerId,
 					summonId,
-					core::SummonType::SummonCreature,
+					type,
 					remainingDuration,
 					a_timestamp,
 					&displaced);
+
+				if (auto* model = registry.GetModel(summonId)) {
+					model->isReanimated = (type == core::SummonType::Reanimate);
+				}
 
 				if (displaced != core::InvalidEntityID) {
 					logger::info("[UpdateHook] Summon limit exceeded, displacing oldest summon 0x{:08X}", displaced);
 				}
 			}
 
-			// 2. Cleanly remove any summons that are no longer commanded by the player
-			const auto activeSummons = registry.GetActiveSummonsForOwner(ownerId);
-			for (const auto prevSummonId : activeSummons) {
-				if (currentEngineSummons.find(prevSummonId) == currentEngineSummons.end()) {
-					registry.NotifyEffectRemoved(ownerId, prevSummonId, a_timestamp);
-					persistence::OnSummonRemoved(prevSummonId);
+			// 1b. Explicitly registered summons are absent from the engine roster: the
+			//     script put them in the registry, so the registry is where the tick finds
+			//     them. They are driven like any other summon (orders, movement, combat
+			//     policy, panel row) while the actor is alive and shares the player's loaded
+			//     space; step 2b releases the ones that are gone.
+			for (const auto summonId : registry.GetActiveSummonsForOwner(ownerId)) {
+				if (currentEngineSummons.contains(summonId)) {
+					continue;  // the roster already supplied it
 				}
+				const auto* record = registry.FindRecord(summonId);
+				if (!record || !record->explicitRegistration) {
+					continue;  // a reanimate is released by step 2b, not driven from here
+				}
+				auto* actor = RE::TESForm::LookupByID<RE::Actor>(summonId);
+				if (!actor || actor->IsDead()) {
+					continue;  // step 2b releases these
+				}
+				if (!ShareLoadedSpace(actor, a_player)) {
+					// An unloaded scripted summon cannot be moved or measured; keep the
+					// record and pick it up again once the player is in its cell.
+					continue;
+				}
+				liveActors[summonId] = actor;
+			}
+
+			// 2. Release the records the engine roster no longer backs. Records whose
+			//    lifetime SCF owns are skipped here and released by their own signal (2b).
+			const std::vector<core::EntityID> engineRoster(currentEngineSummons.begin(), currentEngineSummons.end());
+			for (const auto prevSummonId : registry.GetOrphanedSummons(ownerId, engineRoster)) {
+				registry.NotifyEffectRemoved(ownerId, prevSummonId, a_timestamp);
+				persistence::OnSummonRemoved(prevSummonId);
+			}
+
+			// 2b. Explicitly registered summons and reanimated corpses: the roster says
+			//     nothing about them, so release only on the signal that owns the record -
+			//     the script's UnregisterSummon, the actor's death, a vanished form, or the
+			//     end of the reanimate effect (the engine clears the commanding link then).
+			for (const auto summonId : registry.GetActiveSummonsForOwner(ownerId)) {
+				const auto* record = registry.FindRecord(summonId);
+				if (!record || (!record->explicitRegistration && record->type != core::SummonType::Reanimate)) {
+					continue;
+				}
+				if (currentEngineSummons.contains(summonId)) {
+					continue;  // the roster backs it after all: step 1 owns it
+				}
+
+				auto* actor = RE::TESForm::LookupByID<RE::Actor>(summonId);
+				if (!actor) {
+					logger::info("[UpdateHook] Summon 0x{:08X} ({}) no longer exists; releasing the record.",
+						summonId, record->explicitRegistration ? "explicit registration" : "reanimated");
+					registry.UnregisterSummon(summonId,
+						record->explicitRegistration ? "explicit registration: form gone" : "reanimated: form gone");
+					persistence::OnSummonRemoved(summonId);
+					continue;
+				}
+				if (record->explicitRegistration) {
+					continue;  // alive: the script decides through SCF.UnregisterSummon
+				}
+				if (actor->IsDead()) {
+					// A thrall dies when its reanimate effect ends; the death event usually
+					// arrives first, this keeps the record consistent if it does not.
+					registry.NotifyDeath(summonId, a_timestamp);
+					persistence::OnSummonDied(summonId, a_timestamp);
+					continue;
+				}
+				if (actor->GetCommandingActor().get() == a_player) {
+					continue;  // still a commanded thrall
+				}
+				logger::info("[UpdateHook] Reanimated summon 0x{:08X} is no longer commanded; releasing the record.", summonId);
+				registry.NotifyEffectRemoved(ownerId, summonId, a_timestamp);
+				persistence::OnSummonRemoved(summonId);
 			}
 
 			// 3. Automatically garbage collect dead / dispatched summons after 3 seconds grace period
@@ -258,6 +351,14 @@ namespace scf::engine::update
 			}
 			std::sort(orderedSummons.begin(), orderedSummons.end(),
 				[](const auto& a_lhs, const auto& a_rhs) { return a_lhs.first < a_rhs.first; });
+
+			// Per-summon movement and combat bookkeeping must survive for every driven
+			// record, including the explicit registrations the engine roster does not list.
+			std::unordered_set<core::EntityID> drivenSummons;
+			drivenSummons.reserve(orderedSummons.size());
+			for (const auto& [id, actor] : orderedSummons) {
+				drivenSummons.insert(id);
+			}
 
 			core::Command cmd{};
 			while (cmdQueue.PopNext(a_timestamp, cmd)) {
@@ -371,10 +472,10 @@ namespace scf::engine::update
 				}
 			}
 
-			// Drop bookkeeping for summons that left the engine roster (dispel, death,
+			// Drop bookkeeping for summons that stopped being driven (dispel, death,
 			// cell detach, displacement) so a recycled handle cannot inherit it.
-			movement::RetainOnly(currentEngineSummons);
-			combat::RetainOnly(currentEngineSummons);
+			movement::RetainOnly(drivenSummons);
+			combat::RetainOnly(drivenSummons);
 
 			// PoE2 M4: persistent summons (effect kept alive, Magicka reserve, revives).
 			{

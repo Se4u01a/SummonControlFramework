@@ -156,3 +156,145 @@ TEST(TestRegistryLogging)
 	CHECK(logs[2].find("Cell attach: summon 401 resumed") != std::string::npos);
 	CHECK(logs[3].find("Death event: summon 401 marked dead") != std::string::npos);
 }
+
+// Stage 9: a conjuration effect without duration is permanent, not "expires now"
+// (Dead Thrall reports no timer), and an effect that ran past its duration reads 0.
+TEST(TestRemainingDurationFromEffectPolicy)
+{
+	CHECK(RemainingDurationFromEffect(0.0f, 0.0f) == kPermanentDuration);
+	CHECK(RemainingDurationFromEffect(-1.0f, 0.0f) == kPermanentDuration);
+	CHECK(RemainingDurationFromEffect(0.0f, 12.0f) == kPermanentDuration);
+	CHECK_NEAR(RemainingDurationFromEffect(60.0f, 10.0f), 50.0f, 0.0001);
+	CHECK(RemainingDurationFromEffect(60.0f, 60.0f) == 0.0f);
+	CHECK(RemainingDurationFromEffect(60.0f, 90.0f) == 0.0f);
+	CHECK(RemainingDurationFromEffect(kPermanentDuration, 0.0f) == kPermanentDuration);
+}
+
+// The tactical sync re-registers every tracked summon on every tick with the default
+// (roster) flag; that refresh must not revoke a Papyrus registration.
+TEST(ExplicitRegistrationSurvivesRosterRefresh)
+{
+	SummonRegistry registry;
+	registry.RegisterSummon(10, 501, SummonType::Scripted, kPermanentDuration, 1.0f, nullptr, true);
+
+	CHECK(registry.FindRecord(501)->explicitRegistration);
+	CHECK(registry.IsRosterIndependent(501));
+
+	// Next tactical tick: the engine roster now reports the same actor as a commanded one.
+	CHECK(registry.RegisterSummon(10, 501, SummonType::SummonCreature, 30.0f, 2.0f));
+	CHECK(registry.FindRecord(501)->explicitRegistration);
+	CHECK(registry.IsRosterIndependent(501));
+	CHECK(registry.GetTotalCount() == 1);
+}
+
+// A reanimated corpse is released by the end of its reanimate effect, not by the roster.
+TEST(ReanimateIsRosterIndependent)
+{
+	SummonRegistry registry;
+	registry.RegisterSummon(10, 601, SummonType::Reanimate, kPermanentDuration, 1.0f);
+
+	CHECK(registry.IsRosterIndependent(601));
+	CHECK(!registry.IsRosterIndependent(602));
+	CHECK(registry.GetOrphanedSummons(10, {}).empty());
+}
+
+// The tactical sync releases only the records the roster owns: a Papyrus registration, a
+// thrall and a dead record are somebody else's to release.
+TEST(OrphanedSummonsSkipRosterIndependentAndDead)
+{
+	SummonRegistry registry;
+	registry.SetOwnerMaxSummons(10, 10);  // the conjuration cap is not what this test is about
+	registry.SetOwnerMaxSummons(20, 10);
+	registry.RegisterSummon(10, 701, SummonType::SummonCreature, 60.0f, 1.0f);  // in the roster
+	registry.RegisterSummon(10, 702, SummonType::SummonCreature, 60.0f, 2.0f);  // roster lost it
+	registry.RegisterSummon(10, 703, SummonType::Scripted, kPermanentDuration, 3.0f, nullptr, true);
+	registry.RegisterSummon(10, 704, SummonType::Reanimate, kPermanentDuration, 4.0f);
+	registry.RegisterSummon(10, 705, SummonType::SummonCreature, 60.0f, 5.0f);
+	registry.NotifyDeath(705);
+	registry.RegisterSummon(20, 706, SummonType::SummonCreature, 60.0f, 6.0f);  // another owner
+
+	const auto orphaned = registry.GetOrphanedSummons(10, { 701 });
+	CHECK(orphaned.size() == 1);
+	if (orphaned.size() == 1) {
+		CHECK(orphaned[0] == 702);
+	}
+}
+
+// The release order must not depend on unordered_map iteration order.
+TEST(OrphanedSummonsAreSortedAscending)
+{
+	SummonRegistry registry;
+	registry.SetOwnerMaxSummons(10, 10);
+	registry.RegisterSummon(10, 805, SummonType::SummonCreature, 60.0f, 1.0f);
+	registry.RegisterSummon(10, 803, SummonType::SummonCreature, 60.0f, 2.0f);
+	registry.RegisterSummon(10, 804, SummonType::SummonCreature, 60.0f, 3.0f);
+
+	const auto orphaned = registry.GetOrphanedSummons(10, {});
+	CHECK(orphaned.size() == 3);
+	if (orphaned.size() == 3) {
+		CHECK(orphaned[0] == 803);
+		CHECK(orphaned[1] == 804);
+		CHECK(orphaned[2] == 805);
+	}
+}
+
+// A scripted summon is not a conjuration slot: registering it while the player is at the
+// limit must not dispel a vanilla summon.
+TEST(ExplicitRegistrationDoesNotConsumeSummonSlot)
+{
+	SummonRegistry registry;
+	registry.SetOwnerMaxSummons(10, 1);
+	registry.RegisterSummon(10, 801, SummonType::SummonCreature, 60.0f, 1.0f);
+
+	EntityID displaced = InvalidEntityID;
+	registry.RegisterSummon(10, 901, SummonType::Scripted, kPermanentDuration, 2.0f, &displaced, true);
+
+	CHECK(displaced == InvalidEntityID);
+	CHECK(registry.IsActive(801));
+	CHECK(registry.IsActive(901));
+	CHECK(registry.GetActiveSummonsForOwner(10).size() == 2);
+}
+
+// A raised corpse does not cost the player a conjuration slot either.
+TEST(ReanimateDoesNotDisplaceVanillaSummon)
+{
+	SummonRegistry registry;
+	registry.SetOwnerMaxSummons(10, 1);
+	registry.RegisterSummon(10, 811, SummonType::SummonCreature, 60.0f, 1.0f);
+
+	EntityID displaced = InvalidEntityID;
+	registry.RegisterSummon(10, 911, SummonType::Reanimate, kPermanentDuration, 2.0f, &displaced);
+
+	CHECK(displaced == InvalidEntityID);
+	CHECK(registry.IsActive(811));
+	CHECK(registry.IsActive(911));
+}
+
+// The cap still governs roster-backed summons, and it never picks a roster-independent
+// record as the one to displace - even when that record is the oldest.
+TEST(LimitDisplacesOldestRosterBackedOnly)
+{
+	SummonRegistry registry;
+	registry.SetOwnerMaxSummons(10, 1);
+	registry.RegisterSummon(10, 921, SummonType::Scripted, kPermanentDuration, 0.5f, nullptr, true);
+	registry.RegisterSummon(10, 821, SummonType::SummonCreature, 60.0f, 1.0f);
+
+	EntityID displaced = InvalidEntityID;
+	registry.RegisterSummon(10, 822, SummonType::SummonCreature, 60.0f, 2.0f, &displaced);
+
+	CHECK(displaced == 821);
+	CHECK(registry.FindRecord(821)->lifecycle == SummonLifecycleState::Displaced);
+	CHECK(registry.IsActive(822));
+	CHECK(registry.IsActive(921));
+}
+
+// UnregisterSummon is the script's release signal: the record leaves the registry at once.
+TEST(UnregisterReleasesExplicitRegistration)
+{
+	SummonRegistry registry;
+	registry.RegisterSummon(10, 931, SummonType::Scripted, kPermanentDuration, 1.0f, nullptr, true);
+
+	CHECK(registry.UnregisterSummon(931, "Papyrus SCF.UnregisterSummon"));
+	CHECK(!registry.IsRegistered(931));
+	CHECK(registry.GetTotalCount() == 0);
+}

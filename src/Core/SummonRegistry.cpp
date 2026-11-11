@@ -36,7 +36,10 @@ namespace scf::core
 		for (const auto& [id, record] : _records) {
 			if (record.ownerId == a_ownerId &&
 			    !record.isDead &&
-			    record.lifecycle == SummonLifecycleState::Active) {
+			    record.lifecycle == SummonLifecycleState::Active &&
+			    // Only a record the engine roster backs can be displaced: an explicit
+			    // registration or a thrall would be dropped without a release signal.
+			    !IsRosterIndependent(id)) {
 				if (record.registrationTimestamp < oldestTime) {
 					oldestTime = record.registrationTimestamp;
 					oldestId = id;
@@ -53,7 +56,8 @@ namespace scf::core
 		SummonType a_type,
 		float a_duration,
 		float a_timestamp,
-		EntityID* a_outDisplaced)
+		EntityID* a_outDisplaced,
+		bool a_explicitRegistration)
 	{
 		if (a_summonId == InvalidEntityID || a_ownerId == InvalidEntityID) {
 			return false;
@@ -73,6 +77,9 @@ namespace scf::core
 			it->second.deathTimestamp = 0.0f;
 			it->second.model.id = a_summonId;
 			it->second.model.ownerId = a_ownerId;
+			// Only ever turned on here: the tactical tick refreshes every tracked summon
+			// with the default flag and must not revoke an explicit registration.
+			it->second.explicitRegistration = it->second.explicitRegistration || a_explicitRegistration;
 
 			// No log line here: this path runs for every tracked summon on every
 			// tactical tick (15 Hz), and the refresh is not an event. Duration and
@@ -80,28 +87,43 @@ namespace scf::core
 			return true;
 		}
 
-		// 2. Capacity check for owner limit: displace oldest active summon if full
-		const auto activeSummons = GetActiveSummonsForOwner(a_ownerId);
+		// 2. Capacity check for the owner's conjuration limit: displace the oldest
+		//    roster-backed summon when the slots are full. A roster-independent record
+		//    (explicit registration, reanimate) lives outside the limit - it takes no slot
+		//    and displaces nobody - so this whole check is skipped for it.
+		const bool occupiesSlot = !(a_explicitRegistration || a_type == SummonType::Reanimate);
 		const std::size_t limit = GetOwnerMaxSummons(a_ownerId);
 
-		if (activeSummons.size() >= limit) {
-			const EntityID oldestId = FindOldestActiveSummon(a_ownerId);
-			if (oldestId != InvalidEntityID) {
-				auto oldestIt = _records.find(oldestId);
-				if (oldestIt != _records.end()) {
-					oldestIt->second.lifecycle = SummonLifecycleState::Displaced;
-					oldestIt->second.deathTimestamp = a_timestamp;
+		if (occupiesSlot) {
+			std::size_t slotsInUse = 0;
+			for (const auto& [id, record] : _records) {
+				if (record.ownerId == a_ownerId &&
+				    !record.isDead &&
+				    record.lifecycle == SummonLifecycleState::Active &&
+				    !IsRosterIndependent(id)) {
+					++slotsInUse;
 				}
+			}
 
-				if (a_outDisplaced) {
-					*a_outDisplaced = oldestId;
-				}
+			if (slotsInUse >= limit) {
+				const EntityID oldestId = FindOldestActiveSummon(a_ownerId);
+				if (oldestId != InvalidEntityID) {
+					auto oldestIt = _records.find(oldestId);
+					if (oldestIt != _records.end()) {
+						oldestIt->second.lifecycle = SummonLifecycleState::Displaced;
+						oldestIt->second.deathTimestamp = a_timestamp;
+					}
 
-				if (_logCallback) {
-					std::snprintf(logBuf, sizeof(logBuf),
-						"[Registry] Summon limit reached for owner %u (%zu/%zu). Displacing oldest summon %u",
-						a_ownerId, activeSummons.size(), limit, oldestId);
-					_logCallback(logBuf);
+					if (a_outDisplaced) {
+						*a_outDisplaced = oldestId;
+					}
+
+					if (_logCallback) {
+						std::snprintf(logBuf, sizeof(logBuf),
+							"[Registry] Summon limit reached for owner %u (%zu/%zu). Displacing oldest summon %u",
+							a_ownerId, slotsInUse, limit, oldestId);
+						_logCallback(logBuf);
+					}
 				}
 			}
 		}
@@ -117,16 +139,20 @@ namespace scf::core
 		record.deathTimestamp = 0.0f;
 		record.isDead = false;
 		record.isSuspended = false;
+		record.explicitRegistration = a_explicitRegistration;
 		record.model.id = a_summonId;
 		record.model.ownerId = a_ownerId;
 
 		_records[a_summonId] = record;
 
 		if (_logCallback) {
+			// The limit column is the owner's conjuration slots; a roster-independent
+			// record is registered next to them, not inside them.
 			std::snprintf(logBuf, sizeof(logBuf),
-				"[Registry] Registered summon %u for owner %u (%s, duration: %.1fs, active: %zu/%zu)",
+				"[Registry] Registered summon %u for owner %u (%s, duration: %.1fs, active: %zu/%zu%s)",
 				a_summonId, a_ownerId, ToString(a_type), a_duration,
-				GetActiveSummonsForOwner(a_ownerId).size(), limit);
+				GetActiveSummonsForOwner(a_ownerId).size(), limit,
+				IsRosterIndependent(a_summonId) ? ", outside the summon limit" : "");
 			_logCallback(logBuf);
 		}
 
@@ -150,6 +176,39 @@ namespace scf::core
 
 		_records.erase(it);
 		return true;
+	}
+
+	bool SummonRegistry::IsRosterIndependent(EntityID a_summonId) const noexcept
+	{
+		const auto it = _records.find(a_summonId);
+		if (it == _records.end()) {
+			return false;
+		}
+		return it->second.explicitRegistration || it->second.type == SummonType::Reanimate;
+	}
+
+	std::vector<EntityID> SummonRegistry::GetOrphanedSummons(
+		EntityID a_ownerId,
+		const std::vector<EntityID>& a_engineRoster) const
+	{
+		std::vector<EntityID> orphaned;
+		for (const auto& [id, record] : _records) {
+			if (record.ownerId != a_ownerId ||
+			    record.isDead ||
+			    record.lifecycle != SummonLifecycleState::Active) {
+				continue;
+			}
+			// The roster is not the release signal for these: the Papyrus API, the actor's
+			// death and the end of the reanimate effect are.
+			if (IsRosterIndependent(id)) {
+				continue;
+			}
+			if (std::find(a_engineRoster.begin(), a_engineRoster.end(), id) == a_engineRoster.end()) {
+				orphaned.push_back(id);
+			}
+		}
+		std::sort(orphaned.begin(), orphaned.end());
+		return orphaned;
 	}
 
 	void SummonRegistry::NotifyCellDetach(EntityID a_summonId)

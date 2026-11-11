@@ -6,10 +6,41 @@
 #include "Core/FrameworkContext.h"
 #include "PCH.h"
 
+#include <RE/A/ActiveEffect.h>
+#include <RE/A/Actor.h>
+#include <RE/E/EffectSetting.h>
+#include <RE/M/MagicTarget.h>
+#include <RE/P/PlayerCharacter.h>
+
 namespace scf::engine
 {
 	namespace
 	{
+		// Which magic effect is the event about? The ApplyRemove event carries only the
+		// effect's unique id, and the effect itself sits in the target's own magic target -
+		// the list the event reports on. The dispatcher's contract has no archetype in it
+		// (core::EventDispatcher files every applied effect as a plain summon), so this is
+		// where a raised corpse can be told apart from a conjuration.
+		const RE::EffectSetting* FindAppliedEffectSetting(RE::TESObjectREFR* a_target, std::uint16_t a_uniqueId)
+		{
+			auto* actor = a_target ? a_target->As<RE::Actor>() : nullptr;
+			auto* magicTarget = actor ? actor->AsMagicTarget() : nullptr;
+			if (!magicTarget) {
+				return nullptr;
+			}
+			auto* effects = magicTarget->GetActiveEffectList();
+			if (!effects) {
+				return nullptr;
+			}
+			for (auto it = effects->begin(); it != effects->end(); ++it) {
+				auto* effect = *it;
+				if (effect && effect->usUniqueID == a_uniqueId) {
+					return effect->GetBaseObject();
+				}
+			}
+			return nullptr;
+		}
+
 		class ActiveEffectEventSink : public RE::BSTEventSink<RE::TESActiveEffectApplyRemoveEvent>
 		{
 		public:
@@ -39,6 +70,31 @@ namespace scf::engine
 				});
 
 				dispatcher.HandleActiveEffect(evt, ctx.GetRegistry());
+
+				// A raised corpse is not a conjuration. Classifying it here, on the effect
+				// that was just applied, keeps the record a reanimate even when the engine's
+				// commanded roster does not list thralls at all: a reanimate record is
+				// roster-independent, so the tactical sync leaves it alone and the end of
+				// the effect (the corpse dies or loses its commander) is what releases it.
+				//
+				// Only the player's own reanimates: the registry's release pass and every AI
+				// seat are the player's, so a thrall owned by anyone else would sit in the
+				// registry forever.
+				auto* player = RE::PlayerCharacter::GetSingleton();
+				if (evt.isApplied && player && a_event->caster.get() == player &&
+				    evt.targetId != evt.casterId && a_event->target) {
+					if (const auto* base = FindAppliedEffectSetting(a_event->target.get(), a_event->activeEffectUniqueID);
+						base && base->HasArchetype(RE::EffectSetting::Archetype::kReanimate)) {
+						ctx.GetRegistry().RegisterSummon(
+							evt.casterId,
+							evt.targetId,
+							core::SummonType::Reanimate,
+							core::kPermanentDuration,
+							ctx.GetScheduler().GetTotalElapsedTime());
+						logger::info("[EventAdapter] Actor 0x{:08X} was reanimated by the player; tracked as a reanimate.",
+							evt.targetId);
+					}
+				}
 
 				// Immediately synchronize player's summoned actors on effect change
 				update::SyncPlayerSummons();
