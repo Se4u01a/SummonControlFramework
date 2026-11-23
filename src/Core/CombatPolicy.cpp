@@ -35,4 +35,16 @@ namespace scf::core
 
 		return {};
 	}
+
+	bool ShouldEnforceCombatLeash(
+		const SummonModel& a_model,
+		bool a_enableCombatLeash,
+		bool a_combatPermitted,
+		bool a_inCombat) noexcept
+	{
+		if (a_model.order == SummonOrder::Attack) {
+			return false;
+		}
+		return a_enableCombatLeash && a_combatPermitted && a_inCombat;
+	}
 }

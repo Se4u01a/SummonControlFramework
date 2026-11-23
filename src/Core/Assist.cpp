@@ -7,14 +7,9 @@ namespace scf::core
 		if (a_targetId == InvalidEntityID || a_model.aggression == AggressionMode::Passive) {
 			return false;
 		}
-		switch (a_model.order) {
-		case SummonOrder::Follow:
-			return true;
-		case SummonOrder::Attack:
-			return a_model.currentTargetId != a_targetId;
-		default:
-			return false;
-		}
+		// Only Following summons passively assist player hits; explicit orders (Attack,
+		// WaitGuard, Return, MoveTo) have strict priority and are never hijacked.
+		return a_model.order == SummonOrder::Follow;
 	}
 
 	bool IsWithinAggressionRadius(const Vec3& a_owner, const Vec3& a_target, float a_radius) noexcept

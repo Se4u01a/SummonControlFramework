@@ -3,6 +3,7 @@
     python tools/make_command_spells_esp.py <Skyrim.esm> <output.esp>
 
 The plugin (Skyrim SE, form version 44, ESL-flagged .esp, master Skyrim.esm) defines:
+  * CSTY override 0x000B729C csFamiliar — zero circle and fallback weights;
   * PROJ 0x800 SCF_CmdAttackTargetProj — fast zero-gravity aimed impulse (speed 4500, range 10000);
   * MGEF 0x801 SCF_CmdHoldPosition_Effect — self, Fire & Forget, Script archetype, 0.1s cast;
   * MGEF 0x802 SCF_CmdFollow_Effect       — self, Fire & Forget, Script archetype, 0.1s cast;
@@ -214,6 +215,21 @@ def build_spell(fid, edid, full_name, delivery, mgef_id, duration):
     return record(b"SPEL", fid, b"".join(parts))
 
 
+# Skyrim.esm uses this style for EncSummonFamiliar and HowlSummonWolf.
+FAMILIAR_STYLE = 0x000B729C
+
+
+def build_familiar_style(template):
+    parts = dict(subrecords(template))
+    close_range = parts.get(b"CSCR", b"")
+    if len(close_range) != 16:
+        raise ValueError("unexpected csFamiliar CSCR size")
+    # Circle and fall back are the first two floats. Keep flank distance, stalk
+    # time and all attack weights from the template.
+    parts[b"CSCR"] = struct.pack("<ff", 0.0, 0.0) + close_range[8:]
+    return record(b"CSTY", FAMILIAR_STYLE, b"".join(sub(tag, value) for tag, value in parts.items()))
+
+
 def main():
     if len(sys.argv) != 3:
         sys.exit("Usage: python tools/make_command_spells_esp.py <Skyrim.esm> <output.esp>")
@@ -221,18 +237,24 @@ def main():
     esm, out = sys.argv[1], sys.argv[2]
     mgef_subs = None
     proj_subs = None
+    style = None
     for typ, fid, data in read_records(esm):
         if typ == b"MGEF" and fid == TEMPLATE_MGEF:
             mgef_subs = dict(subrecords(data))
         elif typ == b"PROJ" and fid == TEMPLATE_PROJ:
             proj_subs = dict(subrecords(data))
-        if mgef_subs and proj_subs:
+        elif typ == b"CSTY" and fid == FAMILIAR_STYLE:
+            style = build_familiar_style(data)
+        if mgef_subs and proj_subs and style:
             break
 
     if not mgef_subs or b"DATA" not in mgef_subs or len(mgef_subs[b"DATA"]) != 152:
         sys.exit("vanilla MGEF template 0x0004DBA3 not found or unexpected DATA size")
     if not proj_subs or b"DATA" not in proj_subs or len(proj_subs[b"DATA"]) != 92:
         sys.exit("vanilla PROJ template 0x0004BE35 not found or unexpected DATA size")
+
+    if style is None:
+        sys.exit("vanilla csFamiliar not found")
 
     sndd = mgef_subs.get(b"SNDD")
 
@@ -292,9 +314,9 @@ def main():
         ),
     ]
 
-    count = len(projectiles) + len(effects) + len(spells)
+    count = len(projectiles) + len(effects) + len(spells) + 1
     header = b"".join([
-        sub(b"HEDR", struct.pack("<fII", 1.70, count, NEXT_OBJECT_ID)),
+        sub(b"HEDR", struct.pack("<fII", 1.70, count + 4, NEXT_OBJECT_ID)),
         sub(b"CNAM", zstr_ascii("Sequoia")),
         sub(b"SNAM", zstr_ascii("Summon Control Framework quick-cast command spells (Hold Position, Follow, Attack Target).")),
         sub(b"MAST", zstr_ascii("Skyrim.esm")),
@@ -302,7 +324,7 @@ def main():
     ])
 
     plugin = record(b"TES4", 0, header, flags=0x200)  # ESL flag
-    plugin += group(b"PROJ", projectiles) + group(b"MGEF", effects) + group(b"SPEL", spells)
+    plugin += group(b"PROJ", projectiles) + group(b"MGEF", effects) + group(b"SPEL", spells) + group(b"CSTY", [style])
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, "wb") as f:

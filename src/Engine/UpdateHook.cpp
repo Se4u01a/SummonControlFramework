@@ -17,6 +17,7 @@
 #include "Integrations/Papyrus.h"
 #include "Engine/SummonMovement.h"
 #include "PCH.h"
+#include "Engine/WolfManeuver.h"
 
 #include <RE/A/ActiveEffect.h>
 #include <RE/A/Actor.h>
@@ -55,19 +56,29 @@ namespace scf::engine::update
 			logger::info("[Execution] Summon 0x{:08X} switching focus to 0x{:08X} ({})",
 				a_summon->GetFormID(), target->GetFormID(), target->GetName());
 
-			// Publish the new policy first: the StartCombat seat must already know
-			// that this one target is permitted (a previous Attack order may have
+			// Publish the new policy first: the StartCombat / CanAttackActor seats must already
+			// know that this one target is permitted (a previous Attack order may have
 			// restricted combat to a different actor).
 			if (a_model) {
 				combat::UpdateForSummon(a_summon, core::BuildCombatPolicy(*a_model, true));
 			}
 
-			// Fresh engagement: StartCombat (through the seat, which now permits
-			// exactly this actor) builds a new CombatController/CombatGroup whose
-			// first combat target is the focus. From then on the target pin makes
-			// the controller's own selectors keep choosing it every combat update;
-			// no CombatController member is written from here (the combat workers
-			// own them and used to overwrite such writes on the next update).
+			// Avoid tearing down and rebuilding the CombatController if the summon is already
+			// fighting this exact focus target.
+			const auto currentTarget = a_summon->GetActorRuntimeData().currentCombatTarget.get();
+			const bool alreadyFightingTarget = a_summon->IsInCombat() && currentTarget && currentTarget.get() == target;
+			if (alreadyFightingTarget) {
+				logger::info("[Execution] Summon 0x{:08X} already fighting focus 0x{:08X}; keeping active combat",
+					a_summon->GetFormID(), target->GetFormID());
+				return;
+			}
+
+			// Fresh engagement: StartCombat (through the StartCombat + CanAttackActor seats,
+			// which now permit exactly this actor even before the target enters combat) builds
+			// a new CombatController/CombatGroup whose first combat target is the focus. From
+			// then on the target pin makes the controller's own selectors keep choosing it
+			// every combat update; no CombatController member is written from here (the combat
+			// workers own them and used to overwrite such writes on the next update).
 			combat::BreakCombat(a_summon);
 			const bool started = a_summon->StartCombat(target, nullptr);
 
@@ -82,6 +93,21 @@ namespace scf::engine::update
 			if (!started) {
 				logger::warn("[Execution] Summon 0x{:08X} could not start combat with 0x{:08X} (combat policy or engine refusal)",
 					a_summon->GetFormID(), target->GetFormID());
+			}
+		}
+
+		// Publishes the updated CombatPolicy BEFORE calling BreakCombat so no combat worker
+		// thread can re-enter combat in the window between StopCombat and step 5.
+		void PublishPolicyAndBreakCombat(RE::Actor* a_summon, const core::SummonModel* a_model, bool a_evaluatePackage)
+		{
+			if (a_model) {
+				combat::UpdateForSummon(
+					a_summon,
+					core::BuildCombatPolicy(*a_model, a_model->currentTargetId != core::InvalidEntityID));
+			}
+			combat::BreakCombat(a_summon);
+			if (a_evaluatePackage) {
+				a_summon->EvaluatePackage(true, false);
 			}
 		}
 
@@ -115,38 +141,32 @@ namespace scf::engine::update
 				break;
 
 			case core::CommandType::SetOrder:
+				movement::NotifyOrderIssued(a_summon->GetFormID(), a_cmd.order, s_totalElapsed);
 				switch (a_cmd.order) {
 				case core::SummonOrder::Return:
-					{
-						logger::info("[Execution] Summon 0x{:08X} ordered to RETURN to owner", a_summon->GetFormID());
-
-						combat::BreakCombat(a_summon);
-					}
+					logger::info("[Execution] Summon 0x{:08X} ordered to RETURN to owner", a_summon->GetFormID());
+					PublishPolicyAndBreakCombat(a_summon, a_model, true);
 					break;
 
 				case core::SummonOrder::WaitGuard:
-					{
-						logger::info("[Execution] Summon 0x{:08X} ordered to GUARD / WAIT", a_summon->GetFormID());
-
-						combat::BreakCombat(a_summon);
-					}
+					logger::info("[Execution] Summon 0x{:08X} ordered to GUARD / WAIT", a_summon->GetFormID());
+					PublishPolicyAndBreakCombat(a_summon, a_model, false);
 					break;
 
 				case core::SummonOrder::Follow:
-					{
-						logger::info("[Execution] Summon 0x{:08X} ordered to FOLLOW", a_summon->GetFormID());
-
-						combat::BreakCombat(a_summon);
-					}
+					logger::info("[Execution] Summon 0x{:08X} ordered to FOLLOW", a_summon->GetFormID());
+					PublishPolicyAndBreakCombat(a_summon, a_model, true);
 					break;
 
 				case core::SummonOrder::MoveTo:
-					{
-						// The physical walking is driven by engine::movement from the
-						// SummonModel destination stored by CommandQueue::ApplyToModel.
-						logger::info("[Execution] Summon 0x{:08X} ordered to MOVE TO ({:.1f}, {:.1f}, {:.1f})",
-							a_summon->GetFormID(), a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z);
-					}
+					// The physical walking is driven by engine::movement from the
+					// SummonModel destination stored by CommandQueue::ApplyToModel.
+					logger::info("[Execution] Summon 0x{:08X} ordered to MOVE TO ({:.1f}, {:.1f}, {:.1f})",
+						a_summon->GetFormID(), a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z);
+					PublishPolicyAndBreakCombat(a_summon, a_model, false);
+					break;
+
+				default:
 					break;
 				}
 				break;
@@ -154,10 +174,7 @@ namespace scf::engine::update
 			case core::CommandType::SetAggression:
 				if (a_cmd.aggression == core::AggressionMode::Passive) {
 					logger::info("[Execution] Summon 0x{:08X} set to PASSIVE - disengaging combat", a_summon->GetFormID());
-
-					combat::BreakCombat(a_summon);
-
-					a_summon->EvaluatePackage(true, false);
+					PublishPolicyAndBreakCombat(a_summon, a_model, true);
 				}
 				break;
 
@@ -456,18 +473,19 @@ namespace scf::engine::update
 					a_timestamp,
 					policy.allowCombat);
 
-				// Combat Leash enforcement
-				if (settings.combat.enableCombatLeash && policy.allowCombat && summonActor->IsInCombat()) {
+				// Combat Leash enforcement (explicit Attack orders are exempt — highest priority).
+				if (core::ShouldEnforceCombatLeash(*model, settings.combat.enableCombatLeash, policy.allowCombat, summonActor->IsInCombat())) {
 					const float distToPlayerSq = summonActor->GetPosition().GetSquaredDistance(a_player->GetPosition());
 					const float leashRadius = settings.combat.combatLeashRadius;
 					if (distToPlayerSq > leashRadius * leashRadius) {
 						if (settings.combat.returnToOwnerWhenOutsideLeash) {
 							logger::info("[UpdateHook] Summon 0x{:08X} outside combat leash radius ({:.1f} > {:.1f}), returning to owner",
 								summonId, std::sqrt(distToPlayerSq), leashRadius);
-							combat::BreakCombat(summonActor);
 							model->order = core::SummonOrder::Return;
+							model->currentTargetId = core::InvalidEntityID;
 							model->hasMoveTarget = false;
 							ctx.GetStateMachine().TransitionTo(*model, core::SummonState::Return, "Exceeded combat leash");
+							PublishPolicyAndBreakCombat(summonActor, model, true);
 						}
 					}
 				}
@@ -537,7 +555,9 @@ namespace scf::engine::update
 				s_totalElapsed += a_delta;
 
 				auto& ctx = core::FrameworkContext::GetSingleton();
-				if (!ctx.GetSettings().Get().general.enabled) {
+				const bool enabled = ctx.GetSettings().Get().general.enabled;
+				wolf::SetFrameworkEnabled(enabled);
+				if (!enabled) {
 					return;
 				}
 

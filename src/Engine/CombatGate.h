@@ -11,6 +11,7 @@
 namespace RE
 {
 	class Actor;
+	class CombatController;
 }
 
 namespace scf::engine::combat
@@ -42,6 +43,8 @@ namespace scf::engine::combat
 	// mutex-protected table and the group's target list under the group's own read lock.
 
 	bool Install();
+	bool HasFocusedWolf() noexcept;
+	bool BlocksWolfManeuver(const RE::CombatController& a_controller, std::size_t a_index, const char* a_name);
 
 	// Main thread, every tick: the owner's position and the aggression radius used for
 	// engine-chosen fights (Follow / Guard). Radius <= 0 disables the rule.

@@ -225,7 +225,9 @@ TEST(TestMovementIntentReturnRunsToOwner)
 	CHECK_NEAR(intent.localOffset.Length(), 0.0f, 0.001f);
 	CHECK(intent.followRadius >= 150.0f);
 	CHECK(intent.catchUpRadius > intent.followRadius);
-	CHECK_NEAR(intent.facingOffsetDegrees, -90.0f, 0.5f);
+	// KeepOffsetFromActor (+6FFDA0) adds angle.z to the summon's own yaw every frame;
+	// facingOffsetDegrees must stay 0.0f to prevent continuous spin torque.
+	CHECK_NEAR(intent.facingOffsetDegrees, 0.0f, 0.001f);
 }
 
 TEST(TestMovementIntentFollowUsesFormationSlot)
@@ -246,22 +248,23 @@ TEST(TestMovementIntentFollowUsesFormationSlot)
 	CHECK_NEAR(intent.facingOffsetDegrees, 0.0f, 0.5f);
 }
 
-TEST(TestMovementIntentFollowFacesTravelWhenAwayFromSlot)
+TEST(TestMovementIntentKeepOffsetUsesZeroFacingOffset)
 {
-	auto model = OrderModel(SummonOrder::Follow);
+	// Native MovementPlannerAgentKeepOffset::PlanMovement (+6FFDA0) adds angle.z
+	// to the summon's OWN current orientation every frame. Passing any non-zero
+	// facingOffsetDegrees induces continuous spin torque (circling quadrupeds).
+	auto followModel = OrderModel(SummonOrder::Follow);
 	const auto settings = SettingsWithDistances(200.0f, 450.0f);
-
 	const Vec3 owner{ 0.0f, 0.0f, 0.0f };
 	const Vec3 summon{ 400.0f, 0.0f, 0.0f };
-	const auto intent = IntentWithCombat(model, false, settings, owner, summon, 0.0f, 0, 1);
+	const auto followIntent = IntentWithCombat(followModel, false, settings, owner, summon, 0.0f, 0, 1);
+	CHECK_NEAR(followIntent.facingOffsetDegrees, 0.0f, 0.001f);
 
-	const auto slotWorld = OwnerLocalToWorldPoint(intent.localOffset, owner, 0.0f);
-	CHECK(std::abs(intent.facingOffsetDegrees) > 60.0f);
-	const float expected = std::atan2(slotWorld.x - summon.x, slotWorld.y - summon.y) * 180.0f / kPi;
-	float delta = expected - intent.facingOffsetDegrees;
-	while (delta > 180.0f) delta -= 360.0f;
-	while (delta < -180.0f) delta += 360.0f;
-	CHECK_NEAR(delta, 0.0f, 0.5f);
+	auto moveModel = OrderModel(SummonOrder::MoveTo);
+	moveModel.hasMoveTarget = true;
+	moveModel.moveTargetPosition = { 600.0f, -200.0f, 0.0f };
+	const auto moveIntent = IntentWithCombat(moveModel, false, settings, owner, summon, 1.2f, 0, 1);
+	CHECK_NEAR(moveIntent.facingOffsetDegrees, 0.0f, 0.001f);
 }
 
 TEST(TestMovementIntentFollowYieldsToCombat)
@@ -610,4 +613,126 @@ TEST(TestCombatPolicyFollowAndGuardAllowCombat)
 
 	auto aggressive = OrderModel(SummonOrder::Follow, AggressionMode::Aggressive);
 	CHECK(BuildCombatPolicy(aggressive, false).allowCombat == true);
+}
+
+// ---------------------------------------------------------------------------
+// Attack priority, KeepOffset angle helpers, and progress-based stall guard.
+// ---------------------------------------------------------------------------
+
+TEST(TestCombatLeashExemptsExplicitAttackOrder)
+{
+	auto attack = OrderModel(SummonOrder::Attack);
+	attack.currentTargetId = 0xBEEF;
+	CHECK(!ShouldEnforceCombatLeash(attack, true, true, true));
+
+	auto follow = OrderModel(SummonOrder::Follow);
+	CHECK(ShouldEnforceCombatLeash(follow, true, true, true));
+	CHECK(!ShouldEnforceCombatLeash(follow, false, true, true));
+	CHECK(!ShouldEnforceCombatLeash(follow, true, false, true));
+	CHECK(!ShouldEnforceCombatLeash(follow, true, true, false));
+}
+
+TEST(TestDegreesToRadiansMatchesKeepOffsetConvention)
+{
+	CHECK_NEAR(DegreesToRadians(0.0f), 0.0f, 0.0001f);
+	CHECK_NEAR(DegreesToRadians(90.0f), kPi * 0.5f, 0.0001f);
+	CHECK_NEAR(DegreesToRadians(-180.0f), -kPi, 0.0001f);
+	CHECK_NEAR(DegreesToRadians(180.0f), kPi, 0.0001f);
+}
+
+TEST(TestAngularDifferenceDegreesHandlesSeam)
+{
+	CHECK_NEAR(AngularDifferenceDegrees(10.0f, 25.0f), 15.0f, 0.001f);
+	CHECK_NEAR(AngularDifferenceDegrees(179.0f, -179.0f), 2.0f, 0.001f);
+	CHECK_NEAR(AngularDifferenceDegrees(-175.0f, 175.0f), 10.0f, 0.001f);
+	CHECK_NEAR(AngularDifferenceDegrees(0.0f, 180.0f), 180.0f, 0.001f);
+}
+
+TEST(TestAttackProgressNeverAbortsWhileClosingLongDistance)
+{
+	AttackProgressState state{};
+	constexpr EntityID kTarget = 0x000DED6F;
+	AttackAbortConfig cfg{};
+	cfg.progressStep = 64.0f;
+	cfg.stallTimeoutSeconds = 30.0f;
+
+	// Summon starts 6000 units away and closes 100 units every second for 50 seconds
+	// (well past the old 15s grace timeout): must NEVER abort while making progress.
+	float dist = 6000.0f;
+	for (int sec = 0; sec <= 50; ++sec) {
+		const bool abort = ObserveAndShouldAbortAttack(state, kTarget, true, false, dist, static_cast<float>(sec), cfg);
+		CHECK(!abort);
+		dist -= 100.0f;
+	}
+}
+
+TEST(TestAttackProgressNeverAbortsWhileInCombat)
+{
+	AttackProgressState state{};
+	constexpr EntityID kTarget = 0x000DED6F;
+	AttackAbortConfig cfg{};
+	cfg.stallTimeoutSeconds = 30.0f;
+
+	CHECK(!ObserveAndShouldAbortAttack(state, kTarget, true, true, 500.0f, 0.0f, cfg));
+	CHECK(!ObserveAndShouldAbortAttack(state, kTarget, true, true, 500.0f, 100.0f, cfg));
+	CHECK(!ObserveAndShouldAbortAttack(state, kTarget, true, true, 500.0f, 300.0f, cfg));
+}
+
+TEST(TestAttackProgressAbortsWhenTargetGoneOrTrulyStalled)
+{
+	AttackProgressState state{};
+	constexpr EntityID kTargetA = 0x000DED6F;
+	constexpr EntityID kTargetB = 0x000DED70;
+	AttackAbortConfig cfg{};
+	cfg.progressStep = 64.0f;
+	cfg.stallTimeoutSeconds = 30.0f;
+
+	// Initial tick at t=0, dist=3000.
+	CHECK(!ObserveAndShouldAbortAttack(state, kTargetA, true, false, 3000.0f, 0.0f, cfg));
+	// Stuck at 2980 (< 64u improvement) at t=29s -> still allowed.
+	CHECK(!ObserveAndShouldAbortAttack(state, kTargetA, true, false, 2980.0f, 29.0f, cfg));
+	// Switching to a new target resets the stall clock.
+	CHECK(!ObserveAndShouldAbortAttack(state, kTargetB, true, false, 4000.0f, 29.5f, cfg));
+	CHECK(!ObserveAndShouldAbortAttack(state, kTargetB, true, false, 4000.0f, 59.0f, cfg));
+	// At t=59.5s (30.0s stalled on TargetB without combat) -> aborts.
+	CHECK(ObserveAndShouldAbortAttack(state, kTargetB, true, false, 4000.0f, 59.5f, cfg));
+
+	// Dead / vanished target aborts immediately.
+	CHECK(ObserveAndShouldAbortAttack(state, kTargetB, false, false, 100.0f, 60.0f, cfg));
+	CHECK(ObserveAndShouldAbortAttack(state, InvalidEntityID, true, false, 100.0f, 60.0f, cfg));
+}
+
+TEST(wolf_charge_hands_off_once_and_restarts_when_focus_escapes)
+{
+	using scf::core::ShouldChargeWolfFocus;
+	CHECK(ShouldChargeWolfFocus(401.0f, false));
+	CHECK(ShouldChargeWolfFocus(151.0f, true));
+	CHECK(!ShouldChargeWolfFocus(150.0f, true));
+	CHECK(!ShouldChargeWolfFocus(151.0f, false));
+	CHECK(!ShouldChargeWolfFocus(225.0f, false));
+	CHECK(ShouldChargeWolfFocus(226.0f, false));
+}
+
+TEST(TestSafeKeepOffsetCatchUpRadiusNeverDividesByZero)
+{
+	// Equal or inverted radii must be lifted strictly above followRadius so
+	// PlanMovement's (dist - followRadius) / (catchUpRadius - followRadius) never divides by 0.
+	CHECK(SafeKeepOffsetCatchUpRadius(150.0f, 150.0f) >= 150.0f + kMinCatchUpMargin);
+	CHECK(SafeKeepOffsetCatchUpRadius(150.0f, 50.0f) >= 150.0f + kMinCatchUpMargin);
+	CHECK_NEAR(SafeKeepOffsetCatchUpRadius(150.0f, 300.0f), 300.0f, 0.001f);
+	CHECK(SafeKeepOffsetCatchUpRadius(-20.0f, 0.0f) >= kMinCatchUpMargin);
+}
+
+TEST(TestShouldCompleteReturnEnforcesDisengageAndRange)
+{
+	// Already inside followMinDistance, but still in combat -> must hold Return.
+	CHECK(!ShouldCompleteReturn(100.0f, 200.0f, true, 5.0f, 2.5f));
+	// Out of combat and inside followMinDistance, but disengage window not elapsed -> must hold Return.
+	CHECK(!ShouldCompleteReturn(100.0f, 200.0f, false, 0.0f, 2.5f));
+	CHECK(!ShouldCompleteReturn(100.0f, 200.0f, false, 2.4f, 2.5f));
+	// Out of combat and disengage elapsed, but still far from owner -> keep running back.
+	CHECK(!ShouldCompleteReturn(600.0f, 200.0f, false, 4.0f, 2.5f));
+	// Out of combat, back in owner range, and disengage elapsed -> flip back to Follow.
+	CHECK(ShouldCompleteReturn(200.0f, 200.0f, false, 2.5f, 2.5f));
+	CHECK(ShouldCompleteReturn(80.0f, 200.0f, false, 3.0f, 2.5f));
 }

@@ -103,7 +103,7 @@
   * New engine layer `src/Engine/SummonMovement.{h,cpp}` executes the order stored on `SummonModel` every tactical tick (15 Hz, main thread via the existing `PlayerCharacter::Update` hook): no new hooks, threads, spawned actors or borrowed AI packages.
   * Engine primitives (not bound by the pinned CommonLibSSE-NG, resolved via Address Library and verified against the unpacked 1.5.97 image): `Actor::KeepOffsetFromActor` (`SE 36870 / AE 37894`), `Actor::ClearKeepOffsetFromActor` (`36871 / 37895`), `Actor::SetDontMove` (`36490 / 37489`).
   * Order → intent matrix: `Attack` (explicit FocusTarget) outranks every movement order, `Follow` holds the formation slot around the player (suppressed while fighting so combat AI keeps locomotion), `Return` runs to the player and flips to `Follow` on arrival, `MoveTo` walks to the world point (owner-relative offset recomputed every tick; a destination farther than 8000 units, e.g. left behind by a cell change, is abandoned), `WaitGuard` parks the movement goal on the summon and locks translation.
-  * **Facing control:** `KeepOffsetFromActor` also holds the actor's rotation (angle 0 = face where the owner faces), which made the wolf walk backwards whenever its goal was behind or beside the player. `core::FacingOffsetDegrees` now feeds the direction of travel into the angle-Z argument; standing on the slot/point resets it to the owner's heading.
+  * **Facing & keep-offset safety (2026-11-23 Ghidra fix):** Disassembly of `MovementPlannerAgentKeepOffset::PlanMovement` (`SkyrimSE.exe+6FFDA0`) and `HorseControls::PlanMovement` (`+6FF720`) proved `angle.z` is added to the summon's **own** yaw every frame, creating infinite spin torque on non-strafing quadrupeds (wolves running in circles), and `catchUpRadius == followRadius` divides by zero. `KeepOffsetFromActor` now always receives `facingOffsetDegrees = 0.0f` and `core::SafeKeepOffsetCatchUpRadius(followRadius, catchUpRadius)` (`catchUp >= follow + 10.0f`).
   * **Focus is not overridden by movement:** `CommandQueue::ApplyToModel` turns a `SetFocusTarget` into `SummonOrder::Attack` (drops any move destination), the intent matrix yields `None` for it, and the order reverts to `Follow` when the target dies/vanishes or combat never starts within 2 s.
   * Pure geometry/rules split: `src/Core/Formation.{h,cpp}` (slot table and body-space/facing math, shared with `SquadCoordinator`) and `src/Core/MovementIntent.{h,cpp}` (intent matrix, arrival radius, move-distance limit).
   * Emergency catch-up warp (only beyond `[Recovery] fCatchUpDistance` or after 3 s without progress, same-cell only, always logged; at most one warp per Return order).
@@ -196,9 +196,9 @@
 * **Quick-Cast Command Spells (`CommandSpells` & `SummonControlFramework.esp`) — 2026-11-23:**
   * Replaced all 7 legacy order hotkeys with **3 quick-cast hand spells** (`Either Hand`, `0` magicka, `0.1s` charge time, Conjuration, `0` XP mult, ESL-flagged `SummonControlFramework.esp` built by `tools/make_command_spells_esp.py` and auto-deployed to both MO2 instances):
     * **Приказ: Держать позицию** (`SCF_CmdHoldPosition`, `0x811`, Self, `TESSpellCastEvent`) -> `SummonOrder::WaitGuard`.
-    * **Приказ: Следовать** (`SCF_CmdFollow`, `0x812`, Self, `TESSpellCastEvent`) -> `SummonOrder::Follow`.
+    * **Приказ: Следовать** (`SCF_CmdFollow`, `0x812`, Self, `TESSpellCastEvent`) -> `SummonOrder::Return` (forbids combat, clears `currentTargetId`, publishes policy before `BreakCombat`, recalls summons to player, and transitions `Return -> Follow` via `core::ShouldCompleteReturn` once `!inCombat`, within `fFollowMinDistance`, and after `kReturnMinDisengageSeconds = 2.5s`).
     * **Приказ: В атаку** (`SCF_CmdAttackTarget`, `0x813`, Aimed fast impulse `PROJ 0x800` speed 4500 / gravity 0, `TESMagicEffectApplyEvent` on `MGEF 0x803`) -> `CommandType::SetFocusTarget`.
-  * Pure Core validation (`src/Core/CommandSpells.{h,cpp}`) rejects non-owner casts, passive squad, dead actors, owner, and allies/own summons. 4 new unit tests in `tests/test_command_spells.cpp` — **237/237 passing**.
+  * Pure Core validation (`src/Core/CommandSpells.{h,cpp}`) rejects non-owner casts, passive squad, dead actors, owner, and allies/own summons. Covered by 4 unit tests in `tests/test_command_spells.cpp`.
   * Auto-granted to the player on `kPostLoadGame` / `kNewGame` via `[Spells] bAutoGrantCommandSpells = true`, with live status + Grant/Remove buttons in FLICK.
   * **Field status:** built and deployed (DLL + PDB + `SummonControlFramework.esp`), NOT yet tested in game (enable `SummonControlFramework.esp` in MO2).
 * **Input & Console Subsystem (`InputHandler` & `ConsoleCommands`):**
@@ -219,7 +219,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **237/237 test cases passing** (0 failures, execution time < 2 ms).
+  * **249/249 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -272,3 +272,9 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 * A summon in a different cell than the player receives no movement orders (its AI process is suspended); the drift `MoveTo` destination is abandoned when the owner is more than 8000 units away.
 * Focus Target is resolved from `targetActor`/`target` with an aim-cone fallback (25°, 2500 units); if both the crosshair data and the cone are empty, the diagnostic `[Crosshair]` line is the way to tell why.
 * `SetDontMove` / the combat deny bits are actor state, not framework state: turning the framework off with `[General] bEnabled = false` (or disabling the plugin) does not release them. Use any other order (or reload the save) before disabling.
+
+## 2026-11-23 — IN_PROGRESS: прямолинейный бег волков в атаке и выход из боя по «Приказ: Следовать»
+
+* **Кружение волков в `AttackApproach` (подтверждено в Ghidra `SkyrimSE.exe+6FFDA0`):** убрана подача ненулевого `angle.z` в `KeepOffsetFromActor` (движок прибавляет `angle.z` к собственному yaw суммона каждый кадр, создавая бесконечное вращение у четвероногих), устранено деление на ноль `catchUpRadius == followRadius` (`SafeKeepOffsetCatchUpRadius`), фильтр манёвров `WolfManeuver` расширен с 7 до 10 узлов (`+Reposition`, `+Backoff`, `+WatchTarget`) и включён для всех суммонов с активным фокусом.
+* **«Приказ: Следовать» (`SCF_CmdFollow`):** переведён на `SummonOrder::Return`, сбрасывает `currentTargetId`, публикует запрет боя в `CombatGate` до `BreakCombat`, удерживает режим возврата через `ShouldCompleteReturn` (`!inCombat`, дистанция ≤ `fFollowMinDistance`, минимум `2.5` с) с автоматическим переходом в `Follow`.
+* **Проверки:** `xmake` собрал и развернул DLL в оба MO2, `xmake run scf_tests` — **249/249** пройдено. Ожидается игровая проверка обоих сценариев.

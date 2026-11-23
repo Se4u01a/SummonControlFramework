@@ -1,5 +1,5 @@
 #include "Engine/EventAdapter.h"
-#include "Engine/UpdateHook.h"
+#include "Engine/CommandSpells.h"
 #include "Core/Assist.h"
 #include "Core/CommandQueue.h"
 #include "Core/EventDispatcher.h"
@@ -96,8 +96,11 @@ namespace scf::engine
 					}
 				}
 
-				// Immediately synchronize player's summoned actors on effect change
-				update::SyncPlayerSummons();
+				// Schedule synchronization on the main game thread (PlayerCharacter::Update)
+				// instead of calling SyncPlayerSummons() directly from an arbitrary event
+				// worker thread, which races on SummonRegistry and triggers Papyrus game-thread
+				// mismatch warnings.
+				ctx.GetScheduler().RequestImmediateTick();
 
 				return RE::BSEventNotifyControl::kContinue;
 			}
@@ -138,9 +141,8 @@ namespace scf::engine
 
 		// PoE2-style "attack what I attack" (stage M2): when the player hits an enemy, every
 		// summon whose order allows it (core::ShouldAssistPlayerHit) gets a FocusTarget on
-		// it - the same command path as Numpad 1, so the StartCombat seat and the target pin
-		// do the rest. Script events are dispatched on the main thread, so the registry is
-		// read here directly.
+		// it - the same command path as an attack order, so the StartCombat seat and the
+		// target pin do the rest. Explicit Attack orders and SCF command spells are skipped.
 		class HitEventSink : public RE::BSTEventSink<RE::TESHitEvent>
 		{
 		public:
@@ -155,6 +157,13 @@ namespace scf::engine
 				RE::BSTEventSource<RE::TESHitEvent>*) override
 			{
 				if (!a_event || !a_event->cause || !a_event->target) {
+					return RE::BSEventNotifyControl::kContinue;
+				}
+
+				// Never double-trigger passive Assist when the hit came from SCF's own
+				// command spell (SCF_CmdAttackTarget is handled authoritatively by
+				// CommandSpells::MagicEffectApplySink at PlayerDirect priority).
+				if (command_spells::IsCommandSpell(a_event->source)) {
 					return RE::BSEventNotifyControl::kContinue;
 				}
 

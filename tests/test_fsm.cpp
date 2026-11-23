@@ -152,6 +152,31 @@ TEST(TestLeashBreakForcesReturn)
 	CHECK(model.state == SummonState::FollowOwner);
 }
 
+TEST(TestExplicitAttackOrderImmuneToLeashBreak)
+{
+	StateMachine fsm;
+	SummonModel model;
+	model.id = 1;
+	model.order = SummonOrder::Attack;
+	model.state = SummonState::Approach;
+	model.aggression = AggressionMode::Defensive;
+	model.currentTargetId = 100;
+
+	DecisionContext ctx;
+	ctx.returnDistanceThreshold = 2000.0f;
+	ctx.followDistanceThreshold = 500.0f;
+	ctx.hasTarget = true;
+	ctx.detectedTargetId = 100;
+	ctx.distanceToTarget = 600.0f;
+	ctx.distanceToOwner = 5000.0f; // Far beyond leash threshold
+	ctx.stealth.explicitAttackOrder = true;
+
+	fsm.Update(model, ctx, 0.1f);
+	CHECK(model.order == SummonOrder::Attack);
+	CHECK(model.state == SummonState::Approach);
+	CHECK(model.currentTargetId == 100);
+}
+
 TEST(TestExplicitReturnOrder)
 {
 	StateMachine fsm;

@@ -4,6 +4,7 @@
 #include "Core/CatchUp.h"
 #include "Core/Formation.h"
 #include "PCH.h"
+#include "Engine/WolfManeuver.h"
 
 #include <RE/A/Actor.h>
 #include <RE/A/ActorState.h>
@@ -48,8 +49,9 @@ namespace scf::engine::movement
 		//     IMovementSetKeepOffsetFromActor (the type descriptor is present in the
 		//     image) and calls that interface's slot 1 with the nine-field record
 		//     {ActorHandle target, NiPoint3 offset, NiPoint3 angle, float catchUpRadius,
-		//     float followRadius}. That record is exactly Papyrus
-		//     Actor.KeepOffsetFromActor's argument list.
+		//     float followRadius}. IMPORTANT (Ghidra verified 2026-11-23 on Papyrus
+		//     wrapper +94B5B0): `a_angle` MUST be in RADIANS (Papyrus multiplies its
+		//     degree arguments by pi/180 = 0.017453292 before calling +603990).
 		//   * id 36871 -> SkyrimSE.exe+603AC0. Same interface, slot 0: clear.
 		//   * id 36490 -> SkyrimSE.exe+5E3330. Actor::SetDontMove(bool).
 		//
@@ -91,9 +93,11 @@ namespace scf::engine::movement
 		// ------------------------------------------------------------------
 		// Tunables. All are documented behaviour constants, not user settings:
 		//   * a primitive is re-issued if the desired goal moved by more than
-		//     kOffsetEpsilon, and re-asserted every kReassertSeconds so a movement
-		//     goal the engine rewrote on its own is taken back (the vanilla
-		//     summoned-creature follow may rewrite it).
+		//     kOffsetEpsilon, and re-asserted periodically so a movement goal
+		//     the engine rewrote on its own is taken back (the vanilla summoned-
+		//     creature follow may rewrite it). AttackApproach uses a wider facing
+		//     deadzone and slower reassert interval so target turning does not
+		//     spam KeepOffsetFromActor and interrupt the charge.
 		//   * the catch-up recall itself - when it fires, its hysteresis, its cooldown and
 		//     the landing rules - is decided by Core/CatchUp.h. This file gathers the
 		//     landing facts (space, ground, clearance, occupants, water) and performs the
@@ -103,7 +107,9 @@ namespace scf::engine::movement
 		constexpr float kOffsetEpsilon = 8.0f;
 		constexpr float kOffsetEpsilonSq = kOffsetEpsilon * kOffsetEpsilon;
 		constexpr float kFacingEpsilonDegrees = 10.0f;
+		constexpr float kAttackFacingEpsilonDegrees = 35.0f;
 		constexpr float kReassertSeconds = 2.0f;
+		constexpr float kAttackReassertSeconds = 6.0f;
 		constexpr float kMoveToTimeoutSeconds = 45.0f;
 
 		// Follow pace (PoE2 stage M1). kDefaultSpeedMult is the engine's normal movement
@@ -132,11 +138,8 @@ namespace scf::engine::movement
 		constexpr float kOccupantHeight = 256.0f;    // an actor above/below this cannot occupy the spot
 		constexpr std::size_t kMaxLandingProbes = 3; // candidate spots probed per recall
 
-		// How long an explicit FocusTarget order is given to put the summon into combat
-		// before the driver decides the engagement never started.
-		// Long enough for a summon to run ~2500 units to a target it has not detected yet
-		// (StartCombat on an undetected foe is refused until the summon gets close).
-		constexpr float kAttackGraceSeconds = 15.0f;
+		// How often to retry StartCombat if the engine dropped combat or is fighting
+		// someone other than the explicit focus target.
 		constexpr float kAttackReengageSeconds = 1.0f;
 
 		// The focused-target charge stops this far from the target (melee reach); inside
@@ -162,6 +165,7 @@ namespace scf::engine::movement
 			float facingOffsetDegrees{ 0.0f };
 			bool keepOffsetActive{ false };
 			RE::FormID keepOffsetAnchor{ 0 };
+			RE::FormID wolfMeleeFocus{ 0 };
 			bool translationLocked{ false };
 			// SetDontMove is persistent on the actor and survives a save/load, so the
 			// first tick after (re)discovery must push the desired value even when it
@@ -171,13 +175,16 @@ namespace scf::engine::movement
 			float orderEnteredAt{ 0.0f };
 			float lastIssuedAt{ 0.0f };
 			float lastReengageAt{ -100.0f };
+			// Progress-based stall tracking for explicit Attack orders (replaces blind
+			// wall-clock timeout so distant charges are never aborted mid-run).
+			core::AttackProgressState attackProgress{};
 			// Catch-up recall: the pure rules' memory (progress clock, best lag, hysteresis
 			// gate, cooldown) plus the refusal already reported, so one refusing condition
 			// is logged and counted once, not once per tick.
 			core::CatchUpMemory catchUp{};
 			core::CatchUpRefusal lastCatchUpRefusal{ core::CatchUpRefusal::None };
-			// Follow pace: the SpeedMult modifier this driver currently owns, so the exact
-			// amount can be rolled back and another writer's value is never touched.
+			// Follow / charge pace: the SpeedMult modifier this driver currently owns, so
+			// the exact amount can be rolled back and another writer's value is never touched.
 			core::FollowPace pace{ core::FollowPace::Walk };
 			bool paceKnown{ false };
 			float appliedSpeedDelta{ 0.0f };
@@ -270,19 +277,28 @@ namespace scf::engine::movement
 			AppliedMovement& a_state,
 			float a_now)
 		{
+			const bool isAttackApproach = (a_intent.mode == core::MovementMode::AttackApproach);
+			const float facingEpsilon = isAttackApproach ? kAttackFacingEpsilonDegrees : kFacingEpsilonDegrees;
+			const float reassertInterval = isAttackApproach ? kAttackReassertSeconds : kReassertSeconds;
+
 			const bool sameGoal = a_state.keepOffsetActive &&
 			                      a_state.keepOffsetAnchor == a_anchor->GetFormID() &&
 			                      a_state.localOffset.DistanceSquaredTo(a_intent.localOffset) <= kOffsetEpsilonSq &&
-			                      std::abs(a_state.facingOffsetDegrees - a_intent.facingOffsetDegrees) <= kFacingEpsilonDegrees;
-			const bool reassert = a_state.keepOffsetActive && (a_now - a_state.lastIssuedAt) >= kReassertSeconds;
+			                      core::AngularDifferenceDegrees(a_state.facingOffsetDegrees, a_intent.facingOffsetDegrees) <= facingEpsilon;
+			const bool reassert = a_state.keepOffsetActive && (a_now - a_state.lastIssuedAt) >= reassertInterval;
 
 			if (sameGoal && !reassert) {
 				return;
 			}
 
 			const RE::NiPoint3 offset{ a_intent.localOffset.x, a_intent.localOffset.y, a_intent.localOffset.z };
-			const RE::NiPoint3 angles{ 0.0f, 0.0f, a_intent.facingOffsetDegrees };
-			native::KeepOffsetFromActor(a_summon, a_anchor->GetHandle(), offset, angles, a_intent.catchUpRadius, a_intent.followRadius);
+			// Native MovementPlannerAgentKeepOffset::PlanMovement (+6FFDA0) adds a_angle to
+			// the summon's OWN current orientation every frame and divides by
+			// (catchUpRadius - followRadius). Keep facingOffsetDegrees at 0.0f (no perpetual
+			// spin torque) and always enforce catchUpRadius > followRadius.
+			const float safeCatchUp = core::SafeKeepOffsetCatchUpRadius(a_intent.followRadius, a_intent.catchUpRadius);
+			const RE::NiPoint3 angles{ 0.0f, 0.0f, core::DegreesToRadians(a_intent.facingOffsetDegrees) };
+			native::KeepOffsetFromActor(a_summon, a_anchor->GetHandle(), offset, angles, safeCatchUp, a_intent.followRadius);
 
 			a_state.keepOffsetActive = true;
 			a_state.keepOffsetAnchor = a_anchor->GetFormID();
@@ -291,7 +307,7 @@ namespace scf::engine::movement
 			a_state.lastIssuedAt = a_now;
 
 			if (!sameGoal) {
-				logger::info("[Movement] Summon 0x{:08X} {} keep-offset ({:.0f}, {:.0f}, {:.0f}) facing={:.0f} follow={:.0f} catchUp={:.0f} target={}",
+				logger::info("[Movement] Summon 0x{:08X} {} keep-offset ({:.0f}, {:.0f}, {:.0f}) facing={:.0f}deg follow={:.0f} catchUp={:.0f} target={}",
 					a_id,
 					core::ToString(a_intent.mode),
 					a_intent.localOffset.x,
@@ -299,7 +315,7 @@ namespace scf::engine::movement
 					a_intent.localOffset.z,
 					a_intent.facingOffsetDegrees,
 					a_intent.followRadius,
-					a_intent.catchUpRadius,
+					safeCatchUp,
 					a_anchorLabel);
 			} else {
 				logger::debug("[Movement] Summon 0x{:08X} keep-offset re-asserted ({})", a_id, core::ToString(a_intent.mode));
@@ -316,8 +332,8 @@ namespace scf::engine::movement
 			values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kCarryWeight, -0.01f);
 		}
 
-		// Applies the follow pace as a temporary SpeedMult modifier that this driver owns
-		// (`appliedSpeedDelta`), so it can be handed back exactly.
+		// Applies the follow/charge pace as a temporary SpeedMult modifier that this driver
+		// owns (`appliedSpeedDelta`), so it can be handed back exactly.
 		void ApplyFollowSpeed(
 			RE::Actor* a_summon,
 			core::EntityID a_id,
@@ -345,10 +361,10 @@ namespace scf::engine::movement
 			a_state.appliedSpeedDelta = desiredDelta;
 
 			if (paceChanged) {
-				logger::info("[Movement] Summon 0x{:08X} follow pace {} (lag {:.0f}, SpeedMult {:+.0f})",
+				logger::info("[Movement] Summon 0x{:08X} movement pace {} (dist {:.0f}, SpeedMult {:+.0f})",
 					a_id, core::ToString(a_motion.pace), a_lag, change);
 			} else {
-				logger::debug("[Movement] Summon 0x{:08X} follow pace {} re-issued (SpeedMult {:+.0f})",
+				logger::debug("[Movement] Summon 0x{:08X} movement pace {} re-issued (SpeedMult {:+.0f})",
 					a_id, core::ToString(a_motion.pace), change);
 			}
 		}
@@ -370,7 +386,7 @@ namespace scf::engine::movement
 				values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kSpeedMult, -owned);
 				NudgeSpeed(a_summon);
 			}
-			logger::info("[Movement] Summon 0x{:08X} follow pace released (SpeedMult {:+.0f})", a_id, -owned);
+			logger::info("[Movement] Summon 0x{:08X} movement pace released (SpeedMult {:+.0f})", a_id, -owned);
 		}
 
 		// A summon that leaves the roster (dispel, death, displacement) is dropped from the
@@ -393,7 +409,7 @@ namespace scf::engine::movement
 				values->ModActorValue(RE::ACTOR_VALUE_MODIFIER::kTemporary, RE::ActorValue::kSpeedMult, -a_state.appliedSpeedDelta);
 				NudgeSpeed(actor);
 			}
-			logger::info("[Movement] Summon 0x{:08X} left the roster: follow pace released (SpeedMult {:+.0f})",
+			logger::info("[Movement] Summon 0x{:08X} left the roster: movement pace released (SpeedMult {:+.0f})",
 				a_id, -a_state.appliedSpeedDelta);
 		}
 
@@ -787,29 +803,60 @@ namespace scf::engine::movement
 		// Order changes start the clock for the time-based rules below.
 		if (a_model.order != state.lastOrder) {
 			state.lastOrder = a_model.order;
+			state.wolfMeleeFocus = 0;
 			state.orderEnteredAt = a_now;
+			if (a_model.order != core::SummonOrder::Attack) {
+				core::ResetAttackProgress(state.attackProgress);
+			}
+		}
+
+		// Resolve live focus target once for both stall-guard and approach driving.
+		RE::Actor* attackTarget = nullptr;
+		float attackDistance = 0.0f;
+		if (a_model.order == core::SummonOrder::Attack && a_model.currentTargetId != core::InvalidEntityID) {
+			if (auto* candidate = RE::TESForm::LookupByID<RE::Actor>(a_model.currentTargetId);
+				candidate && !candidate->IsDead() && ShareLoadedSpace(candidate, a_summon)) {
+				attackTarget = candidate;
+				attackDistance = std::sqrt(HorizontalDistanceSq(summonPosition, ToCore(attackTarget->GetPosition())));
+			}
 		}
 
 		// 1. Order transitions that need engine distances.
 		if (a_model.order == core::SummonOrder::Attack) {
-			// An explicit FocusTarget that no longer exists (dead, unloaded, or never put
-			// the summon into combat) must not pin the summon to "attack" forever: hand
-			// it back to the follow order.
-			const bool targetGone = a_model.currentTargetId == core::InvalidEntityID;
-			const bool neverEngaged = (a_now - state.orderEnteredAt) >= kAttackGraceSeconds && !a_summon->IsInCombat();
-			if (targetGone || neverEngaged) {
+			// Progress-based stall guard: explicit Attack NEVER aborts on a short timer
+			// while the summon is in combat or closing distance toward a distant target.
+			// It finishes immediately when the target dies/unloads, or after 30s with no
+			// combat and no forward progress (truly unreachable).
+			const bool targetAlive = (attackTarget != nullptr);
+			if (core::ObserveAndShouldAbortAttack(
+				state.attackProgress,
+				a_model.currentTargetId,
+				targetAlive,
+				a_summon->IsInCombat(),
+				attackDistance,
+				a_now)) {
 				a_model.order = core::SummonOrder::Follow;
+				a_model.currentTargetId = core::InvalidEntityID;
+				core::ResetAttackProgress(state.attackProgress);
 				a_fsm.TransitionTo(a_model, core::SummonState::FollowOwner, "Attack order finished");
 				logger::info("[Movement] Summon 0x{:08X} attack order finished ({}) -> Follow",
-					id, targetGone ? "target gone" : "combat never started");
+					id, !targetAlive ? "target gone" : "stalled / unreachable");
 			}
 		} else if (a_model.order == core::SummonOrder::Return) {
 			// The walking itself is the ReturnToOwner intent below; its recall and its
-			// pace are decided together with Follow (step 2c).
-			if (distanceToOwner <= a_settings.movement.followMinDistance) {
+			// pace are decided together with Follow (step 2c). Hold Return until combat is
+			// broken, the disengage grace window has elapsed, and the summon is back near
+			// the owner, so Follow cast mid-fight near enemies never flips back on tick 1.
+			const float elapsedInReturn = std::max(0.0f, a_now - state.orderEnteredAt);
+			if (core::ShouldCompleteReturn(
+				distanceToOwner,
+				a_settings.movement.followMinDistance,
+				a_summon->IsInCombat(),
+				elapsedInReturn)) {
 				a_model.order = core::SummonOrder::Follow;
 				a_fsm.TransitionTo(a_model, core::SummonState::FollowOwner, "Returned to owner range");
-				logger::info("[Movement] Summon 0x{:08X} reached owner ({:.0f}) -> Follow", id, distanceToOwner);
+				logger::info("[Movement] Summon 0x{:08X} reached owner ({:.0f}, disengaged {:.1f}s) -> Follow",
+					id, distanceToOwner, elapsedInReturn);
 			}
 		} else if (a_model.order == core::SummonOrder::MoveTo && a_model.hasMoveTarget) {
 			const float toDestination = std::sqrt(HorizontalDistanceSq(a_model.moveTargetPosition, ownerPosition));
@@ -852,50 +899,54 @@ namespace scf::engine::movement
 		RE::Actor* approachAnchor = nullptr;
 
 		// 2b. Explicit attack. While the engine's combat AI is fighting the focused actor
-		// (StartCombat + the CombatGate target pin), it owns locomotion, approach range
-		// and attack choice: a ranged or caster summon keeps its distance, a melee one
-		// closes in. Our keep-offset charge is only an assist for the gap before that,
-		// i.e. while the engine is not (yet) fighting the focus — otherwise two movement
-		// goals compete, which is the "two behaviour patterns at once" the field reported.
-		if (a_model.order == core::SummonOrder::Attack && a_combatPermitted &&
-			a_model.currentTargetId != core::InvalidEntityID) {
-			auto* attackTarget = RE::TESForm::LookupByID<RE::Actor>(a_model.currentTargetId);
-			if (attackTarget && !attackTarget->IsDead() && ShareLoadedSpace(attackTarget, a_summon)) {
-				const auto targetPosition = ToCore(attackTarget->GetPosition());
-				const bool inCombat = a_summon->IsInCombat();
-				const auto engineTarget = a_summon->GetActorRuntimeData().currentCombatTarget.get();
-				const bool fightingFocus = inCombat && engineTarget && engineTarget.get() == attackTarget;
+		// (StartCombat + the CombatGate target pin) AND is already within handoff range, it
+		// owns locomotion, approach range and attack choice. Beyond handoff range (or before
+		// combat starts), AttackApproach charges directly toward the target at sprint/run
+		// pace with no arbitrary distance cap, then hands off cleanly once inside handoff.
+		if (a_model.order == core::SummonOrder::Attack && a_combatPermitted && attackTarget) {
+			const auto targetPosition = ToCore(attackTarget->GetPosition());
+			const bool inCombat = a_summon->IsInCombat();
+			const auto engineTarget = a_summon->GetActorRuntimeData().currentCombatTarget.get();
+			const bool fightingFocus = inCombat && engineTarget && engineTarget.get() == attackTarget;
 
-				const float targetDistanceSq = HorizontalDistanceSq(summonPosition, targetPosition);
-				const bool closeEnough = targetDistanceSq <= kAttackHandoffRange * kAttackHandoffRange;
+			const float targetDistanceSq = HorizontalDistanceSq(summonPosition, targetPosition);
+			const bool closeEnough = targetDistanceSq <= kAttackHandoffRange * kAttackHandoffRange;
 
-				// Keep the engagement alive: if the engine dropped combat, re-start it
-				// against the same target; if it is fighting someone else, StartCombat on
-				// an actor already in combat adds the focus to its group's targets, which
-				// is what the target pin needs (the seat permits exactly this target).
-				if (!fightingFocus && (a_now - state.lastReengageAt) >= kAttackReengageSeconds) {
-					state.lastReengageAt = a_now;
-					const bool started = a_summon->StartCombat(attackTarget, nullptr);
-					logger::info("[Movement] Summon 0x{:08X} {} StartCombat(0x{:08X}) -> {} (dist {:.0f}, engine target 0x{:08X})",
-						id, inCombat ? "add-target" : "re-engage", attackTarget->GetFormID(), started ? "true" : "false",
-						std::sqrt(HorizontalDistanceSq(summonPosition, targetPosition)),
-						engineTarget ? engineTarget->GetFormID() : 0u);
-				}
+			// Keep the engagement alive: if the engine dropped combat, re-start it
+			// against the same target; if it is fighting someone else, StartCombat on
+			// an actor already in combat adds the focus to its group's targets, which
+			// is what the target pin needs (the seat permits exactly this target).
+			if (!fightingFocus && (a_now - state.lastReengageAt) >= kAttackReengageSeconds) {
+				state.lastReengageAt = a_now;
+				const bool started = a_summon->StartCombat(attackTarget, nullptr);
+				logger::info("[Movement] Summon 0x{:08X} {} StartCombat(0x{:08X}) -> {} (dist {:.0f}, engine target 0x{:08X})",
+					id, inCombat ? "add-target" : "re-engage", attackTarget->GetFormID(), started ? "true" : "false",
+					attackDistance,
+					engineTarget ? engineTarget->GetFormID() : 0u);
+			}
 
-				// The charge is anchored on the TARGET itself (offset 0 in its body space),
-				// not on the owner: an owner-relative goal moved with every step and turn of
-				// the player, which dragged the summon around instead of at the enemy.
-				if (!(fightingFocus && closeEnough) &&
-					targetDistanceSq > kAttackApproachRange * kAttackApproachRange &&
-					targetDistanceSq <= core::kMaxMoveToDistance * core::kMaxMoveToDistance) {
-					intent.mode = core::MovementMode::AttackApproach;
-					intent.localOffset = core::Vec3{ 0.0f, 0.0f, 0.0f };
-					intent.followRadius = kAttackApproachRange;
-					intent.catchUpRadius = kAttackApproachRange * 2.0f;
-					intent.facingOffsetDegrees = core::FacingOffsetDegrees(summonPosition, targetPosition, attackTarget->GetAngleZ());
-					intent.lockTranslation = false;
-					approachAnchor = attackTarget;
-				}
+			// The charge is anchored on the TARGET itself (offset 0 in its body space),
+			// not on the owner: an owner-relative goal moved with every step and turn of
+			// the player, which dragged the summon around instead of at the enemy.
+			const bool isWolf = wolf::UsesWolfSkeleton(a_summon);
+			const auto focusId = attackTarget->GetFormID();
+			const bool charge = isWolf
+				? core::ShouldChargeWolfFocus(attackDistance, state.wolfMeleeFocus != focusId)
+				: !(fightingFocus && closeEnough) && attackDistance > kAttackApproachRange;
+			state.wolfMeleeFocus = isWolf && !charge ? focusId : 0;
+			if (charge) {
+				intent.mode = core::MovementMode::AttackApproach;
+				intent.localOffset = core::Vec3{ 0.0f, 0.0f, 0.0f };
+				intent.followRadius = kAttackApproachRange;
+				intent.catchUpRadius = core::SafeKeepOffsetCatchUpRadius(
+					intent.followRadius,
+					isWolf ? (core::kWolfMeleeHandoff + 100.0f) : (kAttackApproachRange * 2.0f));
+				// Keep 0.0f: native KeepOffsetFromActor (+6FFDA0) adds angle.z to the
+				// summon's own current yaw every frame, which spun non-strafing wolves
+				// in continuous circles along the road.
+				intent.facingOffsetDegrees = 0.0f;
+				intent.lockTranslation = false;
+				approachAnchor = attackTarget;
 			}
 		}
 
@@ -907,10 +958,10 @@ namespace scf::engine::movement
 			core::ResetCatchUpProgress(state.catchUp, a_now);
 		}
 
-		// 2c. Follow race (PoE2 stage M1) and the emergency recall (stage 7). Only the two
-		//     modes that bring the summon back to the owner take part; every other mode
-		//     keeps the actor's own pace (a Command Rush bonus must survive) and is never
-		//     teleported.
+		// 2c. Movement pace (PoE2 stage M1) and emergency recall (stage 7).
+		//     * FollowSlot / ReturnToOwner: follow pace + catch-up warp.
+		//     * AttackApproach: charge pace (run/sprint to distant target), NEVER warped back.
+		//     * Other modes (melee combat, HoldPosition, MoveTo): restore actor's own pace.
 		if (intent.mode == core::MovementMode::FollowSlot || intent.mode == core::MovementMode::ReturnToOwner) {
 			const core::FollowTuning paceTuning = core::FollowTuningFrom(a_settings);
 			const core::CatchUpTuning catchUpTuning = core::CatchUpTuningFrom(a_settings);
@@ -952,6 +1003,10 @@ namespace scf::engine::movement
 			} else {
 				NoteCatchUpRefusal(id, a_model, decision, observation, state);
 			}
+		} else if (intent.mode == core::MovementMode::AttackApproach && approachAnchor) {
+			const core::FollowTuning paceTuning = core::FollowTuningFrom(a_settings);
+			const core::FollowMotion motion = core::DecideFollowMotion(attackDistance, paceTuning);
+			ApplyFollowSpeed(a_summon, id, motion, attackDistance, state);
 		} else {
 			RestoreFollowSpeed(a_summon, id, state);
 		}
@@ -992,6 +1047,17 @@ namespace scf::engine::movement
 		// 4. The vanilla FollowTo package pulls a summon back to within Min Radius of the
 		// player; orders that keep it away from the player release that leash.
 		leash::UpdateForSummon(a_summon, core::ReleasesFollowLeash(a_model));
+	}
+
+	void NotifyOrderIssued(core::EntityID a_id, core::SummonOrder a_order, float a_now)
+	{
+		auto& state = s_applied[a_id];
+		state.lastOrder = a_order;
+		state.orderEnteredAt = a_now;
+		if (a_order != core::SummonOrder::Attack) {
+			state.wolfMeleeFocus = 0;
+			core::ResetAttackProgress(state.attackProgress);
+		}
 	}
 
 	void RetainOnly(const std::unordered_set<core::EntityID>& a_liveSummons)

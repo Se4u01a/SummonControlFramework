@@ -44,4 +44,16 @@ namespace scf::core
 	//   * Guard / Follow: combat allowed (the engine picks targets), movement stays under
 	//     the movement driver's control.
 	CombatPolicy BuildCombatPolicy(const SummonModel& a_model, bool a_hasLiveTarget) noexcept;
+
+	// Whether the combat leash (pulling a fighting summon back to the owner beyond
+	// fCombatLeashRadius) may interrupt this summon.
+	//
+	// Explicit Attack orders have strict highest priority over all passive behaviours,
+	// including the combat leash: the summon must pursue and finish its ordered target
+	// regardless of how far that target stands from the player.
+	bool ShouldEnforceCombatLeash(
+		const SummonModel& a_model,
+		bool a_enableCombatLeash,
+		bool a_combatPermitted,
+		bool a_inCombat) noexcept;
 }

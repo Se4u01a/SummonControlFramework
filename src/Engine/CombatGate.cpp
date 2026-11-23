@@ -2,7 +2,9 @@
 #include "Core/Assist.h"
 #include "Core/KeywordApi.h"
 #include "Core/TargetPin.h"
+#include "Core/WolfManeuver.h"
 #include "PCH.h"
+#include "Engine/WolfManeuver.h"
 
 #include <RE/A/Actor.h>
 #include <RE/B/BSAtomic.h>
@@ -45,8 +47,22 @@ namespace scf::engine::combat
 		// function are patched (a site another mod already rerouted is logged and skipped).
 		using StartCombat_t = bool (*)(RE::Actor*, RE::Actor*, RE::CombatGroup*);
 
-		StartCombat_t s_originalStartCombat{ nullptr };
-		bool           s_installed{ false };
+		// Actor::CanAttackActor(Actor* target) -> bool.
+		// VERIFIED 1.5.97 (Ghidra 2026-11-23): id 36532 (AE 37532) -> SkyrimSE.exe+5E7500
+		// (matches CommonLibSSE-NG Actor.cpp:160). For commanded actors (kIsCommandedActor),
+		// vanilla CanAttackActor refuses ANY target that is not already in combat with the
+		// player or the summon (5 direct E8 callers: CombatManager::StartCombat +7A5ECB,
+		// CombatGroup::CanAddTarget +76A799, CombatGroup upkeep +76AD2E, AIProcess +658807/
+		// +658878). Because SCF_CmdAttackTarget is a non-hostile command spell, StartCombat
+		// always returned false on distant/unalerted foes until the target entered combat.
+		// Patching the direct call sites lets an explicit FocusTarget bypass only that
+		// refusal while keeping the function entry untouched and leaving all other actors
+		// and orders 100% vanilla.
+		using CanAttackActor_t = bool (*)(RE::Actor*, RE::Actor*);
+
+		StartCombat_t    s_originalStartCombat{ nullptr };
+		CanAttackActor_t s_originalCanAttackActor{ nullptr };
+		bool             s_installed{ false };
 
 		struct Permission
 		{
@@ -58,11 +74,14 @@ namespace scf::engine::combat
 			// Target pin (FocusTarget): the handle the selector seat answers with.
 			// Resolved on the main thread; the seat never looks up a form.
 			RE::ActorHandle pinnedHandle{};
+			bool            focusedWolf{ false };
+			std::uint32_t  loggedManeuvers{};
 			bool            pinAppliedLogged{ false };
+			bool            canAttackOverrideLogged{ false };
 			std::chrono::steady_clock::time_point lastPinDeclineLog{};
 		};
 
-		// Shared with the StartCombat call sites and the selector seat (any thread).
+		// Shared with the StartCombat / CanAttackActor call sites and the selector seat (any thread).
 		std::mutex                                 s_mutex;
 		std::unordered_map<RE::FormID, Permission> s_permissions;
 
@@ -81,8 +100,9 @@ namespace scf::engine::combat
 		core::Vec3 s_aggressionCentre{};
 		float s_aggressionRadius{ 0.0f };
 
-		// Number of published pins: the selector seat runs for EVERY actor in combat,
-		// so it returns before touching the mutex when no summon has a FocusTarget.
+		// Number of published pins: the selector and CanAttackActor seats run for EVERY
+		// actor in combat, so they return before touching the mutex when no summon has a
+		// FocusTarget.
 		std::atomic<std::uint32_t> s_pinCount{ 0 };
 		std::atomic<bool>          s_selectorSeatObserved{ false };
 
@@ -189,6 +209,10 @@ namespace scf::engine::combat
 				if (answer == pinned.native_handle() && engineAnswer != 0) {
 					if (!permission.pinAppliedLogged) {
 						permission.pinAppliedLogged = true;
+					if (permission.focusedWolf) {
+						logger::info("[WolfManeuver] Summon 0x{:08X} focus 0x{:08X}: active combat style 0x{:08X}",
+							self, permission.target, controller->combatStyle ? controller->combatStyle->GetFormID() : 0);
+					}
 						logger::info("[TargetPin] Summon 0x{:08X}: engine picked handle 0x{:X}, answered with focus 0x{:08X}{}",
 							self, engineAnswer, static_cast<RE::FormID>(permission.target),
 							engineAnswer == answer ? " (engine already agreed)" : "");
@@ -295,12 +319,17 @@ namespace scf::engine::combat
 				kSelectTargetSlot, SelectStandardHook::func.address(), SelectFixedHook::func.address());
 		}
 
+		std::atomic<bool> s_hasFocusedWolf{ false };
+
 		void RecountPins()
 		{
 			std::uint32_t count = 0;
+			bool hasWolf = false;
 			for (const auto& [_, permission] : s_permissions) {
+				hasWolf |= permission.focusedWolf;
 				count += (permission.restrictToTarget && permission.pinnedHandle) ? 1 : 0;
 			}
+			s_hasFocusedWolf.store(hasWolf, std::memory_order_relaxed);
 			s_pinCount.store(count, std::memory_order_relaxed);
 		}
 
@@ -322,6 +351,113 @@ namespace scf::engine::combat
 				return false;
 			}
 			return s_originalStartCombat(a_self, a_target, a_group);
+		}
+
+		bool ShouldAllowExplicitFocusAttack(RE::FormID a_self, RE::Actor* a_target) noexcept
+		{
+			try {
+				if (!a_target || a_target->IsPlayerRef() || a_target->IsDead() || a_target->IsDisabled() || a_target->IsDeleted()) {
+					return false;
+				}
+				const RE::FormID targetId = a_target->GetFormID();
+				if (targetId == 0 || targetId == a_self) {
+					return false;
+				}
+
+				std::lock_guard lock(s_mutex);
+				if (s_untargetableCount.load(std::memory_order_relaxed) != 0 && s_untargetable.contains(targetId)) {
+					return false;
+				}
+				const auto it = s_permissions.find(a_self);
+				if (it == s_permissions.end()) {
+					return false;
+				}
+				auto& permission = it->second;
+				if (!permission.allowCombat || !permission.restrictToTarget ||
+				    static_cast<RE::FormID>(permission.target) != targetId) {
+					return false;
+				}
+				if (!permission.canAttackOverrideLogged) {
+					permission.canAttackOverrideLogged = true;
+					logger::info("[CombatGate] CanAttackActor permitted for explicit focus: summon 0x{:08X} -> target 0x{:08X}",
+						a_self, targetId);
+				}
+				return true;
+			} catch (...) {
+				return false;
+			}
+		}
+
+		bool CanAttackActorGateThunk(RE::Actor* a_self, RE::Actor* a_target)
+		{
+			if (!s_originalCanAttackActor) {
+				return false;
+			}
+			if (a_self && a_target && a_self != a_target &&
+			    s_pinCount.load(std::memory_order_relaxed) != 0 &&
+			    ShouldAllowExplicitFocusAttack(a_self->GetFormID(), a_target)) {
+				return true;
+			}
+			return s_originalCanAttackActor(a_self, a_target);
+		}
+
+		struct CallSitePatchResult
+		{
+			std::size_t patched{ 0 };
+			std::size_t tailCalls{ 0 };
+		};
+
+		CallSitePatchResult PatchDirectCallSites(std::uintptr_t a_functionAddress, std::uintptr_t a_thunkAddress, const char* a_label)
+		{
+			CallSitePatchResult result{};
+			const auto text = REL::Module::get().segment(REL::Segment::textx);
+			if (!text.address() || text.size() < 8) {
+				logger::error("[CombatGate] .text segment is not available; {} seat disabled.", a_label);
+				return result;
+			}
+
+			const auto* bytes = text.pointer<std::uint8_t>();
+			struct Site
+			{
+				std::size_t offset;
+				bool        tailCall; // E9: the caller tail-jumps, so it must stay a jmp
+			};
+			std::vector<Site> sites;
+
+			// Collect first: patching changes the bytes the scan reads.
+			for (std::size_t i = 0; i + 5 <= text.size(); ++i) {
+				const auto opcode = bytes[i];
+				if (opcode != 0xE8 && opcode != 0xE9) {
+					continue;
+				}
+
+				std::int32_t displacement = 0;
+				std::memcpy(&displacement, bytes + i + 1, sizeof(displacement));
+				const auto previous = static_cast<std::uintptr_t>(
+					static_cast<std::intptr_t>(text.address() + i + 5) + displacement);
+				if (previous == a_functionAddress) {
+					sites.push_back({ i, opcode == 0xE9 });
+				}
+			}
+
+			if (sites.empty()) {
+				logger::error("[CombatGate] no direct call sites of {} found; seat disabled.", a_label);
+				return result;
+			}
+
+			for (const auto& site : sites) {
+				REL::Relocation<std::uintptr_t> callSite{ text.address() + site.offset };
+				const auto previous = site.tailCall ? callSite.write_branch<5>(a_thunkAddress)
+				                                    : callSite.write_call<5>(a_thunkAddress);
+				if (previous != a_functionAddress) {
+					logger::warn("[CombatGate] {} site 0x{:X} changed between scan and patch (previous 0x{:X}); chained.",
+						a_label, text.address() + site.offset, previous);
+				}
+				++result.patched;
+				result.tailCalls += site.tailCall ? 1 : 0;
+			}
+
+			return result;
 		}
 	}
 
@@ -389,80 +525,83 @@ namespace scf::engine::combat
 		s_aggressionRadius = a_radius;
 	}
 
+	bool HasFocusedWolf() noexcept
+	{
+		return s_hasFocusedWolf.load(std::memory_order_relaxed);
+	}
+
+	bool BlocksWolfManeuver(const RE::CombatController& controller, std::size_t index, const char* name)
+	{
+		const auto actor = controller.attackerHandle.get();
+		if (!actor) {
+			return false;
+		}
+		std::lock_guard lock(s_mutex);
+		const auto it = s_permissions.find(actor->GetFormID());
+		if (it == s_permissions.end()) {
+			return false;
+		}
+		auto& permission = it->second;
+		if (!core::BlocksWolfManeuver(permission.focusedWolf, permission.pinnedHandle.native_handle(),
+			controller.targetHandle.native_handle())) {
+			return false;
+		}
+		const auto bit = 1u << index;
+		if (!(permission.loggedManeuvers & bit)) {
+			permission.loggedManeuvers |= bit;
+			logger::info("[WolfManeuver] Summon 0x{:08X} focus 0x{:08X} style 0x{:08X}: skipped {}",
+				actor->GetFormID(), permission.target, controller.combatStyle ? controller.combatStyle->GetFormID() : 0, name);
+		}
+		return true;
+	}
+
 	bool Install()
 	{
 		if (s_installed) {
 			return true;
 		}
 
-		// The real function is never patched, so this address stays callable.
-		REL::Relocation<std::uintptr_t> function{ REL::RelocationID(37608, 38561) };
-		if (!function.address()) {
+		// 1. Actor::StartCombat denial seat (function entry untouched).
+		REL::Relocation<std::uintptr_t> startCombatFn{ REL::RelocationID(37608, 38561) };
+		if (!startCombatFn.address()) {
 			logger::error("[CombatGate] Actor::StartCombat did not resolve; combat denial disabled.");
 			return false;
 		}
-		s_originalStartCombat = reinterpret_cast<StartCombat_t>(function.address());
+		s_originalStartCombat = reinterpret_cast<StartCombat_t>(startCombatFn.address());
 
-		const auto text = REL::Module::get().segment(REL::Segment::textx);
-		if (!text.address() || text.size() < 8) {
-			logger::error("[CombatGate] .text segment is not available; combat denial disabled.");
-			return false;
-		}
+		const auto startCombatSites = PatchDirectCallSites(
+			startCombatFn.address(),
+			reinterpret_cast<std::uintptr_t>(&StartCombatGateThunk),
+			"Actor::StartCombat");
 
-		const auto* bytes = text.pointer<std::uint8_t>();
-		struct Site
-		{
-			std::size_t offset;
-			bool        tailCall; // E9: the caller tail-jumps, so it must stay a jmp
-		};
-		std::vector<Site> sites;
-
-		// Collect first: patching changes the bytes the scan reads.
-		for (std::size_t i = 0; i + 5 <= text.size(); ++i) {
-			const auto opcode = bytes[i];
-			if (opcode != 0xE8 && opcode != 0xE9) {
-				continue;
-			}
-
-			std::int32_t displacement = 0;
-			std::memcpy(&displacement, bytes + i + 1, sizeof(displacement));
-			const auto previous = static_cast<std::uintptr_t>(
-				static_cast<std::intptr_t>(text.address() + i + 5) + displacement);
-			if (previous == function.address()) {
-				sites.push_back({ i, opcode == 0xE9 });
-			}
-		}
-
-		if (sites.empty()) {
-			logger::error("[CombatGate] no direct call sites of Actor::StartCombat found; combat denial disabled.");
-			return false;
-		}
-
-		std::size_t patched = 0;
-		std::size_t tailCalls = 0;
-		for (const auto& site : sites) {
-			REL::Relocation<std::uintptr_t> callSite{ text.address() + site.offset };
-			const auto previous = site.tailCall ? callSite.write_branch<5>(&StartCombatGateThunk)
-			                                    : callSite.write_call<5>(&StartCombatGateThunk);
-			if (previous != function.address()) {
-				logger::warn("[CombatGate] StartCombat site 0x{:X} changed between scan and patch (previous 0x{:X}); chained.",
-					text.address() + site.offset, previous);
-			}
-			++patched;
-			tailCalls += site.tailCall ? 1 : 0;
-		}
-
-		s_installed = patched > 0;
+		s_installed = startCombatSites.patched > 0;
 		if (s_installed) {
 			logger::info("[CombatGate] StartCombat denial seat installed on {} site(s) ({} tail call(s)) of 0x{:X}; function entry untouched.",
-				patched, tailCalls, function.address());
+				startCombatSites.patched, startCombatSites.tailCalls, startCombatFn.address());
 		} else {
 			logger::error("[CombatGate] no StartCombat call site could be patched; combat denial disabled.");
 		}
 
-		// The target pin is independent of the StartCombat seat: a FocusTarget needs both
+		// 2. Actor::CanAttackActor seat for explicit Attack focus targets (function entry untouched).
+		REL::Relocation<std::uintptr_t> canAttackFn{ REL::RelocationID(36532, 37532) };
+		if (canAttackFn.address()) {
+			s_originalCanAttackActor = reinterpret_cast<CanAttackActor_t>(canAttackFn.address());
+			const auto canAttackSites = PatchDirectCallSites(
+				canAttackFn.address(),
+				reinterpret_cast<std::uintptr_t>(&CanAttackActorGateThunk),
+				"Actor::CanAttackActor");
+			if (canAttackSites.patched > 0) {
+				logger::info("[CombatGate] CanAttackActor focus seat installed on {} site(s) ({} tail call(s)) of 0x{:X}; function entry untouched.",
+					canAttackSites.patched, canAttackSites.tailCalls, canAttackFn.address());
+			}
+		} else {
+			logger::warn("[CombatGate] Actor::CanAttackActor did not resolve; explicit Attack on non-combat targets may require proximity.");
+		}
+
+		// 3. The target pin is independent of the StartCombat seat: a FocusTarget needs both
 		// (entry adds the target to the group, the pin makes the selector choose it).
 		InstallTargetPin();
+		wolf::InstallManeuverHooks();
 		return s_installed;
 	}
 
@@ -562,7 +701,12 @@ namespace scf::engine::combat
 			}
 		}
 
-		// 1. Publish the policy for the StartCombat seat and the target pin.
+		// Suppress melee circling/flanking maneuvers for ANY focused summon under an
+		// explicit Attack order (all hooked leaves belong to CloseMovement /
+		// FlankingMovement, leaving Advance, Chase and RangedMovement untouched).
+		const bool focusedWolf = static_cast<bool>(pinnedHandle);
+
+		// 1. Publish the policy for the StartCombat / CanAttackActor seats and the target pin.
 		{
 			std::lock_guard lock(s_mutex);
 			auto& permission = s_permissions[id];
@@ -570,9 +714,12 @@ namespace scf::engine::combat
 			permission.allowCombat = a_policy.allowCombat;
 			permission.restrictToTarget = a_policy.restrictToTarget;
 			permission.target = a_policy.target;
-			if (pinChanged) {
+			if (pinChanged || permission.focusedWolf != focusedWolf) {
+				permission.focusedWolf = focusedWolf;
+				permission.loggedManeuvers = 0;
 				permission.pinnedHandle = pinnedHandle;
 				permission.pinAppliedLogged = false;
+				permission.canAttackOverrideLogged = false;
 				if (pinnedHandle) {
 					logger::info("[TargetPin] Summon 0x{:08X} pinned to focus 0x{:08X}", id, static_cast<RE::FormID>(a_policy.target));
 				} else {

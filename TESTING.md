@@ -7,7 +7,7 @@
 ## 1. Automated Unit Tests (`scf_tests.exe`)
 
 Все тесты выполняются за **~2 миллисекунды** автономным исполняемым файлом `build\windows\x64\releasedbg\scf_tests.exe`.
-Текущий результат: **233/233 тестов успешно пройдено (0 failures)**.
+Количество выполненных тестов и ошибок выводится в конце запуска.
 
 ### Запуск тестов
 ```powershell
@@ -123,7 +123,7 @@ xmake run scf_tests
 * `relationship_classifier_target_protection`: Проверяет селектор защиты целей в зависимости от настроек (`bProtectPlayerOwnedSummons`, `bProtectAlliedSummons`).
 * `relationship_classifier_evaluate_attack_matrix`: Проверяет матрицу решений: защита атак ближнего боя, стрел, магии, криков от игрока и союзников, при безусловном пропуске атак от врагов и нейтральных сущностей.
 
-### Suite M: Formation Geometry, Facing, Movement Intent & Combat Policy (`Formation`, `MovementIntent`, `CombatPolicy`) — 29 tests
+### Suite M: Formation Geometry, Facing, Movement Intent & Combat Policy (`Formation`, `MovementIntent`, `CombatPolicy`) — 34+ tests
 * `TestFormationSlotOffsetsSitOnRadius`: Проверяет, что смещение любого слота строя лежит ровно на заданном радиусе (50..1000) и не имеет вертикального сдвига.
 * `TestFormationSlotsAreDistinct`: Проверяет непересечение слотов отряда: для 2..6 существ позиции разнесены более чем на 50 единиц.
 * `TestFormationDefaultSlotIsBehindOwner`: Проверяет, что одиночный сумон и замыкающий тройки стоят позади владельца.
@@ -138,7 +138,9 @@ xmake run scf_tests
 * `TestMovementIntentAttackOverridesEveryMovementOrder`: Проверяет, что явный `FocusTarget` (`Attack`) отменяет любой приказ движения: примитивы не применяются, локомоция у боевого AI.
 * `TestMovementIntentReturnRunsToOwner`: Проверяет `ReturnToOwner` с нулевым смещением, корректными радиусами (follow < catchUp) и разворотом лицом к игроку.
 * `TestMovementIntentFollowUsesFormationSlot`: Проверяет `FollowSlot` с дистанцией строя `fFollowMinDistance` и нулевым facing на самом слоте.
-* `TestMovementIntentFollowFacesTravelWhenAwayFromSlot`: Проверяет, что смещённый от слота сумон смотрит по направлению к слоту, а не туда же, куда игрок.
+* `TestMovementIntentKeepOffsetUsesZeroFacingOffset`: Проверяет, что `BuildMovementIntent` всегда выдаёт `facingOffsetDegrees == 0.0f` во всех режимах `KeepOffsetFromActor` (`ReturnToOwner`, `MoveToPoint`, `FollowSlot`), исключая бесконечное вращение в `PlanMovement (+6FFDA0)`.
+* `TestSafeKeepOffsetCatchUpRadiusNeverDividesByZero`: Проверяет инвариант `catchUpRadius > followRadius` (минимум `+10.0f`), исключая деление на ноль в `PlanMovement`.
+* `TestShouldCompleteReturnEnforcesDisengageAndRange`: Проверяет, что переход `Return -> Follow` срабатывает только при `!inCombat`, дистанции ≤ `fFollowMinDistance` и после выдержки `kReturnMinDisengageSeconds` (2.5 с).
 * `TestMovementIntentFollowYieldsToCombat`: Проверяет, что в бою `Follow` не навязывает движение (локомоция остаётся боевому AI), а устаревшая цель модели не блокирует приказ.
 * `TestMovementIntentAttackFallsBackToFollowWhenCombatForbidden`: Проверяет, что при запрещённом бое (`Passive`) приказ `Attack` не оставляет суммона без управления движением — он продолжает следовать.
 * `TestMovementIntentFollowKeepsSlotWhenCombatForbidden`: Проверяет, что при `Passive`/`Return`/`MoveTo` формация выигрывает даже если движок ещё сообщает бой (иначе суммон стоит, пока его утаскивает AI).
@@ -236,7 +238,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 195/195 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 249/249 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -400,3 +402,13 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 * **[ ] TEST-COMBAT-11 (Cell border outdoors):** Снаружи пройти через границу ячейки с Follow/Return/Focus: приказы не замирают, фокус по врагу в соседней ячейке не сбрасывается сам (`focus target ... is gone` не появляется, пока враг жив и рядом).
 * **[ ] TEST-COMBAT-7 (MoveTo does not fight):** Отправить отряд в `MoveTo` мимо врага: пока идёт переход, суммон не вступает в бой (биты включены), после прибытия (`-> Guard`) снова может обороняться.
 
+
+### Игровая проверка заклинания «В атаку» с волками
+
+В отдельном сохранении призвать фамильяра, поставить его на удержание и с открытого участка попасть приказом в живую нейтральную цель. До первого укуса проверить состояние боя цели с игроком. Повторить с несколькими волками против движущейся цели. Волки должны добежать лицом вперёд и перейти к укусам без повторных остановок на подступах. Повторное попадание должно сохранить фокус. Проверить промах, пассивный режим и попадание в напарника вне боя — команда не должна вызвать бой.
+
+Для проверки окружения повторить с одним волком, затем со стаей на свободной площадке. Проверить укус, смену цели, команду «Следовать» и подход к противнику за препятствием. В SKSE-логе строки `[WolfManeuver]` показывают установку 10 хуков фильтра, фактический FormID стиля и первое отклонение каждого манёвра на текущей цели, а в `[Movement]` у `AttackApproach` должно быть `facing=0deg` и `catchUp=250.0` (`> follow=150.0`).
+
+### Игровая проверка заклинания «Приказ: Следовать» в бою
+
+Во время активного боя суммонов кастануть «Приказ: Следовать» (`SCF_CmdFollow`): отряд должен немедленно прекратить бой (`[CombatGate] ... combat broken by policy`, запрет атак/кастов и отказ `StartCombat`), развернуться и побежать к игроку, не вступая повторно в драку по пути. После выхода из боя, подхода в радиус `fFollowMinDistance` и выдержки ≥ 2.5 с в логе появляется `reached owner (...) -> Follow`, и суммоны возвращаются в обычный режим следования.

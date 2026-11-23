@@ -739,3 +739,45 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
   * `Settings` (`[Spells] bAutoGrantCommandSpells = true`; из `[Hotkeys]` убраны 7 старых ключей, устаревшие ключи в старых INI тихо игнорируются), `InputHandler`, `Messaging` (`kDataLoaded` / `kPostLoadGame` / `kNewGame`), `FlickMenu` (секция «Command Spells & HUD» со статусом `.esp`, чекбоксом и кнопками), `ConsoleHandler` (`scf status`).
 * **Проверки:** `python tools/make_command_spells_esp.py` (7 записей, ESL, валидация чтением обратно), `xmake` (0 ошибок, 0 предупреждений, DLL + PDB + ESP разложены в обе MO2-сборки), `xmake run scf_tests` — **237/237** (+4 новых теста в `tests/test_command_spells.cpp`, обновлён `tests/test_settings.cpp`). **В игре не проверено** — требуется включить `SummonControlFramework.esp` в MO2 и протестировать все 3 заклинания.
 * **Краш на загрузке ESP (2026-11-23, `Crash_2026_11_23_15-41-32.txt`):** `BGSProjectile::ReadFromFileStream` → `TESModel::unk_199390` падал при чтении `PROJ FE050800` (`SummonControlFramework.esp`). Причина: шаблонный `TurnUndeadProjectile` (`0x0004BE35`) в `Skyrim.esm` имеет `form_version = 39`, где субзапись `MODT` (36 байт) хранит сырые 12-байтные хэши без v40+ заголовка; при записи в `form_version = 44` движок читал `"dds "` (`0x00736464`) как счётчик из 7,5 млн текстур. **Фикс:** убрано копирование `MODT` из `tools/make_command_spells_esp.py` (в v44 достаточно `MODL`, как в xEdit), `data/SummonControlFramework.esp` пересобран (`2383` байт) и разложен в оба MO2.
+
+## 2026-11-23 — Сближение волков при явной атаке
+
+В логе одного боя волку за секунды несколько раз выдавался и сбрасывался AttackApproach. Разнесены пороги передачи управления боевому AI и возобновления сближения. В Skyrim.esm EncSummonFamiliar и HowlSummonWolf ссылаются на csFamiliar. В профиле SBORKA запись EncSummonFamiliar из STB.esp также указывает на этот стиль. В ESP изменены два веса ближнего боя. Попадание обрабатывается один раз на цель через Papyrus StartCombat(player), после валидации. Автотесты и сборка прошли. Проверка поведения в игре ожидается.
+
+## 2026-11-23 — Окружение цели после правки csFamiliar
+
+Игрок подтвердил, что волки продолжали кружить. В логе этой версии виден прямой подход с радиусами 150/150. В профиле SBORKA записи EncDog и EncSummonFamiliar из STB.esp ссылаются соответственно на csDog и csFamiliar. У собаки Circle/Fallback равны 0.84/0.88, у фамильяра с предыдущей версией SCF — 0/0. По этим значениям нельзя установить причину наблюдаемой траектории. Для явного приказа добавлен фильтр отдельных манёвров дерева и регистрация их выбора в логе. На установленном SkyrimSE.exe 1.5.97 сверена пара методов ForceFail. 247 тестов прошли. Новая версия ожидает игровой проверки.
+
+## 2026-11-23 — Причина кружения волков (Ghidra `PlanMovement`) и выход из боя по «Приказ: Следовать»
+
+### Проблема
+Игрок сообщил о двух сохранившихся багах в боевой сборке:
+1. Призванные волки всё ещё кружились по дороге к цели при явном приказе атаки вместо бега по прямой.
+2. Заклинание «Приказ: Следовать» (`SCF_CmdFollow`) не выводило суммонов из боя и не отзывало их к игроку.
+
+### Диагностика и подтверждённые факты
+* **Декомпиляция в Ghidra (`SkyrimSE.exe+6FFDA0` — `MovementPlannerAgentKeepOffset::PlanMovement`, приоритет `0x87`, и `+6FF720` — `MovementPlannerAgentHorseControls::PlanMovement`):**
+  * `PlanMovement` читает текущую ориентацию **самого суммона** (`(*(param_1 - 8))->vfunc_0x20(&angles)`) и вычисляет `desiredFacing = summonCurrentAngles + param_1->angle`, выставляя запрос поворота на каждом кадре.
+  * Передача ненулевого `angle.z` (`facing=-96..-115deg` в логе `AttackApproach` при развороте мамонта) прикладывала постоянный бесконечный вращающий момент. Для не-стрейфящихся четвероногих (`Wolf`, `CanStrafe == false`) это заставляло волков нарезать круги прямо на пути к цели (323–378 ед/с по прямой против ~700 ед/с у двуногих).
+  * Для волков передавалось `catchUpRadius == followRadius == 150.0f`, что вызывало деление на ноль `(dist - 150) / (150 - 150)` в `PlanMovement`.
+  * Кроме того, `CombatGate.cpp` включал подавление манёвров только по точному пути ванильного скелета волка (`Actors\Canine\Character Assets Wolf\skeleton.nif`), а `WolfManeuver.cpp` перехватывал только 7 из 10 узлов `CloseMovement`/`FlankingMovement` (не хватало `Reposition`, `Backoff`, `WatchTarget`).
+* **Анализ «Приказ: Следовать» (`CommandSpells.cpp`, `CommandQueue.cpp`, `CombatPolicy.cpp`, `UpdateHook.cpp`, `SummonMovement.cpp`):**
+  * `SCF_CmdFollow` выдавал `SummonOrder::Follow`, для которого `CombatPolicy` возвращает `allowCombat = true, disableAttacks = false`. В итоге разовый `BreakCombat` вызывался до публикации политики, враги на следующем тике немедленно возвращали суммона в бой, а `BuildMovementIntent` отдавал `MovementMode::None`.
+
+### Принятые изменения
+* `src/Core/MovementIntent.{h,cpp}`, `src/Engine/SummonMovement.{h,cpp}`:
+  * Обнулён `facingOffsetDegrees = 0.0f` во всех режимах `KeepOffsetFromActor` (`ReturnToOwner`, `MoveToPoint`, `FollowSlot`, `AttackApproach`).
+  * Добавлена чистая функция `SafeKeepOffsetCatchUpRadius` (`catchUp >= follow + 10.0f`), применяемая в `ApplyKeepOffset` и `AttackApproach` (`150 / 250` для волков, `150 / 300` для остальных).
+  * Добавлена чистая функция `ShouldCompleteReturn` (переход `Return -> Follow` только при `!inCombat && dist <= followMinDistance && elapsed >= 2.5s`) и `NotifyOrderIssued` для сброса таймера при повторном касте.
+* `src/Engine/WolfManeuver.cpp`, `src/Engine/CombatGate.cpp`:
+  * Список перехватываемых узлов расширен до 10 (`+Reposition`, `+Backoff`, `+WatchTarget`); `UsesWolfSkeleton` сопоставляет `canine`/`wolf` без учёта регистра; `CombatGate` активирует фильтр манёвров для всех суммонов с активным явным фокусом (`focusedWolf = static_cast<bool>(pinnedHandle)`), не затрагивая `Advance`/`Chase`/`RangedMovement`.
+* `src/Core/CommandSpells.cpp`, `src/Core/CommandQueue.cpp`, `src/Engine/UpdateHook.cpp`:
+  * `CommandSpellKind::Follow` теперь выдаёт `SummonOrder::Return`.
+  * `CommandQueue::ApplyToModel` очищает `currentTargetId` при любом `SetOrder != Attack` и `SetAggression(Passive)`, а `hasMoveTarget` — независимо от наличия FSM.
+  * `UpdateHook` переведён на `PublishPolicyAndBreakCombat`: сначала публикует `CombatPolicy` в `CombatGate`, затем вызывает `BreakCombat` и `EvaluatePackage`, закрывая гонку с боевыми потоками.
+* `tests/test_command_spells.cpp`, `tests/test_movement_intent.cpp`: добавлены и обновлены тесты на `Follow -> Return`, нулевой `facingOffsetDegrees`, `SafeKeepOffsetCatchUpRadius` и `ShouldCompleteReturn`.
+
+### Проверки
+* `xmake` (ReleaseDbg): сборка чистая, 0 ошибок, `SummonControlFramework.dll` и `SummonControlFramework.esp` развернуты в оба инстанса MO2.
+* `xmake run scf_tests`: **249 test cases, 0 failed cases, 0 failed checks**.
+* Игровая проверка (прямолинейный бег волков и выход из боя по «Приказ: Следовать») ожидается от пользователя.

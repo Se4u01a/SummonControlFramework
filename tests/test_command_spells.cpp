@@ -1,3 +1,4 @@
+#include "Core/CombatPolicy.h"
 #include "Core/CommandSpells.h"
 #include "Core/StateMachine.h"
 #include "check.h"
@@ -48,11 +49,13 @@ TEST(command_spells_self_cast_hold_and_follow)
 	CHECK(hold.command->ownerId == kPlayer);
 	CHECK_NEAR(hold.command->timestamp, 12.5f, 0.001f);
 
+	// Follow spell issues Return first so CombatPolicy forbids combat re-entry and
+	// pulls engaged summons back to the player before handing off to Follow.
 	const auto follow = ResolveSelfCommandCast(kPlayer, kPlayer, ids.followSpell, ids, 15.0f);
 	CHECK(follow.Accepted());
 	CHECK(follow.kind == CommandSpellKind::Follow);
 	CHECK(follow.command->type == CommandType::SetOrder);
-	CHECK(follow.command->order == SummonOrder::Follow);
+	CHECK(follow.command->order == SummonOrder::Return);
 	CHECK(follow.command->priority == CommandPriority::PlayerDirect);
 	CHECK(follow.command->ownerId == kPlayer);
 
@@ -142,10 +145,15 @@ TEST(command_spells_drive_state_machine_transitions)
 	CHECK(model.state == SummonState::AcquireTarget);
 	CHECK(model.currentTargetId == kBandit);
 
-	// 3. Cast Follow -> FollowOwner
+	// 3. Cast Follow -> Return + clears focus target + CombatPolicy forbids combat
 	const auto follow = ResolveSelfCommandCast(kPlayer, kPlayer, ids.followSpell, ids, 3.0f);
 	CHECK(follow.Accepted());
 	queue.ApplyToModel(*follow.command, model, &fsm);
-	CHECK(model.order == SummonOrder::Follow);
-	CHECK(model.state == SummonState::FollowOwner);
+	CHECK(model.order == SummonOrder::Return);
+	CHECK(model.state == SummonState::Return);
+	CHECK(model.currentTargetId == InvalidEntityID);
+	const auto policy = BuildCombatPolicy(model, false);
+	CHECK(!policy.allowCombat);
+	CHECK(policy.disableAttacks);
+	CHECK(!policy.restrictToTarget);
 }

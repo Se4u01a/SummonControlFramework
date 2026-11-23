@@ -91,7 +91,10 @@ namespace scf::core
 		cmd.summonId = InvalidEntityID;
 		cmd.ownerId = a_ownerId;
 		cmd.timestamp = a_timestamp;
-		cmd.order = (result.kind == CommandSpellKind::HoldPosition) ? SummonOrder::WaitGuard : SummonOrder::Follow;
+		// Follow spell issues Return first so CombatPolicy forbids combat re-entry,
+		// breaks active fights and pulls summons back to the player; once disengaged
+		// and back in owner range, SummonMovement transitions Return -> Follow.
+		cmd.order = (result.kind == CommandSpellKind::HoldPosition) ? SummonOrder::WaitGuard : SummonOrder::Return;
 
 		result.command = cmd;
 		return result;

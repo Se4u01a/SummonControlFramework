@@ -96,8 +96,10 @@ namespace scf::core
 			}
 		}
 
-		// 3. Check leash constraint: if too far from owner, abort combat and return
-		if (a_ctx.hasOwner && a_ctx.distanceToOwner > a_ctx.returnDistanceThreshold) {
+		// 3. Check leash constraint: if too far from owner, abort combat and return.
+		//    Explicit Attack orders have highest priority and are immune to leash breaks.
+		if (a_model.order != SummonOrder::Attack &&
+		    a_ctx.hasOwner && a_ctx.distanceToOwner > a_ctx.returnDistanceThreshold) {
 			if (a_model.state != SummonState::Return) {
 				a_model.currentTargetId = InvalidEntityID;
 				TransitionTo(a_model, SummonState::Return, "Leash break: distance to owner exceeded threshold");

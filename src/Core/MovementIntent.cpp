@@ -3,23 +3,102 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace scf::core
 {
-	namespace
+	float DegreesToRadians(float a_degrees) noexcept
 	{
-		// Direction of travel, relative to the owner's heading, for a goal world point.
-		// Zero while the actor is effectively standing on the goal (it then faces the
-		// owner's heading, which is the formation look).
-		float TravelFacingDegrees(const Vec3& a_from, const Vec3& a_to, float a_ownerYawRadians) noexcept
-		{
-			const float dx = a_to.x - a_from.x;
-			const float dy = a_to.y - a_from.y;
-			if (dx * dx + dy * dy < kFacingMinDistance * kFacingMinDistance) {
-				return 0.0f;
-			}
-			return FacingOffsetDegrees(a_from, a_to, a_ownerYawRadians);
+		return a_degrees * (static_cast<float>(std::numbers::pi) / 180.0f);
+	}
+
+	float AngularDifferenceDegrees(float a_lhsDegrees, float a_rhsDegrees) noexcept
+	{
+		float diff = std::fmod(a_lhsDegrees - a_rhsDegrees, 360.0f);
+		if (diff > 180.0f) {
+			diff -= 360.0f;
+		} else if (diff < -180.0f) {
+			diff += 360.0f;
 		}
+		return std::abs(diff);
+	}
+
+	float SafeKeepOffsetCatchUpRadius(float a_followRadius, float a_catchUpRadius) noexcept
+	{
+		const float safeFollow = std::max(0.0f, a_followRadius);
+		return std::max(a_catchUpRadius, safeFollow + kMinCatchUpMargin);
+	}
+
+	bool ShouldCompleteReturn(
+		float a_distanceToOwner,
+		float a_followMinDistance,
+		bool a_inCombat,
+		float a_elapsedInReturn,
+		float a_minDisengageSeconds) noexcept
+	{
+		if (a_inCombat) {
+			return false;
+		}
+		const float minHold = std::max(0.0f, a_minDisengageSeconds);
+		if (a_elapsedInReturn < minHold) {
+			return false;
+		}
+		return a_distanceToOwner <= std::max(0.0f, a_followMinDistance);
+	}
+
+	void ResetAttackProgress(AttackProgressState& a_state) noexcept
+	{
+		a_state = AttackProgressState{};
+	}
+
+	bool ObserveAndShouldAbortAttack(
+		AttackProgressState& a_state,
+		EntityID a_targetId,
+		bool a_targetAlive,
+		bool a_inCombat,
+		float a_distanceToTarget,
+		float a_now,
+		const AttackAbortConfig& a_config) noexcept
+	{
+		if (!a_targetAlive || a_targetId == InvalidEntityID) {
+			ResetAttackProgress(a_state);
+			return true;
+		}
+
+		const float distance = std::max(0.0f, a_distanceToTarget);
+		if (!a_state.initialized || a_state.targetId != a_targetId) {
+			a_state.targetId = a_targetId;
+			a_state.startedAt = a_now;
+			a_state.lastProgressAt = a_now;
+			a_state.bestDistance = distance;
+			a_state.initialized = true;
+			return false;
+		}
+
+		// Guard against non-monotonic clocks (save reload / reset).
+		if (a_now < a_state.lastProgressAt) {
+			a_state.lastProgressAt = a_now;
+		}
+
+		if (a_inCombat) {
+			a_state.lastProgressAt = a_now;
+			if (distance < a_state.bestDistance) {
+				a_state.bestDistance = distance;
+			}
+			return false;
+		}
+
+		const float step = std::max(0.0f, a_config.progressStep);
+		if (distance <= a_state.bestDistance - step) {
+			a_state.bestDistance = distance;
+			a_state.lastProgressAt = a_now;
+			return false;
+		}
+
+		if (!(a_config.stallTimeoutSeconds > 0.0f)) {
+			return false;
+		}
+		return (a_now - a_state.lastProgressAt) >= a_config.stallTimeoutSeconds;
 	}
 
 	FollowTuning FollowTuningFrom(const SettingsData& a_settings) noexcept
@@ -71,7 +150,7 @@ namespace scf::core
 		bool a_combatPermitted,
 		const SettingsData& a_settings,
 		const Vec3& a_ownerPosition,
-		const Vec3& a_summonPosition,
+		const Vec3& /*a_summonPosition*/,
 		float a_ownerYawRadians,
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize) noexcept
@@ -94,15 +173,19 @@ namespace scf::core
 			return intent;
 		}
 
-		// 3. Return: run back to the owner, then the order flips to Follow.
+		// 3. Return: run back to the owner, then the order flips to Follow once disengaged.
+		//    facingOffsetDegrees stays 0.0f: native KeepOffsetFromActor (+6FFDA0) adds
+		//    angle.z to the summon's OWN yaw every frame, so any non-zero value spins it.
 		if (a_model.order == SummonOrder::Return) {
 			MovementIntent intent{};
 			const float followRadius = std::max(movement.followMinDistance, 150.0f);
-			const float catchUpRadius = std::max(movement.followMaxDistance, followRadius * 2.0f);
+			const float catchUpRadius = SafeKeepOffsetCatchUpRadius(
+				followRadius,
+				std::max(movement.followMaxDistance, followRadius * 2.0f));
 			intent.mode = MovementMode::ReturnToOwner;
 			intent.followRadius = followRadius;
 			intent.catchUpRadius = catchUpRadius;
-			intent.facingOffsetDegrees = TravelFacingDegrees(a_summonPosition, a_ownerPosition, a_ownerYawRadians);
+			intent.facingOffsetDegrees = 0.0f;
 			return intent;
 		}
 
@@ -119,8 +202,10 @@ namespace scf::core
 				intent.mode = MovementMode::MoveToPoint;
 				intent.localOffset = WorldPointToOwnerLocal(a_model.moveTargetPosition, a_ownerPosition, a_ownerYawRadians);
 				intent.followRadius = kMoveToArrivalRadius;
-				intent.catchUpRadius = std::max(movement.followMaxDistance, kMoveToArrivalRadius * 4.0f);
-				intent.facingOffsetDegrees = TravelFacingDegrees(a_summonPosition, a_model.moveTargetPosition, a_ownerYawRadians);
+				intent.catchUpRadius = SafeKeepOffsetCatchUpRadius(
+					intent.followRadius,
+					std::max(movement.followMaxDistance, kMoveToArrivalRadius * 4.0f));
+				intent.facingOffsetDegrees = 0.0f;
 				return intent;
 			}
 		}
@@ -143,11 +228,10 @@ namespace scf::core
 		layout.maxExpansion = a_settings.squad.formationMaxExpansion;
 		intent.localOffset = FormationSlotOffsetLocal(a_slotIndex, a_squadSize, movement.followMinDistance, layout);
 		intent.followRadius = std::max(kMinFollowRadius, movement.followMinDistance * 0.5f);
-		intent.catchUpRadius = std::max(movement.followMaxDistance, intent.followRadius * 2.0f);
-		intent.facingOffsetDegrees = TravelFacingDegrees(
-			a_summonPosition,
-			OwnerLocalToWorldPoint(intent.localOffset, a_ownerPosition, a_ownerYawRadians),
-			a_ownerYawRadians);
+		intent.catchUpRadius = SafeKeepOffsetCatchUpRadius(
+			intent.followRadius,
+			std::max(movement.followMaxDistance, intent.followRadius * 2.0f));
+		intent.facingOffsetDegrees = 0.0f;
 		return intent;
 	}
 

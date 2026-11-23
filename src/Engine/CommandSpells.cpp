@@ -14,6 +14,10 @@
 #include <RE/T/TESMagicEffectApplyEvent.h>
 #include <RE/T/TESSpellCastEvent.h>
 
+#ifdef GetObject
+#	undef GetObject  // Win32 GDI macro collides with BSScript::Variable::GetObject.
+#endif
+
 #include <array>
 #include <string>
 
@@ -72,6 +76,22 @@ namespace scf::engine::command_spells
 				return true;
 			}
 			return false;
+		}
+
+		// Use the game's script-facing combat command, including its normal handling
+		// of a neutral actor. The command MGEF itself stays harmless on rejected hits.
+		bool RequestCombatWithPlayer(RE::Actor* target, RE::PlayerCharacter* player)
+		{
+			auto* vm = RE::BSScript::Internal::VirtualMachine::GetSingleton();
+			RE::BSScript::Variable receiver;
+			receiver.Pack(target);
+			if (!vm || !receiver.IsObject()) {
+				return false;
+			}
+			auto object = receiver.GetObject();
+			RE::BSTSmartPointer<RE::BSScript::IStackCallbackFunctor> callback;
+			return object && vm->DispatchMethodCall(object, "StartCombat",
+				RE::MakeFunctionArguments(static_cast<RE::Actor*>(player)), callback);
 		}
 
 		class SpellCastSink final : public RE::BSTEventSink<RE::TESSpellCastEvent>
@@ -189,6 +209,10 @@ namespace scf::engine::command_spells
 				ctx.GetCommandQueue().Enqueue(*resolution.command);
 				ctx.GetScheduler().RequestImmediateTick();
 
+				if (!RequestCombatWithPlayer(targetActor, player)) {
+					logger::warn("[CommandSpells] Could not dispatch StartCombat(player) for 0x{:08X}", candidate.targetId);
+				}
+
 				const char* name = targetActor->GetName();
 				std::string msg = "Приказ: В атаку -> ";
 				msg += (name && name[0]) ? name : "цель";
@@ -261,6 +285,17 @@ namespace scf::engine::command_spells
 	bool IsLoaded() noexcept
 	{
 		return s_forms.ids.IsLoaded();
+	}
+
+	bool IsCommandSpell(std::uint32_t a_formId) noexcept
+	{
+		if (a_formId == 0 || !s_forms.ids.IsLoaded()) {
+			return false;
+		}
+		return a_formId == s_forms.ids.holdPositionSpell ||
+		       a_formId == s_forms.ids.followSpell ||
+		       a_formId == s_forms.ids.attackTargetSpell ||
+		       a_formId == s_forms.ids.attackTargetEffect;
 	}
 
 	std::size_t GrantSpellsToPlayer()

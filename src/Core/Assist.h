@@ -12,11 +12,10 @@ namespace scf::core
 	// "Attack what I attack": the player hit `a_targetId`, a hostile candidate the
 	// engine layer has already checked (alive, not the player, not a friend). Should this
 	// summon switch its focus to it?
-	//   * never in Passive (it only fights on an explicit order) - and not on Return,
-	//     MoveTo or Guard: those are explicit player orders that outrank the assist;
-	//   * Follow: yes - this is the minion joining the player's fight;
-	//   * Attack: yes if it is a different target (the player switched targets); the
-	//     same target is not re-issued.
+	//   * never in Passive (it only fights on an explicit order) - and not on Attack,
+	//     Return, MoveTo or Guard: explicit player orders (especially Attack) have strict
+	//     priority over passive assist;
+	//   * Follow: yes - this is the minion joining the player's fight.
 	bool ShouldAssistPlayerHit(const SummonModel& a_model, EntityID a_targetId) noexcept;
 
 	// Aggression radius: in Follow / Guard (engine-chosen fights) a summon may only START

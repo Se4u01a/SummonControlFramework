@@ -51,6 +51,11 @@ namespace scf::engine::movement
 		float a_now,
 		bool a_combatPermitted);
 
+	// Refreshes the order-entered clock when the player explicitly re-issues an order
+	// (e.g. casting Follow/Return again while already returning) so the Return disengage
+	// hold window restarts cleanly.
+	void NotifyOrderIssued(core::EntityID a_id, core::SummonOrder a_order, float a_now);
+
 	// Forget bookkeeping for summons that are no longer engine-commanded (dispel,
 	// death, cell detach / displacement). Keeps SetDontMove / keep-offset state from
 	// being replayed onto a later actor with a recycled handle.

@@ -109,13 +109,14 @@ namespace scf::core
 		Vec3 localOffset{};
 
 		float followRadius{ 0.0f };   // Inside this radius the actor stops moving
-		float catchUpRadius{ 0.0f };  // Outside this radius the actor runs
+		float catchUpRadius{ 0.0f };  // Outside this radius the actor runs (must stay > followRadius)
 
-		// Facing offset (degrees) relative to the owner's heading. This is the value
-		// KeepOffsetFromActor takes in its angle-Z argument: with 0 the actor faces
-		// where the owner faces (which makes it moonwalk whenever the goal lies to the
-		// side or behind). The driver sets it to the direction of travel while moving
-		// and to 0 while standing in formation.
+		// Facing offset (degrees) passed to Actor::KeepOffsetFromActor (SE +603990).
+		// IMPORTANT (Ghidra-verified on MovementPlannerAgentKeepOffset::PlanMovement at
+		// SkyrimSE.exe+6FFDA0): the engine adds a_angle to the SUMMON's OWN current
+		// orientation every frame (`desiredYaw = summonYaw + angle.z`), NOT to the
+		// anchor's heading. Any non-zero angle injects a perpetual spin torque that makes
+		// non-strafing quadrupeds (wolves) run in continuous circles. Keep this 0.0f.
 		float facingOffsetDegrees{ 0.0f };
 
 		bool lockTranslation{ false }; // Actor::SetDontMove(true)
@@ -135,13 +136,81 @@ namespace scf::core
 	// Slowest allowed follow radius, so a summon never grinds against the owner.
 	inline constexpr float kMinFollowRadius = 40.0f;
 
+	// Minimum gap between followRadius and catchUpRadius so PlanMovement's
+	// `(dist - followRadius) / (catchUpRadius - followRadius)` never divides by zero.
+	inline constexpr float kMinCatchUpMargin = 10.0f;
+
+	// Minimum time a Return order holds combat-forbidden state before flipping back to
+	// Follow once the summon is out of combat and within followMinDistance of the owner.
+	// Prevents casting Follow near an enemy from flipping Return -> Follow on tick 1 and
+	// immediately re-entering combat on tick 2.
+	inline constexpr float kReturnMinDisengageSeconds = 2.5f;
+
+	// Converts degrees to radians for Actor::KeepOffsetFromActor (native function expects radians).
+	float DegreesToRadians(float a_degrees) noexcept;
+
+	// Shortest unsigned angular difference between two angles in degrees, in [0, 180].
+	// Prevents wrap-around jitter across the +/-180 degree seam.
+	float AngularDifferenceDegrees(float a_lhsDegrees, float a_rhsDegrees) noexcept;
+
+	// Guarantees catchUpRadius is strictly larger than followRadius so native
+	// MovementPlannerAgentKeepOffset::PlanMovement (+6FFDA0) never divides by zero.
+	float SafeKeepOffsetCatchUpRadius(float a_followRadius, float a_catchUpRadius) noexcept;
+
+	// True only when a Return recall may safely hand back to Follow: the summon is out
+	// of combat, back within owner range, and the disengage hold window has elapsed.
+	bool ShouldCompleteReturn(
+		float a_distanceToOwner,
+		float a_followMinDistance,
+		bool a_inCombat,
+		float a_elapsedInReturn,
+		float a_minDisengageSeconds = kReturnMinDisengageSeconds) noexcept;
+
+	// Progress-based stall guard for explicit SummonOrder::Attack orders.
+	// Replaces the blind wall-clock grace timeout so a summon charging a distant target
+	// is never aborted mid-run while closing distance or fighting.
+	struct AttackProgressState
+	{
+		EntityID targetId{ InvalidEntityID };
+		float startedAt{ 0.0f };
+		float lastProgressAt{ 0.0f };
+		float bestDistance{ 0.0f };
+		bool initialized{ false };
+	};
+
+	struct AttackAbortConfig
+	{
+		// Minimum horizontal distance reduction (world units) that counts as forward
+		// progress toward the target and resets the stall clock.
+		float progressStep{ 64.0f };
+
+		// Seconds without entering combat AND without making forward progress before
+		// the target is treated as unreachable and the order reverts to Follow.
+		float stallTimeoutSeconds{ 30.0f };
+	};
+
+	void ResetAttackProgress(AttackProgressState& a_state) noexcept;
+
+	// Observes the current Attack tick and returns true only when the Attack order must
+	// finish (target dead/gone, OR not in combat and stalled without closing distance for
+	// stallTimeoutSeconds).
+	bool ObserveAndShouldAbortAttack(
+		AttackProgressState& a_state,
+		EntityID a_targetId,
+		bool a_targetAlive,
+		bool a_inCombat,
+		float a_distanceToTarget,
+		float a_now,
+		const AttackAbortConfig& a_config = {}) noexcept;
+
 	// Translates the summon's current order into a movement intent.
 	//
 	// Rules, highest priority first:
 	//   * Attack (explicit FocusTarget) wins over any movement order: the combat AI
 	//     drives the summon.
 	//   * WaitGuard holds its ground, even in combat.
-	//   * Return runs to the owner and hands back to Follow once inside followMinDistance.
+	//   * Return runs to the owner and hands back to Follow once disengaged and inside
+	//     followMinDistance.
 	//   * MoveTo walks to the stored destination (owner-relative, recomputed every tick
 	//     so a moving owner does not drag the destination along); a destination beyond
 	//     kMaxMoveToDistance is ignored as stale.
@@ -162,6 +231,14 @@ namespace scf::core
 		float a_ownerYawRadians,
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize) noexcept;
+
+	// Keep charging the same wolf focus until melee handoff. After handoff the
+	// wider restart radius lets the combat AI finish a bite on a moving target.
+	inline constexpr float kWolfMeleeHandoff = 150.0f;
+	inline bool ShouldChargeWolfFocus(float distance, bool chargingSameFocus) noexcept
+	{
+		return distance > (chargingSameFocus ? kWolfMeleeHandoff : 225.0f);
+	}
 
 	// True when the actor is close enough to a destination to consider the order done.
 	bool IsWithinArrivalRadius(const Vec3& a_actorPosition, const Vec3& a_destination, float a_radius = kMoveToArrivalRadius) noexcept;

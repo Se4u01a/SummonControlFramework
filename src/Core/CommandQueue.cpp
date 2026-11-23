@@ -118,28 +118,42 @@ namespace scf::core
 		switch (a_cmd.type) {
 		case CommandType::SetOrder:
 			a_model.order = a_cmd.order;
+			if (a_cmd.order != SummonOrder::Attack) {
+				// Any non-attack order clears the prior explicit focus target so
+				// CombatPolicy and TrueHUD never keep a stale target pinned.
+				a_model.currentTargetId = InvalidEntityID;
+			}
 			if (a_cmd.order == SummonOrder::MoveTo) {
 				a_model.moveTargetPosition = a_cmd.targetPosition;
 				a_model.hasMoveTarget = true;
 				if (a_fsm) {
 					a_fsm->TransitionTo(a_model, SummonState::Approach, "Command: MoveTo executed");
 				}
-			} else if (a_fsm && a_cmd.order == SummonOrder::Return) {
+			} else if (a_cmd.order == SummonOrder::Return) {
 				a_model.hasMoveTarget = false;
-				a_fsm->TransitionTo(a_model, SummonState::Return, "Command: Return executed");
-			} else if (a_fsm && a_cmd.order == SummonOrder::WaitGuard) {
+				if (a_fsm) {
+					a_fsm->TransitionTo(a_model, SummonState::Return, "Command: Return executed");
+				}
+			} else if (a_cmd.order == SummonOrder::WaitGuard) {
 				a_model.hasMoveTarget = false;
-				a_fsm->TransitionTo(a_model, SummonState::Guard, "Command: WaitGuard executed");
-			} else if (a_fsm && a_cmd.order == SummonOrder::Follow) {
+				if (a_fsm) {
+					a_fsm->TransitionTo(a_model, SummonState::Guard, "Command: WaitGuard executed");
+				}
+			} else if (a_cmd.order == SummonOrder::Follow) {
 				a_model.hasMoveTarget = false;
-				a_fsm->TransitionTo(a_model, SummonState::FollowOwner, "Command: Follow executed");
+				if (a_fsm) {
+					a_fsm->TransitionTo(a_model, SummonState::FollowOwner, "Command: Follow executed");
+				}
 			}
 			break;
 
 		case CommandType::SetAggression:
 			a_model.aggression = a_cmd.aggression;
-			if (a_fsm && a_cmd.aggression == AggressionMode::Passive) {
-				a_fsm->TransitionTo(a_model, SummonState::FollowOwner, "Command: Passive mode engaged");
+			if (a_cmd.aggression == AggressionMode::Passive) {
+				a_model.currentTargetId = InvalidEntityID;
+				if (a_fsm) {
+					a_fsm->TransitionTo(a_model, SummonState::FollowOwner, "Command: Passive mode engaged");
+				}
 			}
 			break;
 

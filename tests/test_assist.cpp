@@ -28,13 +28,14 @@ TEST(TestAssistFollowJoinsPlayersFight)
 	CHECK(ShouldAssistPlayerHit(Model(SummonOrder::Follow, AggressionMode::Aggressive), kEnemy));
 }
 
-// Given a summon already attacking, a different target switches it; the same one is not re-issued.
-TEST(TestAssistAttackSwitchesOnlyOnNewTarget)
+// Given a summon under an explicit Attack order, passive Assist never overrides or re-triggers it
+// (Attack has strict highest priority; switching targets requires an explicit Attack command).
+TEST(TestAssistDoesNotOverrideExplicitAttackOrder)
 {
 	SummonModel model = Model(SummonOrder::Attack);
 	model.currentTargetId = kEnemy;
 	CHECK(!ShouldAssistPlayerHit(model, kEnemy));
-	CHECK(ShouldAssistPlayerHit(model, kOtherEnemy));
+	CHECK(!ShouldAssistPlayerHit(model, kOtherEnemy));
 }
 
 // Given Passive or an explicit movement / hold order, the assist never overrides it.
