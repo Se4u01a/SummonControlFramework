@@ -240,7 +240,7 @@
 
 ## Implemented and Deployed to MO2: FF-01 (Friendly Fire Protection & Attack Filtering)
 
-Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md).
+Specification reference: [Friendly_Fire_Protection_Addendum.md](Friendly_Fire_Protection_Addendum.md).
 
 * **FF-Stage A (Relationship Classification & Matrix Policy):**
   * `src/FriendlyFire/RelationshipClassifier.h/.cpp`: classifies sources as `Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, or `Unknown`.
@@ -296,3 +296,9 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 * **Вторая (главная) причина, вскрытая проверкой `SkyrimSE.exe` (PE/RTTI):** `MagicHook` с 2026-11-11 хукал `RE::VTABLE_Character[3]` слот `1` (`SE id 37020`, `subobj_off = 0x38`) — это `IAnimationGraphManagerHolder::NotifyAnimationGraph`, а не `MagicTarget` (`TESObjectREFR` занимает 4 vtable `[0..3]`). Настоящая `MagicTarget` sub-vtable — `RE::VTABLE_Character[4]` (`subobj_off = 0x98`), слот `1` — `Actor::AddTarget` (`SE id 37832`, `+0x633090`, вызывает базу `MagicTarget::AddTarget` `SE id 33742`, `+0x553750`). Аудит всех остальных `VTABLE_` в `src/` подтвердил, что ошибка была только в `MagicHook`.
 * **Исправление:** `src/FriendlyFire/MagicHook.{h,cpp}` переведён на `RE::VTABLE_Character[4]` слот `1` (`SE id 37832`), использует `a_this->GetTargetAsActor()` (виртуальный слот `2` `GetTargetStatsObject` -> `lea rax, [rcx - 0x98]`), `AddTargetHook::func = current` до `write_vfunc`, добавлен одноразовый лог `OBSERVED running`.
 * **Проверки:** `xmake` собрал и развернул DLL в оба инстанса MO2 (`[STB]` и `[RE2CE TEST]`), `xmake run scf_tests` — **254/254** пройдено (0 ошибок). Предрелиз `v0.1.0-alpha.1` на GitHub собран до этого фикса; ожидается игровая проверка взрыва фаербола.
+
+## 2026-11-24 — DONE: перенос проектной документации в `docs/` и обновление `AGENTS.md`
+
+* Вся проектная документация (`PLAN.md`, `ARCHITECTURE.md`, `STATUS.md`, `JOURNAL.md`, `TESTING.md`, `PoE2_Minion_Parity_Plan.md`, `Friendly_Fire_Protection_Addendum.md`, `Combat_Override_Package_List_Research.md`) перенесена в каталог `docs/` через `git mv` с сохранением истории.
+* В корне репозитория оставлены только `AGENTS.md` и `README.md`; обновлены ссылки в `README.md`, `tools/scene/README.md` и `docs/STATUS.md`.
+* `AGENTS.md` дополнен обязательным регламентом ведения 5 базовых документов в `docs/` (включая автоинициализацию для новых проектов и явное разделение автотестов и реальных/полевых проверок).

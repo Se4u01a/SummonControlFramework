@@ -6,8 +6,12 @@
 
 Фреймворк для Skyrim Special Edition / Anniversary Edition, расширяющий управление призванными существами (тактические режимы, выбор приоритетов боя, приказы и бесконфликтные коллизии отряда).
 
-Подробный план разработки см. в [Summon_Control_Framework_PLAN.md](Summon_Control_Framework_PLAN.md).  
-Архитектурные принципы и устройство см. в [ARCHITECTURE.md](ARCHITECTURE.md).
+Проектная документация ведётся в каталоге `docs/`:
+* [План разработки (`docs/PLAN.md`)](docs/PLAN.md)
+* [Архитектура (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)
+* [Текущий статус (`docs/STATUS.md`)](docs/STATUS.md)
+* [Инженерный журнал (`docs/JOURNAL.md`)](docs/JOURNAL.md)
+* [Тестирование (`docs/TESTING.md`)](docs/TESTING.md)
 
 ---
 
@@ -102,7 +106,7 @@ SCF меняет поведение любого актёра, у которог
 * Кейворды работают независимо от настроек `[Collision]` в `SummonControlFramework.ini` (те управляют только собственным проходом сквозь у призывов SCF).
 * Проверка — раз в тактический тик (~15 Гц) по игроку и всем актёрам в «высоком» процессе. Если ни один плагин не объявил эти кейворды, система не работает и ничего не стоит.
 * Удары, снаряды и заклинания не меняются: отключаются только столкновения тел (контроллер персонажа) и обход при движении.
-* Проверочный плагин: `python tools/make_keyword_test_esp.py <Skyrim.esm> SCF_KeywordApiTest.esp` — кейворды API плюс заклинания и способности, которые их вешают (см. TESTING.md).
+* Проверочный плагин: `python tools/make_keyword_test_esp.py <Skyrim.esm> SCF_KeywordApiTest.esp` — кейворды API плюс заклинания и способности, которые их вешают (см. [`docs/TESTING.md`](docs/TESTING.md)).
 * Только Skyrim SE 1.5.97 (как и остальные engine seats SCF). Лог: `[KeywordApi] ...` при загрузке, `[CombatGate] ... SCF_Untargetable ...` в игре.
 
 ## 🐍 Papyrus API для других модов
@@ -162,7 +166,7 @@ Summon_Control_Framework/
 │   ├── main.cpp            # Точка входа тестов
 │   ├── test_fsm.cpp        # Тесты конечного автомата
 │   └── test_target_selector.cpp # Тесты селектора целей
-├── ARCHITECTURE.md         # Описание архитектурных решений
-├── Summon_Control_Framework_PLAN.md # Дорожная карта и план реализации
+├── docs/                   # Проектная документация (PLAN, ARCHITECTURE, STATUS, JOURNAL, TESTING, спецификации)
+├── AGENTS.md               # Инженерные стандарты и регламент ведения документации
 └── xmake.lua               # Конфигурация сборки
 ```

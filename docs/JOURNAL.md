@@ -849,3 +849,13 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
 * **`src/FriendlyFire/MagicHook.{h,cpp}`:** хук перенесён на `RE::VTABLE_Character[4]` слот `1` (`kCharacterAddTargetSE{ 37832 }`), добавлен одноразовый лог `[MagicHook] Character MagicTarget::AddTarget seat OBSERVED running.`, сохранено корректное извлечение актёра через `a_this->GetTargetAsActor()`.
 * `xmake`: чистая сборка, DLL развёрнута в `[STB]` и `[RE2CE TEST]`.
 * `xmake run scf_tests`: **254/254** пройдено (0 ошибок). Ожидается игровая проверка фаербола.
+
+## 2026-11-24 — Реорганизация документации в `docs/` и актуализация `AGENTS.md`
+
+### Что сделано
+* Все 8 проектных markdown-документов перенесены из корня репозитория в `docs/` через `git mv`: `PLAN.md`, `ARCHITECTURE.md`, `STATUS.md`, `JOURNAL.md`, `TESTING.md`, `PoE2_Minion_Parity_Plan.md`, `Friendly_Fire_Protection_Addendum.md`, `Combat_Override_Package_List_Research.md`. В корне оставлены `AGENTS.md` и `README.md`.
+* В `AGENTS.md` (разделы 4, 8, 9, 11) зафиксирована обязательная структура `docs/` и регламент ведения всех 5 базовых документов (`PLAN.md`, `ARCHITECTURE.md`, `STATUS.md`, `JOURNAL.md`, `TESTING.md`), включая инициализацию `docs/` в новых проектах, поэтапные обязанности агента до/после реализации и обязательное разграничение автотестов и ручных/полевых проверок.
+* Актуализированы ссылки на документацию в `README.md`, `tools/scene/README.md` и `docs/STATUS.md`.
+
+### Проверки
+* `xmake run scf_tests`: **254 test cases, 0 failed cases, 0 failed checks**.
