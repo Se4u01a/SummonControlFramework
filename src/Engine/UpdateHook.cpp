@@ -5,6 +5,7 @@
 #include "Core/SummonModel.h"
 #include "Core/SummonRegistry.h"
 #include "Engine/ActorSpace.h"
+#include "Engine/AttackTrace.h"
 #include "Engine/CombatGate.h"
 #include "Engine/CommandActions.h"
 #include "Engine/KeywordApi.h"
@@ -123,7 +124,15 @@ namespace scf::engine::update
 
 			switch (a_cmd.type) {
 			case core::CommandType::SetFocusTarget:
-				EngageFocus(a_player, a_summon, a_model, RE::TESForm::LookupByID<RE::Actor>(a_cmd.focusTargetId));
+				{
+					auto* target = RE::TESForm::LookupByID<RE::Actor>(a_cmd.focusTargetId);
+					if (a_cmd.attackTrace && target && !target->IsDead() && a_model &&
+					    core::BuildCombatPolicy(*a_model, true).restrictToTarget &&
+					    a_model->currentTargetId == a_cmd.focusTargetId) {
+						attack_trace::Begin(*a_summon, *target, *a_cmd.attackTrace);
+					}
+					EngageFocus(a_player, a_summon, a_model, target);
+				}
 				break;
 
 			case core::CommandType::CommandAction:
@@ -558,9 +567,11 @@ namespace scf::engine::update
 				const bool enabled = ctx.GetSettings().Get().general.enabled;
 				wolf::SetFrameworkEnabled(enabled);
 				if (!enabled) {
+					attack_trace::Reset("framework_disabled");
 					return;
 				}
 
+				attack_trace::Tick(ctx.GetRegistry());
 				if (ctx.GetScheduler().ShouldTick(a_delta)) {
 					InternalSyncPlayerSummons(a_player, s_totalElapsed);
 				}
@@ -588,6 +599,7 @@ namespace scf::engine::update
 	void Reset()
 	{
 		s_totalElapsed = 0.0f;
+		attack_trace::Reset("session_reset");
 		movement::ResetAll();
 		combat::ResetAll();
 		passthrough::ResetAll();

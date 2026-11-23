@@ -1,4 +1,5 @@
 #include "Engine/EventAdapter.h"
+#include "Engine/AttackTrace.h"
 #include "Engine/CommandSpells.h"
 #include "Core/Assist.h"
 #include "Core/CommandQueue.h"
@@ -168,6 +169,8 @@ namespace scf::engine
 				}
 
 				auto& ctx = core::FrameworkContext::GetSingleton();
+				attack_trace::ObserveHit(a_event->cause->GetFormID(), a_event->target->GetFormID(), a_event->source);
+
 				const auto& settings = ctx.GetSettings().Get();
 				if (!settings.general.enabled || !settings.combat.assistPlayerAttacks) {
 					return RE::BSEventNotifyControl::kContinue;

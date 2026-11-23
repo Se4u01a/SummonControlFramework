@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/AttackTrace.h"
 #include "Core/EntityID.h"
 #include "Core/SummonModel.h"
 #include "Core/Types.h"
@@ -8,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <vector>
 
 namespace scf::core
@@ -68,6 +70,7 @@ namespace scf::core
 
 		float timestamp{ 0.0f };
 		float ttl{ 5.0f }; // Time-to-live in seconds
+		std::optional<AttackTraceOrigin> attackTrace;
 	};
 
 	class CommandQueue

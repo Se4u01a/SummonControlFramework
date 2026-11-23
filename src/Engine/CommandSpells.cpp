@@ -1,4 +1,5 @@
 #include "Engine/CommandSpells.h"
+#include "Engine/AttackTrace.h"
 #include "Core/CommandSpells.h"
 #include "Core/FrameworkContext.h"
 #include "PCH.h"
@@ -19,6 +20,7 @@
 #endif
 
 #include <array>
+#include <atomic>
 #include <string>
 
 namespace scf::engine::command_spells
@@ -116,6 +118,7 @@ namespace scf::engine::command_spells
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
+				attack_trace::ObserveCast(a_event->object->GetFormID(), a_event->spell);
 				auto* player = RE::PlayerCharacter::GetSingleton();
 				if (!player || a_event->object.get() != player) {
 					return RE::BSEventNotifyControl::kContinue;
@@ -187,7 +190,8 @@ namespace scf::engine::command_spells
 				candidate.isOwner = (targetActor == player);
 				candidate.isAllyOrOwnSummon = IsAllyOrOwnSummon(player, targetActor);
 
-				const auto resolution = core::ResolveAttackTargetHit(
+				const auto impactAt = core::AttackTraceClock::now();
+				auto resolution = core::ResolveAttackTargetHit(
 					a_event->caster->GetFormID(),
 					player->GetFormID(),
 					a_event->magicEffect,
@@ -206,6 +210,11 @@ namespace scf::engine::command_spells
 					return RE::BSEventNotifyControl::kContinue;
 				}
 
+				static std::atomic<std::uint64_t> nextOrder{ 1 };
+				const auto& impact = targetActor->GetPosition();
+				resolution.command->attackTrace = core::AttackTraceOrigin{
+					nextOrder.fetch_add(1, std::memory_order_relaxed), impactAt, { impact.x, impact.y, impact.z }
+				};
 				ctx.GetCommandQueue().Enqueue(*resolution.command);
 				ctx.GetScheduler().RequestImmediateTick();
 
