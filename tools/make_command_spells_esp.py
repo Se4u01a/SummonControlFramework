@@ -293,7 +293,7 @@ def main():
 
     count = len(projectiles) + len(effects) + len(spells)
     header = b"".join([
-        sub(b"HEDR", struct.pack("<fII", 1.71, count, NEXT_OBJECT_ID)),
+        sub(b"HEDR", struct.pack("<fII", 1.70, count, NEXT_OBJECT_ID)),
         sub(b"CNAM", zstr_ascii("Sequoia")),
         sub(b"SNAM", zstr_ascii("Summon Control Framework quick-cast command spells (Hold Position, Follow, Attack Target).")),
         sub(b"MAST", zstr_ascii("Skyrim.esm")),
