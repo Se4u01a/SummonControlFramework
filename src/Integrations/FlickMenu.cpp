@@ -2,6 +2,7 @@
 #include "Integrations/MinionPanel.h"
 #include "Core/FrameworkContext.h"
 #include "Core/Settings.h"
+#include "Engine/CommandSpells.h"
 #include "PCH.h"
 
 #ifndef NOMINMAX
@@ -22,13 +23,6 @@ namespace scf::integrations
 		enum class HotkeySlot : std::uint8_t
 		{
 			None,
-			FocusTarget,
-			Return,
-			ToggleAggression,
-			MoveTo,
-			WaitGuard,
-			Follow,
-			CommandAction,
 			MinionPanelToggle
 		};
 
@@ -75,13 +69,6 @@ namespace scf::integrations
 					// InputHandler compares the same number space for each device.
 					if (key != 0) {
 						switch (slot) {
-						case HotkeySlot::FocusTarget:      data.hotkeys.focusTargetKey = key; break;
-						case HotkeySlot::Return:           data.hotkeys.commandReturnKey = key; break;
-						case HotkeySlot::ToggleAggression: data.hotkeys.toggleAggressionKey = key; break;
-						case HotkeySlot::MoveTo:           data.hotkeys.moveToKey = key; break;
-						case HotkeySlot::WaitGuard:        data.hotkeys.waitGuardKey = key; break;
-						case HotkeySlot::Follow:           data.hotkeys.followKey = key; break;
-						case HotkeySlot::CommandAction:    data.hotkeys.commandActionKey = key; break;
 						case HotkeySlot::MinionPanelToggle: data.hotkeys.minionPanelToggleKey = key; break;
 						default: break;
 						}
@@ -94,19 +81,31 @@ namespace scf::integrations
 				}
 
 				FUCK::TextColored(ImVec4(0.55f, 0.8f, 1.0f, 1.0f), "%s", FUCK::IconText(ICON_FA_DOG, "Summon Control Framework"));
-				FUCK::TextDisabled("Tactical squad coordination, friendly fire protection, and in-game controls");
+				FUCK::TextDisabled("Quick-cast command spells, tactical squad coordination, and friendly fire protection");
 				FUCK::Separator();
 				FUCK::Spacing();
 
-				// --- Section 1: Tactical Hotkeys ---
-				FUCK::SeparatorText("Tactical Squad Hotkeys");
-				DrawHotkeyRow("Focus Target (Crosshair)", "Command summons to attack target under crosshair (Default: Numpad 1)", HotkeySlot::FocusTarget, data.hotkeys.focusTargetKey);
-				DrawHotkeyRow("Return to Owner", "Emergency recall: drop combat and return to owner (Default: Numpad 2)", HotkeySlot::Return, data.hotkeys.commandReturnKey);
-				DrawHotkeyRow("Toggle Aggression Mode", "Cycle between Passive, Defensive, and Aggressive modes (Default: Numpad 3)", HotkeySlot::ToggleAggression, data.hotkeys.toggleAggressionKey);
-				DrawHotkeyRow("Move To Point", "Order squad to move to position under crosshair and hold guard (Default: Numpad 4)", HotkeySlot::MoveTo, data.hotkeys.moveToKey);
-				DrawHotkeyRow("Guard / Hold Position", "Hold current position and defend against nearby threats (Default: Numpad 5)", HotkeySlot::WaitGuard, data.hotkeys.waitGuardKey);
-				DrawHotkeyRow("Follow in Formation", "Resume following player in tactical formation (Default: Numpad 6)", HotkeySlot::Follow, data.hotkeys.followKey);
-				DrawHotkeyRow("Command Action", "Each summon performs its type's command at the aimed enemy: rush, cast, detonate (SummonControlFramework_Commands.ini; Default: Numpad 7)", HotkeySlot::CommandAction, data.hotkeys.commandActionKey);
+				// --- Section 1: Command Spells & HUD ---
+				FUCK::SeparatorText("Command Spells & HUD");
+				if (engine::command_spells::IsLoaded()) {
+					FUCK::TextColored(ImVec4(0.55f, 0.9f, 0.55f, 1.0f), "SummonControlFramework.esp: Active (Hold Position, Follow, Attack Target)");
+				} else {
+					FUCK::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "SummonControlFramework.esp: Not loaded (enable the ESL plugin in MO2)");
+				}
+
+				FUCK::Checkbox("Auto-Grant Command Spells", &data.spells.autoGrantCommandSpells);
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Automatically add the 3 quick-cast command spells to the player on save load or new game");
+
+				if (FUCK::Button("Grant Command Spells")) {
+					engine::command_spells::QueueGrantSpellsToPlayer();
+				}
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Add Hold Position, Follow, and Attack Target spells to the player now");
+				FUCK::SameLine();
+				if (FUCK::Button("Remove Command Spells")) {
+					engine::command_spells::QueueRemoveSpellsFromPlayer();
+				}
+				if (FUCK::IsItemHovered()) FUCK::SetTooltip("Remove the 3 command spells from the player's spellbook");
+
 				DrawHotkeyRow("Toggle Minion Panel", "Show or hide the minion HUD panel (Default: unbound)", HotkeySlot::MinionPanelToggle, data.hotkeys.minionPanelToggleKey);
 
 				FUCK::Spacing();

@@ -3,6 +3,7 @@
 #include "Core/FrameworkContext.h"
 #include "Engine/CombatGate.h"
 #include "Engine/CommandActions.h"
+#include "Engine/CommandSpells.h"
 #include "Engine/KeywordApi.h"
 #include "Engine/FollowLeash.h"
 #include "Engine/PassThrough.h"
@@ -135,6 +136,7 @@ namespace scf::plugin
 			ConsoleCommands::Register();
 			engine::EventAdapter::RegisterEventSinks();
 			engine::InputHandler::Register();
+			engine::command_spells::Load();
 			engine::actions::Load();
 			engine::keywords::Load();
 			engine::combat::Install();
@@ -164,12 +166,14 @@ namespace scf::plugin
 		case SKSE::MessagingInterface::kPostLoadGame:
 			logger::info("[Messaging] SKSE kPostLoadGame: Save loaded successfully.");
 			PatchGameSettings();
+			engine::command_spells::SyncPlayerSpells();
 			break;
 
 		case SKSE::MessagingInterface::kNewGame:
 			logger::info("[Messaging] SKSE kNewGame: Initializing clean runtime state for new game.");
 			engine::update::Reset();
 			PatchGameSettings();
+			engine::command_spells::SyncPlayerSpells();
 			break;
 
 		default:

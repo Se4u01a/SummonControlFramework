@@ -62,11 +62,13 @@ target("SummonControlFramework")
     )
 
     after_build(function (target)
-        local deploy_dirs = {
-            "D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins",
-            "D:/Games/stb/[RE2CE TEST] Mod Organizer/mods/Summon Control Framework/SKSE/Plugins"
+        local mod_roots = {
+            "D:/Games/stb/[STB] Mod Organizer/mods/Summon Control Framework",
+            "D:/Games/stb/[RE2CE TEST] Mod Organizer/mods/Summon Control Framework"
         }
-        for _, deploy_dir in ipairs(deploy_dirs) do
+        local esp_file = path.join(os.projectdir(), "data", "SummonControlFramework.esp")
+        for _, mod_root in ipairs(mod_roots) do
+            local deploy_dir = path.join(mod_root, "SKSE", "Plugins")
             os.mkdir(deploy_dir)
             if not os.trycp(target:targetfile(), deploy_dir) then
                 cprint("${yellow}warning: %s is in use: not copied", path.join(deploy_dir, path.filename(target:targetfile())))
@@ -76,6 +78,13 @@ target("SummonControlFramework")
                     os.trycp(pdb, deploy_dir)
                 end
                 cprint("${green}deployed to %s", deploy_dir)
+            end
+            if os.isfile(esp_file) then
+                if os.trycp(esp_file, mod_root) then
+                    cprint("${green}deployed ESP to %s", mod_root)
+                else
+                    cprint("${yellow}warning: %s is in use: not copied", path.join(mod_root, path.filename(esp_file)))
+                end
             end
         end
 

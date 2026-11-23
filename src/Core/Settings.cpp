@@ -447,22 +447,12 @@ namespace scf::core
 				} else if (key == "formationspreadradius" || key == "fformationspreadradius") {
 					_data.squad.formationSpreadRadius = ParseFloat(val, _data.squad.formationSpreadRadius);
 				}
+			} else if (currentSection == "spells") {
+				if (key == "autograntcommandspells" || key == "bautograntcommandspells") {
+					_data.spells.autoGrantCommandSpells = ParseBool(val, _data.spells.autoGrantCommandSpells);
+				}
 			} else if (currentSection == "hotkeys") {
-				if (key == "focustargetkey" || key == "ufocustargetkey") {
-					_data.hotkeys.focusTargetKey = ParseUInt32(val, _data.hotkeys.focusTargetKey);
-				} else if (key == "commandreturnkey" || key == "ucommandreturnkey") {
-					_data.hotkeys.commandReturnKey = ParseUInt32(val, _data.hotkeys.commandReturnKey);
-				} else if (key == "toggleaggressionkey" || key == "utoggleaggressionkey") {
-					_data.hotkeys.toggleAggressionKey = ParseUInt32(val, _data.hotkeys.toggleAggressionKey);
-				} else if (key == "movetokey" || key == "umovetokey") {
-					_data.hotkeys.moveToKey = ParseUInt32(val, _data.hotkeys.moveToKey);
-				} else if (key == "waitguardkey" || key == "uwaitguardkey") {
-					_data.hotkeys.waitGuardKey = ParseUInt32(val, _data.hotkeys.waitGuardKey);
-				} else if (key == "followkey" || key == "ufollowkey") {
-					_data.hotkeys.followKey = ParseUInt32(val, _data.hotkeys.followKey);
-				} else if (key == "commandactionkey" || key == "ucommandactionkey") {
-					_data.hotkeys.commandActionKey = ParseUInt32(val, _data.hotkeys.commandActionKey);
-				} else if (key == "minionpaneltogglekey" || key == "uminionpaneltogglekey") {
+				if (key == "minionpaneltogglekey" || key == "uminionpaneltogglekey") {
 					_data.hotkeys.minionPanelToggleKey = ParseUInt32(val, _data.hotkeys.minionPanelToggleKey);
 				}
 			} else if (currentSection == "persistence") {
@@ -700,14 +690,11 @@ namespace scf::core
 		out << "fFormationMinSlotDistance = " << _data.squad.formationMinSlotDistance << "\n";
 		out << "fFormationMaxExpansion = " << _data.squad.formationMaxExpansion << "\n\n";
 
+		out << "[Spells]\n";
+		out << "; Automatically grant the 3 quick-cast command spells (Hold Position, Follow, Attack Target) on load / new game\n";
+		out << "bAutoGrantCommandSpells = " << (_data.spells.autoGrantCommandSpells ? "true" : "false") << "\n\n";
+
 		out << "[Hotkeys]\n";
-		out << "uFocusTargetKey = " << _data.hotkeys.focusTargetKey << "\n";
-		out << "uCommandReturnKey = " << _data.hotkeys.commandReturnKey << "\n";
-		out << "uToggleAggressionKey = " << _data.hotkeys.toggleAggressionKey << "\n";
-		out << "uMoveToKey = " << _data.hotkeys.moveToKey << "\n";
-		out << "uWaitGuardKey = " << _data.hotkeys.waitGuardKey << "\n";
-		out << "uFollowKey = " << _data.hotkeys.followKey << "\n";
-		out << "uCommandActionKey = " << _data.hotkeys.commandActionKey << "\n";
 		out << "uMinionPanelToggleKey = " << _data.hotkeys.minionPanelToggleKey << "\n\n";
 
 		out << "[Persistence]\n";

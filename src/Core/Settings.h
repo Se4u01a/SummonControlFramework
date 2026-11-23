@@ -87,15 +87,13 @@ namespace scf::core
 		float formationMaxExpansion{ 4.0f };
 	};
 
+	struct SpellSettings
+	{
+		bool autoGrantCommandSpells{ true };   // Auto-grant the 3 quick-cast command spells on load / new game
+	};
+
 	struct HotkeySettings
 	{
-		std::uint32_t focusTargetKey{ 0x4F };        // Numpad 1 (79)
-		std::uint32_t commandReturnKey{ 0x50 };      // Numpad 2 (80)
-		std::uint32_t toggleAggressionKey{ 0x51 };   // Numpad 3 (81)
-		std::uint32_t moveToKey{ 0x4B };             // Numpad 4 (75)
-		std::uint32_t waitGuardKey{ 0x4C };          // Numpad 5 (76)
-		std::uint32_t followKey{ 0x4D };             // Numpad 6 (77)
-		std::uint32_t commandActionKey{ 0x47 };      // Numpad 7 (71): PoE2 "Command" action by summon type
 		std::uint32_t minionPanelToggleKey{ 0 };     // PoE2 M6 panel show/hide; 0 = unbound
 	};
 
@@ -123,6 +121,7 @@ namespace scf::core
 		CombatSettings combat{};
 		RecoverySettings recovery{};
 		SquadSettings squad{};
+		SpellSettings spells{};
 		HotkeySettings hotkeys{};
 		friendly_fire::FriendlyFireSettings friendlyFire{};
 		PersistenceSettings persistence{};      // PoE2 M4 (blacklist ids resolved by the plugin)

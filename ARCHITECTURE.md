@@ -791,3 +791,25 @@ bookkeeping сбрасывался бы каждый тик. Вне загруж
   записью, `GetOrphanedSummons`, семантика лимита.
 * `UpdateHook` классифицирует труп по эффекту, который движок связал с актёром; если мод поднимает труп
   эффектом без архетипа `kReanimate`, запись останется `SummonCreature`.
+---
+
+## 23. Управление через заклинания с быстрым кастом (`CommandSpells`, 2026-11-23)
+
+Хоткеи приказов полностью заменены на **3 обычных заклинания для рук (`Either Hand`)** с быстрым кастом (`0.1` с, `0` маны, школа Колдовства, нулевой множитель опыта), чтобы управление отрядом нативно сочеталось с Wheeler / Spell Hotbar и не конфликтовало с раскладками клавиш.
+
+* **Файлы:**
+  * [tools/make_command_spells_esp.py](file:///D:/projects/Summon_Control_Framework/tools/make_command_spells_esp.py) → [data/SummonControlFramework.esp](file:///D:/projects/Summon_Control_Framework/data/SummonControlFramework.esp) (ESL-плагин, флаг `0x200`, 7 записей, мастер `Skyrim.esm`).
+  * [src/Core/CommandSpells.h](file:///D:/projects/Summon_Control_Framework/src/Core/CommandSpells.h) / [CommandSpells.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/CommandSpells.cpp) — чистая логика классификации и валидации (без заголовков Skyrim).
+  * [src/Engine/CommandSpells.h](file:///D:/projects/Summon_Control_Framework/src/Engine/CommandSpells.h) / [CommandSpells.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/CommandSpells.cpp) — разрешение форм, события, выдача/удаление заклинаний.
+
+### 23.1. Три заклинания и путь исполнения
+
+| Заклинание (`SPEL`) | Local FormID | Доставка | Событие движка | Команда в `CommandQueue` |
+|---|---|---|---|---|
+| `SCF_CmdHoldPosition` («Приказ: Держать позицию») | `0x811` | `kSelf` | `RE::TESSpellCastEvent` | `SetOrder(SummonOrder::WaitGuard)` |
+| `SCF_CmdFollow` («Приказ: Следовать») | `0x812` | `kSelf` | `RE::TESSpellCastEvent` | `SetOrder(SummonOrder::Follow)` |
+| `SCF_CmdAttackTarget` («Приказ: В атаку») | `0x813` | `kAimed` (`PROJ 0x800`, speed `4500`, gravity `0`) | `RE::TESMagicEffectApplyEvent` (`MGEF 0x803`) | `SetFocusTarget(targetId)` |
+
+* **Совместимость с Friendly Fire и Persistence:** эффекты имеют архетип `kScript` (не `kSummonCreature` — `Persistence` их не трогает), невраждебны и помечены `kHideInUI | kPainless | kNoHitEvent` (нет штрафов, нет флинча, нет мусора в списке активных эффектов). Снаряд `SCF_CmdAttackTargetProj` проходит сквозь собственных призывов через существующий `ProjectileHook` (`MissileProjectile`), позволяя целиться во врага за спиной призыва; при попадании в союзника, своего призыва, игрока или труп `ResolveAttackTargetHit` отклоняет команду.
+* **Выдача заклинаний:** `engine::command_spells::SyncPlayerSpells()` вызывается на `kPostLoadGame` и `kNewGame` при `[Spells] bAutoGrantCommandSpells = true`. В меню FLICK доступны статус `.esp`, чекбокс автовыдачи и потокобезопасные кнопки выдачи/удаления (через `SKSE::GetTaskInterface()->AddTask`).
+* **Оставшийся ввод:** `InputHandler` сохраняет только опциональный хоткей показа/скрытия панели миньонов (`uMinionPanelToggleKey`); консольные команды `scf order ...` сохранены для отладки.

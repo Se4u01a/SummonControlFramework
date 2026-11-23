@@ -1,4 +1,4 @@
-# Status (2026-11-10)
+# Status (2026-11-23)
 
 ## Implemented and covered by automated tests
 
@@ -193,19 +193,16 @@
   * `engine::ShareLoadedSpace` replaces `GetParentCell() ==` for focus validity and movement gating: neighbouring loaded exterior cells of one worldspace count as the same space (the old test dropped focus across a cell border and froze orders while the summon trailed one cell behind).
   * Covered by 7 unit tests in `tests/test_target_pin.cpp` — **109/109 tests passing**.
   * **Field status (session 2026-11-10 23:44):** the selector seat runs (`selector seat OBSERVED running`) and answered with the focus once combat started; the summon still did not attack because the vanilla follow leash dragged it back (fixed above).
-* **Player Orders & Input Subsystem (`InputHandler` & `ConsoleCommands`):**
-  * `InputHandler` registered as sink on `RE::BSInputDeviceManager` capturing button events on keyboard and mouse.
-  * **Crosshair Target Pick & Move-To-Point (`RE::CrosshairPickData`):**
-    * Resolves alive target actors via `targetActor[0]` and `target[0]`.
-    * Resolves exact 3D world collision point via `collisionPoint[0]` for point navigation.
-  * **Default Hotkeys on Numpad (DirectX Scan Codes):**
-    * `Numpad 1` (`0x4F`): **Focus Target** under crosshair with HUD confirmation.
-    * `Numpad 2` (`0x50`): **Return** summons to player immediately.
-    * `Numpad 3` (`0x51`): **Toggle Aggression** cycling `Passive` -> `Defensive` -> `Aggressive`.
-    * `Numpad 4` (`0x4B`): **Move To Point** orders squad to navigate to crosshair position and hold guard.
-    * `Numpad 5` (`0x4C`): **Wait / Guard** orders squad to hold ground.
-    * `Numpad 6` (`0x4D`): **Follow** orders squad to resume follow formation.
-    * `Numpad 7` (`0x47`): **Command Action** (PoE2 M3): each summon performs its type's action at the aimed enemy.
+* **Quick-Cast Command Spells (`CommandSpells` & `SummonControlFramework.esp`) — 2026-11-23:**
+  * Replaced all 7 legacy order hotkeys with **3 quick-cast hand spells** (`Either Hand`, `0` magicka, `0.1s` charge time, Conjuration, `0` XP mult, ESL-flagged `SummonControlFramework.esp` built by `tools/make_command_spells_esp.py` and auto-deployed to both MO2 instances):
+    * **Приказ: Держать позицию** (`SCF_CmdHoldPosition`, `0x811`, Self, `TESSpellCastEvent`) -> `SummonOrder::WaitGuard`.
+    * **Приказ: Следовать** (`SCF_CmdFollow`, `0x812`, Self, `TESSpellCastEvent`) -> `SummonOrder::Follow`.
+    * **Приказ: В атаку** (`SCF_CmdAttackTarget`, `0x813`, Aimed fast impulse `PROJ 0x800` speed 4500 / gravity 0, `TESMagicEffectApplyEvent` on `MGEF 0x803`) -> `CommandType::SetFocusTarget`.
+  * Pure Core validation (`src/Core/CommandSpells.{h,cpp}`) rejects non-owner casts, passive squad, dead actors, owner, and allies/own summons. 4 new unit tests in `tests/test_command_spells.cpp` — **237/237 passing**.
+  * Auto-granted to the player on `kPostLoadGame` / `kNewGame` via `[Spells] bAutoGrantCommandSpells = true`, with live status + Grant/Remove buttons in FLICK.
+  * **Field status:** built and deployed (DLL + PDB + `SummonControlFramework.esp`), NOT yet tested in game (enable `SummonControlFramework.esp` in MO2).
+* **Input & Console Subsystem (`InputHandler` & `ConsoleCommands`):**
+  * `InputHandler` now handles only the optional Minion Panel toggle hotkey (`uMinionPanelToggleKey`, unbound by default); legacy order hotkey keys in older INIs are silently ignored.
   * **In-Game HUD Notifications:** top-left alerts via `RE::SendHUDMessage::ShowHUDMessage` for immediate player feedback.
   * **Console Command Processor:**
     * Fixed multi-token parsing: `g_scfParams` now supports 4 parameters with full `StringChunk` iteration.
@@ -215,14 +212,14 @@
 * **FLICK Menu Integration (`FlickMenu`):**
   * Dynamic integration with `FUCK.dll` (v7 API) without hard ImGui linkage.
   * Accessible via in-game overlay hotkey (F7 by default) under the `Gameplay` category.
-  * Real-time interactive keybinding for all squad orders (keyboard and mouse buttons).
+  * Command Spells & HUD controls (`SummonControlFramework.esp` status, auto-grant toggle, Grant/Remove buttons, and Minion Panel hotkey binding).
   * Direct tuning of combat thresholds (follow distance, leash return, debounce time), Friendly Fire protections, and collision bypass with instant **Save to INI**.
 * **Observability & Diagnostics:**
   * Pluggable functional callbacks capturing state changes, target scoring, registry events, command queues, scheduler updates, collision classifications, and squad slot claims with structured reasons.
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **233/233 test cases passing** (0 failures, execution time < 2 ms).
+  * **237/237 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).

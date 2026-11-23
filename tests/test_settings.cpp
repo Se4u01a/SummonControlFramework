@@ -42,13 +42,7 @@ TEST(settings_default_values)
 	CHECK(data.squad.maxRangedSlotsPerTarget == 3);
 	CHECK_NEAR(data.squad.formationSpreadRadius, 160.0f, 0.001f);
 
-	CHECK(data.hotkeys.focusTargetKey == 0x4F);
-	CHECK(data.hotkeys.commandReturnKey == 0x50);
-	CHECK(data.hotkeys.toggleAggressionKey == 0x51);
-	CHECK(data.hotkeys.moveToKey == 0x4B);
-	CHECK(data.hotkeys.waitGuardKey == 0x4C);
-	CHECK(data.hotkeys.followKey == 0x4D);
-	CHECK(data.hotkeys.commandActionKey == 0x47);
+	CHECK(data.spells.autoGrantCommandSpells == true);
 	CHECK(data.hotkeys.minionPanelToggleKey == 0);
 	CHECK(data.general.playerSummonLimit == 0);
 	CHECK(data.movement.sprintDistance == 1200.0f);
@@ -61,9 +55,9 @@ TEST(settings_default_values)
 	CHECK(!data.minionPanel.enabled);
 }
 
-// Given the PoE2 sections in an INI
+// Given the PoE2 and Spells sections in an INI
 // When it is loaded and written back
-// Then every new key round-trips, and out-of-range values are clamped.
+// Then every key round-trips, and out-of-range values are clamped.
 TEST(settings_poe2_sections_round_trip)
 {
 	scf::core::Settings settings;
@@ -72,6 +66,7 @@ TEST(settings_poe2_sections_round_trip)
 		"[Movement]\nfSprintDistance = 900\nfSprintSpeed = 999\n"
 		"[Recovery]\nfStuckWarpSeconds = 4\n"
 		"[Squad]\nuFormationRingCapacity = 5\n"
+		"[Spells]\nbAutoGrantCommandSpells = false\n"
 		"[Hotkeys]\nuMinionPanelToggleKey = 72\n"
 		"[Persistence]\nbPersistentSummons = true\nbPersistVanillaSpellsOnly = true\nfReviveDelaySeconds = 9\n"
 		"sBlacklistedSpells = Skyrim.esm|0x000640B6\n"
@@ -82,6 +77,7 @@ TEST(settings_poe2_sections_round_trip)
 	CHECK(data.movement.sprintSpeed == 500.0f);
 	CHECK(data.recovery.stuckWarpSeconds == 4.0f);
 	CHECK(data.squad.formationRingCapacity == 5);
+	CHECK(!data.spells.autoGrantCommandSpells);
 	CHECK(data.hotkeys.minionPanelToggleKey == 72);
 	CHECK(data.persistence.persistentSummons);
 	CHECK(data.persistence.vanillaSpellsOnly);
@@ -92,6 +88,8 @@ TEST(settings_poe2_sections_round_trip)
 
 	scf::core::Settings copy;
 	CHECK(copy.LoadFromString(settings.Serialize()));
+	CHECK(!copy.Get().spells.autoGrantCommandSpells);
+	CHECK(copy.Get().hotkeys.minionPanelToggleKey == 72);
 	CHECK(copy.Get().persistence.persistentSummons);
 	CHECK(copy.Get().persistenceBlacklist == "Skyrim.esm|0x000640B6");
 	CHECK(copy.Get().minionPanel.posX == 77.0f);
@@ -135,10 +133,15 @@ uMaxMeleeSlotsPerTarget = 4
 uMaxRangedSlotsPerTarget = 6
 fFormationSpreadRadius = 200.0
 
+[Spells]
+bAutoGrantCommandSpells = false
+
 [Hotkeys]
+; Legacy order keys in old INIs must be silently ignored
 uFocusTargetKey = 45
 uCommandReturnKey = 46
 uToggleAggressionKey = 47
+uMinionPanelToggleKey = 58
 )";
 
 	Settings settings;
@@ -173,9 +176,8 @@ uToggleAggressionKey = 47
 	CHECK(data.squad.maxRangedSlotsPerTarget == 6);
 	CHECK_NEAR(data.squad.formationSpreadRadius, 200.0f, 0.001f);
 
-	CHECK(data.hotkeys.focusTargetKey == 45);
-	CHECK(data.hotkeys.commandReturnKey == 46);
-	CHECK(data.hotkeys.toggleAggressionKey == 47);
+	CHECK(data.spells.autoGrantCommandSpells == false);
+	CHECK(data.hotkeys.minionPanelToggleKey == 58);
 }
 
 TEST(settings_load_from_string_unprefixed_and_comments)
@@ -215,10 +217,11 @@ maxmeleeslotspertarget = 3
 maxrangedslotspertarget = 5
 formationspreadradius = 120.0
 
+[spells]
+autograntcommandspells = 0
+
 [hotkeys]
-focustargetkey = 18
-commandreturnkey = 19
-toggleaggressionkey = 20
+minionpaneltogglekey = 21
 )";
 
 	Settings settings;
@@ -252,9 +255,8 @@ toggleaggressionkey = 20
 	CHECK(data.squad.maxRangedSlotsPerTarget == 5);
 	CHECK_NEAR(data.squad.formationSpreadRadius, 120.0f, 0.001f);
 
-	CHECK(data.hotkeys.focusTargetKey == 18);
-	CHECK(data.hotkeys.commandReturnKey == 19);
-	CHECK(data.hotkeys.toggleAggressionKey == 20);
+	CHECK(data.spells.autoGrantCommandSpells == false);
+	CHECK(data.hotkeys.minionPanelToggleKey == 21);
 }
 
 TEST(settings_validation_and_clamping)
@@ -312,7 +314,8 @@ TEST(settings_serialization_roundtrip)
 	mod.recovery.enableCatchUpWarp = true;
 	mod.recovery.catchUpDistance = 3800.0f;
 	mod.squad.formationSpreadRadius = 250.0f;
-	mod.hotkeys.focusTargetKey = 99;
+	mod.spells.autoGrantCommandSpells = false;
+	mod.hotkeys.minionPanelToggleKey = 99;
 
 	const std::string serialized = original.Serialize();
 	CHECK(!serialized.empty());
@@ -336,7 +339,8 @@ TEST(settings_serialization_roundtrip)
 	CHECK(d.recovery.enableCatchUpWarp == true);
 	CHECK_NEAR(d.recovery.catchUpDistance, 3800.0f, 0.001f);
 	CHECK_NEAR(d.squad.formationSpreadRadius, 250.0f, 0.001f);
-	CHECK(d.hotkeys.focusTargetKey == 99);
+	CHECK(d.spells.autoGrantCommandSpells == false);
+	CHECK(d.hotkeys.minionPanelToggleKey == 99);
 }
 
 TEST(settings_file_save_and_load)
