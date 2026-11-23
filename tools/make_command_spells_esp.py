@@ -135,7 +135,8 @@ def build_projectile(template_subs):
     struct.pack_into("<f", data, 0x0C, 10000.0)  # range = 10000
 
     parts = [sub(b"EDID", zstr_ascii("SCF_CmdAttackTargetProj"))]
-    for tag in (b"OBND", b"MODL", b"MODT"):
+    # Do NOT copy MODT from Skyrim.esm (form_version 39 has legacy raw texture hashes that crash v44 loader)
+    for tag in (b"OBND", b"MODL"):
         if tag in template_subs:
             parts.append(sub(tag, template_subs[tag]))
     parts.append(sub(b"DATA", bytes(data)))
