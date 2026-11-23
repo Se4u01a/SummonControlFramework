@@ -809,3 +809,25 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
 * `xmake` / `xmake --rebuild SummonControlFramework`: чистая сборка, DLL развёрнута в оба инстанса MO2 (`[STB]` и `[RE2CE TEST]`).
 * `xmake run scf_tests`: **254 test cases, 0 failed cases, 0 failed checks**.
 * Игровая проверка поворота и прямолинейной атаки волков ожидается от пользователя.
+
+## 2026-11-24 — Фикс AoE-урона от взрывов заклинаний по суммонам (`MagicHook::GetTargetAsActor`)
+
+### Контекст и симптомы
+* Пользователь сообщил, что после выпуска предрелиза `v0.1.0-alpha.1` призванные волки снова получают урон и погибают от взрыва его огненного шара, несмотря на активные настройки защиты (`bEnableSummonProtection = true`, `bProtectPlayerOwnedSummons = true`, `bFilterPlayerAttacks = true`, `bBlockAreaMagicDamage = true`, `bBlockMagicProjectileDamage = true`).
+* По логу `SummonControlFramework.log` (`00:20:26.160`, `00:20:34.465`): `MagicHook` успешно установился на `Character` `MagicTarget::AddTarget` (`vtable[3]` слот `1`), `ProjectileHook` пропустил снаряд `0xFF001908` сквозь волка `0xFF001A5D`, но ~через 0.1 с взрыв наложил враждебные `ActiveEffect` (`Caster 0x00000014 -> Target 0xFF001A5D / 0xFF001A4D`) и убил волка `0xFF001A4D`. Во всём логе не было ни одной записи `[MagicHook] Refused` или `[MagicHook] Allowed`.
+
+### Причина
+* В `src/FriendlyFire/MagicHook.cpp` (`AddTargetHook::ShouldRefuse`) владелец `RE::MagicTarget* a_this` приводился через `static_cast<RE::Actor*>(a_this)`.
+* В нашей dual SE+AE сборке CommonLibSSE-NG (`skyrim_se = true`, `skyrim_ae = true` в `xmake.lua`) ни `EXCLUSIVE_SKYRIM_SE`, ни `EXCLUSIVE_SKYRIM_AE` не определены, поэтому `RE::TESObjectREFR` не включает 16-байтный `RUNTIME_DATA_CONTENT` в статический layout (`sizeof == 0x88` вместо реальных `0x98` на SE 1.5.97 и `0xA0` на AE 1.6.629+).
+* В результате `static_cast<RE::Actor*>(a_this)` вычитал `0x88` вместо `0x98`, возвращая сдвинутый на `+0x10` невалидный указатель; вызов `target->GetCommandingActor()` в `IsProtected()` читал мусор и возвращал `false`, молча пропуская все AoE-эффекты.
+* Проведён аудит всех `static_cast<RE::...>` и `reinterpret_cast<RE::...>` в `src/`: `MagicHook.cpp` оказался единственным местом с таким дефектным кастом вторичной базы.
+
+### Изменения
+* **`src/FriendlyFire/MagicHook.cpp`:**
+  * Заменили `static_cast<RE::Actor*>(a_this)` на `a_this->GetTargetAsActor()` (штатный метод CommonLibSSE-NG через виртуальный слот `GetTargetStatsObject()` -> `As<Actor>()`, корректный на всех рантаймах SE/AE/VR).
+  * Инициализация `AddTargetHook::func = current` перенесена до `vtable.write_vfunc(kAddTargetSlot, AddTargetHook::thunk)`, чтобы исключить окно гонки при установке хука.
+
+### Проверки
+* `xmake`: чистая сборка без ошибок/предупреждений, DLL/PDB/ESP развёрнуты в `[STB]` и `[RE2CE TEST]`.
+* `xmake run scf_tests`: **254 test cases, 0 failed cases, 0 failed checks**.
+* Ожидается игровая проверка взрыва огненного шара в Skyrim SE 1.5.97 (появление `[MagicHook] Refused friendly AreaEffect effect ...` в логе); предрелиз `v0.1.0-alpha.1` собран до этого фикса.

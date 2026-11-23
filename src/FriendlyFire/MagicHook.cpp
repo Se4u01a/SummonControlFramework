@@ -89,7 +89,12 @@ namespace scf::friendly_fire
 						return false;  // buffs, heals, utility effects always apply
 					}
 
-					auto* target = static_cast<RE::Actor*>(a_this);
+					// MagicTarget is a secondary base subobject at a runtime-dependent offset inside
+					// Actor (+0x98 SE, +0xA0 AE). In a dual SE+AE CommonLibSSE-NG build TESObjectREFR
+					// omits its 0x10-byte RUNTIME_DATA_CONTENT, so static_cast<RE::Actor*>(a_this)
+					// subtracts 0x88 instead of 0x98/0xA0 and returns a shifted invalid pointer!
+					// Always recover the Actor via MagicTarget::GetTargetAsActor() (virtual slot 2).
+					auto* target = a_this->GetTargetAsActor();
 					auto* player = RE::PlayerCharacter::GetSingleton();
 					if (!target || !player || target == player || !IsProtected(target, player, settings)) {
 						return false;
@@ -153,7 +158,8 @@ namespace scf::friendly_fire
 			return false;
 		}
 
-		AddTargetHook::func = vtable.write_vfunc(kAddTargetSlot, AddTargetHook::thunk);
+		AddTargetHook::func = current;
+		vtable.write_vfunc(kAddTargetSlot, AddTargetHook::thunk);
 		logger::info("[MagicHook] Character MagicTarget::AddTarget (vtable[3] slot {}) hooked, chaining (original 0x{:X}){}.",
 			kAddTargetSlot, AddTargetHook::func.address(), current != expected ? " - slot was already hooked by another plugin" : "");
 		return true;

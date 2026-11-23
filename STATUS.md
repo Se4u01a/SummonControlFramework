@@ -1,4 +1,4 @@
-# Status (2026-11-23)
+# Status (2026-11-24)
 
 ## Implemented and covered by automated tests
 
@@ -164,10 +164,11 @@
   * StartCombat seat: engine-chosen fights in `Follow`/`Guard` only against actors within `[Combat] fAggressionRadius` (1500, 0 = off) of the player (`core::IsWithinAggressionRadius`). Both in FLICK.
   * 4 new tests + settings checks — **121/121 passing**.
   * **Field status:** built and deployed, NOT tested in game (TEST-M2-1/2).
-* **Friendly splash / magic damage filter (`MagicHook`) — 2026-11-11:**
+* **Friendly splash / magic damage filter (`MagicHook`) — 2026-11-11 (фикс 2026-11-24):**
   * Field: pass-through confirmed working by the user; a player fireball that hits the ground next to summons still damaged them (explosion effects are applied through `MagicTarget::AddTarget`, not `ProcessHit`).
-  * Seat on `Character` MagicTarget vtable[3] slot 1 (SE id 37020 → `MagicTarget::AddTarget` id 32157): hostile/detrimental effects from the player, allies or their summons are refused on protected summons; buffs/heals and enemy spells unaffected. 1 new test — **117/117 passing**.
-  * **Field status:** built and deployed, NOT tested in game (TEST-FF-AOE-1). Explosion knockback force is not covered.
+  * Seat on `Character` MagicTarget vtable[3] slot 1 (SE id 37020 → `MagicTarget::AddTarget` id 32157): hostile/detrimental effects from the player, allies or their summons are refused on protected summons; buffs/heals and enemy spells unaffected.
+  * **2026-11-24 root-cause fix:** в dual SE+AE сборке CommonLibSSE-NG (`skyrim_se = true`, `skyrim_ae = true`) `TESObjectREFR` не включает 16-байтный `RUNTIME_DATA_CONTENT` на этапе компиляции (`sizeof == 0x88` вместо `0x98` на SE 1.5.97 / `0xA0` на AE), из-за чего `static_cast<RE::Actor*>(a_this)` для вторичной базы `RE::MagicTarget*` сдвигал указатель на `+0x10` и `IsProtected()` всегда возвращал `false`. Заменено на `a_this->GetTargetAsActor()` (виртуальный слот `GetTargetStatsObject`), а `AddTargetHook::func` теперь инициализируется до `write_vfunc`.
+  * **Field status:** built and deployed to both MO2 instances (`254/254` unit tests passing), ожидается игровая проверка `TEST-FF-AOE-1` (взрыв огненного шара рядом с суммонами). Explosion knockback force is not covered.
 * **Summons pass through each other (movement avoidance + bodies) — 2026-11-11:**
   * Finding: `CollisionPairClassifier` was never wired to an engine hook; the field-verified player-through-summon passthrough most likely came from the installed mod "Disable Follower Collision", not from SCF.
   * Seat 1 (SE 1.5.97): `MovementAvoidanceManager` slot 4 `ShouldAvoid(self, other)` (id 40659), asked first by both the local actor avoider and the path avoidance parameters — returns false for own summon↔summon and summon↔owner pairs.
@@ -287,3 +288,10 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 ### Траектория после «В атаку» — IN_PROGRESS
 
 Логгер [AttackTrace] собран и развёрнут в STB и RE2CE TEST. Ожидается проверка трассировки в Skyrim по TESTING.md.
+
+## 2026-11-24 — IN_PROGRESS: исправление пробоя AoE-защиты в `MagicHook` (взрыв фаербола)
+
+* **Проблема из игрового лога (`00:20:26`, `00:20:34`):** `ProjectileHook` пропускал огненный шар игрока (`0xFF001908`) сквозь волков, но последующий взрыв накладывал враждебные `ActiveEffect` через `MagicTarget::AddTarget` и убивал суммона (`0xFF001A4D`), при этом `[MagicHook]` не выдавал ни одной строки `Refused`/`Allowed`.
+* **Причина:** в multi-runtime сборке CommonLibSSE-NG (`SE + AE`) `static_cast<RE::Actor*>(a_this)` на `RE::MagicTarget*` вычитал `0x88` вместо фактического смещения `+0x98` (SE 1.5.97), давая смещённый указатель `actor + 0x10`, из-за чего `IsProtected()` всегда возвращал `false`. Аудит остальных `static_cast`/`reinterpret_cast` в `src/` подтвердил, что это был единственный дефектный каст вторичной базы.
+* **Исправление:** `src/FriendlyFire/MagicHook.cpp` переведён на `a_this->GetTargetAsActor()` (виртуальный вызов `GetTargetStatsObject()` -> `As<Actor>()`), `AddTargetHook::func = current` перенесён до `write_vfunc`.
+* **Проверки:** `xmake` собрал и развернул DLL в оба инстанса MO2 (`[STB]` и `[RE2CE TEST]`), `xmake run scf_tests` — **254/254** пройдено (0 ошибок). Предрелиз `v0.1.0-alpha.1` на GitHub собран до этого фикса; ожидается игровая проверка взрыва фаербола.
