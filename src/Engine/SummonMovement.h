@@ -39,6 +39,11 @@ namespace scf::engine::movement
 	// So the thresholds, the hysteresis, the cooldown and the landing rules live in Core;
 	// this file only collects the engine facts they need and executes the outcome.
 	//
+	// Installs the MovementPlannerAgentKeepOffset::PlanMovement vtable hook (kDataLoaded)
+	// that rewrites KeepOffset facing output for SCF-controlled summons so moving summons
+	// face their velocity heading instead of locking yaw or spinning.
+	void Install();
+
 	// GAME THREAD ONLY: called from the PlayerCharacter::Update hook.
 	void UpdateForSummon(
 		RE::PlayerCharacter* a_owner,

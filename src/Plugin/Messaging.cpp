@@ -8,6 +8,7 @@
 #include "Engine/FollowLeash.h"
 #include "Engine/PassThrough.h"
 #include "Engine/SummonLimit.h"
+#include "Engine/SummonMovement.h"
 #include "Engine/EventAdapter.h"
 #include "Engine/InputHandler.h"
 #include "Engine/UpdateHook.h"
@@ -141,6 +142,7 @@ namespace scf::plugin
 			engine::keywords::Load();
 			engine::combat::Install();
 			engine::leash::Install();
+			engine::movement::Install();
 			engine::passthrough::Install();
 			engine::summonlimit::Install();
 			engine::summonlimit::Publish(core::FrameworkContext::GetSingleton().GetSettings().Get().general.playerSummonLimit);

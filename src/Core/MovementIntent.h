@@ -115,8 +115,9 @@ namespace scf::core
 		// IMPORTANT (Ghidra-verified on MovementPlannerAgentKeepOffset::PlanMovement at
 		// SkyrimSE.exe+6FFDA0): the engine adds a_angle to the SUMMON's OWN current
 		// orientation every frame (`desiredYaw = summonYaw + angle.z`), NOT to the
-		// anchor's heading. Any non-zero angle injects a perpetual spin torque that makes
-		// non-strafing quadrupeds (wolves) run in continuous circles. Keep this 0.0f.
+		// anchor's heading. Any non-zero angle injects a perpetual spin torque, and even
+		// 0.0f locks yaw unless PlanMovement's facing output is rewritten to follow
+		// velocityYaw (see AdjustKeepOffsetPlanFacing and SummonMovement::Install).
 		float facingOffsetDegrees{ 0.0f };
 
 		bool lockTranslation{ false }; // Actor::SetDontMove(true)
@@ -139,6 +140,37 @@ namespace scf::core
 	// Minimum gap between followRadius and catchUpRadius so PlanMovement's
 	// `(dist - followRadius) / (catchUpRadius - followRadius)` never divides by zero.
 	inline constexpr float kMinCatchUpMargin = 10.0f;
+
+	// Minimum horizontal/linear planned speed required for KeepOffset PlanMovement to
+	// drive desired facing along velocityYaw; at or below this speed the summon is
+	// stationary and releases forced facing so idle/combat turning works normally.
+	inline constexpr float kKeepOffsetMovingSpeedEpsilon = 0.01f;
+
+	// Binary layout of the first 9 floats (0x00..0x20) of the MovementPlannerOutput
+	// record written by MovementPlannerAgentKeepOffset::PlanMovement (SkyrimSE.exe+6FFDA0,
+	// VTABLE_MovementPlannerAgentKeepOffset[1] slot 2).
+	struct KeepOffsetPlanOutput
+	{
+		float velocityWeight{ 0.0f };
+		float velocityPitch{ 0.0f };
+		float velocityRoll{ 0.0f };
+		float velocityYaw{ 0.0f };
+		float speed{ 0.0f };
+		float facingWeight{ 0.0f };
+		float facingPitch{ 0.0f };
+		float facingRoll{ 0.0f };
+		float facingYaw{ 0.0f };
+	};
+	static_assert(sizeof(KeepOffsetPlanOutput) == 36, "KeepOffsetPlanOutput must match engine layout (9 floats)");
+
+	// Rewrites MovementPlannerAgentKeepOffset::PlanMovement's facing output for an
+	// SCF-controlled summon. Native PlanMovement unconditionally outputs
+	// `facingWeight = 1.0f; facingYaw = summonYaw + angle.z`, which either spins
+	// non-strafing actors (angle != 0) or hard-locks their yaw (angle == 0).
+	// When moving (`velocityWeight > 0 && speed > kKeepOffsetMovingSpeedEpsilon`),
+	// align desired facing with velocityYaw; when stationary, drop facingWeight to 0
+	// so lower-priority agents (combat/idle) remain free to turn the actor.
+	void AdjustKeepOffsetPlanFacing(KeepOffsetPlanOutput& a_plan) noexcept;
 
 	// Minimum time a Return order holds combat-forbidden state before flipping back to
 	// Follow once the summon is out of combat and within followMinDistance of the owner.

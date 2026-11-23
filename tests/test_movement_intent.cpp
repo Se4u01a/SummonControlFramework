@@ -736,3 +736,62 @@ TEST(TestShouldCompleteReturnEnforcesDisengageAndRange)
 	CHECK(ShouldCompleteReturn(200.0f, 200.0f, false, 2.5f, 2.5f));
 	CHECK(ShouldCompleteReturn(80.0f, 200.0f, false, 3.0f, 2.5f));
 }
+
+TEST(TestAdjustKeepOffsetPlanFacingFollowsVelocityWhenMoving)
+{
+	KeepOffsetPlanOutput plan{};
+	plan.velocityWeight = 1.0f;
+	plan.velocityPitch = -0.15f;
+	plan.velocityRoll = 0.0f;
+	plan.velocityYaw = 2.1f;
+	plan.speed = 200.0f;
+	plan.facingWeight = 1.0f;
+	plan.facingPitch = 0.25f;
+	plan.facingRoll = 0.1f;
+	plan.facingYaw = 0.3f;
+
+	AdjustKeepOffsetPlanFacing(plan);
+
+	CHECK_NEAR(plan.facingWeight, 1.0f, 0.0001f);
+	CHECK_NEAR(plan.facingPitch, 0.0f, 0.0001f);
+	CHECK_NEAR(plan.facingRoll, 0.0f, 0.0001f);
+	CHECK_NEAR(plan.facingYaw, 2.1f, 0.0001f);
+	// Velocity fields must remain untouched.
+	CHECK_NEAR(plan.velocityWeight, 1.0f, 0.0001f);
+	CHECK_NEAR(plan.velocityPitch, -0.15f, 0.0001f);
+	CHECK_NEAR(plan.velocityYaw, 2.1f, 0.0001f);
+	CHECK_NEAR(plan.speed, 200.0f, 0.0001f);
+}
+
+TEST(TestAdjustKeepOffsetPlanFacingReleasesFacingWhenStationary)
+{
+	KeepOffsetPlanOutput stationary{};
+	stationary.velocityWeight = 1.0f;
+	stationary.velocityYaw = 1.5f;
+	stationary.speed = 0.0f;
+	stationary.facingWeight = 1.0f;
+	stationary.facingYaw = 0.4f;
+
+	AdjustKeepOffsetPlanFacing(stationary);
+	CHECK_NEAR(stationary.facingWeight, 0.0f, 0.0001f);
+
+	// Speed at or below epsilon is treated as stationary.
+	KeepOffsetPlanOutput creeping = stationary;
+	creeping.speed = kKeepOffsetMovingSpeedEpsilon;
+	creeping.facingWeight = 1.0f;
+	AdjustKeepOffsetPlanFacing(creeping);
+	CHECK_NEAR(creeping.facingWeight, 0.0f, 0.0001f);
+}
+
+TEST(TestAdjustKeepOffsetPlanFacingReleasesFacingWhenVelocityInactive)
+{
+	KeepOffsetPlanOutput inactive{};
+	inactive.velocityWeight = 0.0f;
+	inactive.velocityYaw = -1.2f;
+	inactive.speed = 50.0f;
+	inactive.facingWeight = 1.0f;
+	inactive.facingYaw = 0.8f;
+
+	AdjustKeepOffsetPlanFacing(inactive);
+	CHECK_NEAR(inactive.facingWeight, 0.0f, 0.0001f);
+}

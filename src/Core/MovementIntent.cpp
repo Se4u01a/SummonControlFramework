@@ -29,6 +29,18 @@ namespace scf::core
 		return std::max(a_catchUpRadius, safeFollow + kMinCatchUpMargin);
 	}
 
+	void AdjustKeepOffsetPlanFacing(KeepOffsetPlanOutput& a_plan) noexcept
+	{
+		if (a_plan.velocityWeight > 0.0f && a_plan.speed > kKeepOffsetMovingSpeedEpsilon) {
+			a_plan.facingWeight = 1.0f;
+			a_plan.facingPitch = 0.0f;
+			a_plan.facingRoll = 0.0f;
+			a_plan.facingYaw = a_plan.velocityYaw;
+		} else {
+			a_plan.facingWeight = 0.0f;
+		}
+	}
+
 	bool ShouldCompleteReturn(
 		float a_distanceToOwner,
 		float a_followMinDistance,
@@ -175,7 +187,8 @@ namespace scf::core
 
 		// 3. Return: run back to the owner, then the order flips to Follow once disengaged.
 		//    facingOffsetDegrees stays 0.0f: native KeepOffsetFromActor (+6FFDA0) adds
-		//    angle.z to the summon's OWN yaw every frame, so any non-zero value spins it.
+		//    angle.z to the summon's OWN yaw every frame, and our PlanMovement hook aligns
+		//    facing directly with velocityYaw while moving.
 		if (a_model.order == SummonOrder::Return) {
 			MovementIntent intent{};
 			const float followRadius = std::max(movement.followMinDistance, 150.0f);

@@ -24,9 +24,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <mutex>
+#include <shared_mutex>
 #include <unordered_map>
 
 namespace scf::engine::movement
@@ -192,12 +195,100 @@ namespace scf::engine::movement
 			// player that keeps the gap open".
 			core::Vec3 lastSamplePosition{};
 			float positionSampledAt{ 0.0f };
+			bool trackedForFacing{ false };
 		};
 
 		std::unordered_map<core::EntityID, AppliedMovement> s_applied;
 
 		// Session statistics behind the status line (declared in SummonMovement.h).
 		core::CatchUpStats s_catchUpStats{};
+
+		// ------------------------------------------------------------------
+		// MovementPlannerAgentKeepOffset::PlanMovement facing seat.
+		//
+		// Ghidra-verified on SkyrimSE.exe+6FFDA0 (VTABLE_MovementPlannerAgentKeepOffset[1]
+		// slot 2, SE +166BE68, AE VariantID 208534):
+		//   * PlanMovement(IMovementPlannerAgent* a_this, void* a_context, void* a_out)
+		//     runs on movement worker threads and writes 9 floats into a_out
+		//     (core::KeepOffsetPlanOutput): velocityWeight/Pitch/Roll/Yaw, speed,
+		//     facingWeight/Pitch/Roll/Yaw.
+		//   * It unconditionally sets facingWeight = 1.0f and desiredYaw = summonYaw + angle.z
+		//     at the highest planner priority (0x87): non-zero angle spins non-strafing
+		//     quadrupeds in circles, while 0.0f hard-locks their yaw so they cannot turn!
+		//   * IMovementState* sits at *(a_this - 0x08), and IMovementState vtable slot 1
+		//     (DoGetNumericID, Character::VTABLE[5] +0x165E520 slot 1 = +0x60EA70) returns
+		//     the actor's FormID in O(1) without locks or RTTI casts.
+		// For SCF-tracked summons only, rewrite facing output via
+		// core::AdjustKeepOffsetPlanFacing so moving summons face their velocityYaw and
+		// stationary summons release forced facing. Non-SCF actors are untouched.
+		// ------------------------------------------------------------------
+		using PlanMovementFn = void (*)(void*, void*, void*);
+		PlanMovementFn s_originalPlanMovement{ nullptr };
+		std::shared_mutex s_trackedMutex;
+		std::unordered_set<std::uint32_t> s_trackedSummons;
+		std::atomic<bool> s_hasTrackedSummons{ false };
+		std::atomic<bool> s_planSeatObserved{ false };
+
+		void RegisterTrackedSummon(core::EntityID a_id, AppliedMovement& a_state)
+		{
+			if (a_state.trackedForFacing || a_id == core::InvalidEntityID) {
+				return;
+			}
+			{
+				std::unique_lock lock(s_trackedMutex);
+				s_trackedSummons.insert(a_id);
+				s_hasTrackedSummons.store(true, std::memory_order_release);
+			}
+			a_state.trackedForFacing = true;
+		}
+
+		void PlanMovementHook(void* a_this, void* a_context, void* a_out)
+		{
+			if (s_originalPlanMovement) {
+				s_originalPlanMovement(a_this, a_context, a_out);
+			}
+
+			if (!a_this || !a_out || !s_hasTrackedSummons.load(std::memory_order_acquire)) {
+				return;
+			}
+
+			auto* const movementState = *reinterpret_cast<void* const*>(
+				reinterpret_cast<std::uintptr_t>(a_this) - sizeof(void*));
+			if (!movementState) {
+				return;
+			}
+
+			auto* const stateVtable = *reinterpret_cast<std::uintptr_t* const*>(movementState);
+			if (!stateVtable) {
+				return;
+			}
+
+			using GetNumericIdFn = std::uint32_t (*)(void*);
+			const auto getNumericId = reinterpret_cast<GetNumericIdFn>(stateVtable[1]);
+			if (!getNumericId) {
+				return;
+			}
+
+			const std::uint32_t actorId = getNumericId(movementState);
+			if (actorId == 0) {
+				return;
+			}
+
+			bool isTracked = false;
+			{
+				std::shared_lock lock(s_trackedMutex);
+				isTracked = (s_trackedSummons.find(actorId) != s_trackedSummons.end());
+			}
+			if (!isTracked) {
+				return;
+			}
+
+			core::AdjustKeepOffsetPlanFacing(*reinterpret_cast<core::KeepOffsetPlanOutput*>(a_out));
+
+			if (!s_planSeatObserved.exchange(true, std::memory_order_relaxed)) {
+				logger::info("[Movement] KeepOffset PlanMovement facing seat OBSERVED running (summon 0x{:08X})", actorId);
+			}
+		}
 
 		core::FormationLayout FormationLayoutFrom(const core::SettingsData& a_settings)
 		{
@@ -763,6 +854,27 @@ namespace scf::engine::movement
 		}
 	}
 
+	void Install()
+	{
+		static bool installed = false;
+		if (installed) {
+			return;
+		}
+
+		REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_MovementPlannerAgentKeepOffset[1] };
+		const auto* slots = reinterpret_cast<const std::uintptr_t*>(vtable.address());
+		if (!slots || !slots[2]) {
+			logger::warn("[Movement] KeepOffset PlanMovement vtable slot 2 unavailable; facing seat not installed.");
+			return;
+		}
+
+		const std::uintptr_t originalAddr = slots[2];
+		s_originalPlanMovement = reinterpret_cast<PlanMovementFn>(originalAddr);
+		vtable.write_vfunc(2, &PlanMovementHook);
+		installed = true;
+		logger::info("[Movement] KeepOffset PlanMovement facing seat installed (vtable slot 2, original 0x{:X})", originalAddr);
+	}
+
 	void UpdateForSummon(
 		RE::PlayerCharacter* a_owner,
 		RE::Actor* a_summon,
@@ -780,6 +892,7 @@ namespace scf::engine::movement
 
 		const auto id = static_cast<core::EntityID>(a_summon->GetFormID());
 		auto& state = s_applied[id];
+		RegisterTrackedSummon(id, state);
 
 		if (a_summon->IsDead()) {
 			ApplyTranslationLock(a_summon, id, false, state);
@@ -1062,13 +1175,20 @@ namespace scf::engine::movement
 
 	void RetainOnly(const std::unordered_set<core::EntityID>& a_liveSummons)
 	{
-		std::erase_if(s_applied, [&a_liveSummons](const auto& a_entry) {
+		const std::size_t erased = std::erase_if(s_applied, [&a_liveSummons](const auto& a_entry) {
 			if (a_liveSummons.find(a_entry.first) != a_liveSummons.end()) {
 				return false;
 			}
 			ReleaseLeftoverSpeed(a_entry.first, a_entry.second);
 			return true;
 		});
+		if (erased > 0) {
+			std::unique_lock lock(s_trackedMutex);
+			std::erase_if(s_trackedSummons, [&a_liveSummons](std::uint32_t a_id) {
+				return a_liveSummons.find(a_id) == a_liveSummons.end();
+			});
+			s_hasTrackedSummons.store(!s_trackedSummons.empty(), std::memory_order_release);
+		}
 		leash::RetainOnly(a_liveSummons);
 	}
 
@@ -1090,6 +1210,11 @@ namespace scf::engine::movement
 		}
 
 		s_applied.clear();
+		{
+			std::unique_lock lock(s_trackedMutex);
+			s_trackedSummons.clear();
+			s_hasTrackedSummons.store(false, std::memory_order_release);
+		}
 		leash::ResetAll();
 		// The recall counters describe this session, not the previous one.
 		core::ResetCatchUpStats(s_catchUpStats);

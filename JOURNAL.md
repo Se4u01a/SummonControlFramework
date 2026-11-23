@@ -781,3 +781,31 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
 * `xmake` (ReleaseDbg): сборка чистая, 0 ошибок, `SummonControlFramework.dll` и `SummonControlFramework.esp` развернуты в оба инстанса MO2.
 * `xmake run scf_tests`: **249 test cases, 0 failed cases, 0 failed checks**.
 * Игровая проверка (прямолинейный бег волков и выход из боя по «Приказ: Следовать») ожидается от пользователя.
+
+## 2026-11-23 — Траектория и время до атаки призывов
+
+Трассировка привязана к принятому попаданию «В атаку» и исполнению этой команды. В лог добавлены отдельные координаты приказа и движущейся цели, горизонтальный путь и скорость, движение относительно корпуса, время первой наблюдаемой атаки и подтверждённого попадания. Добавлены регрессии расчёта пути и определения начала атаки. Сборка и 251 тест прошли, DLL развёрнута в обе сборки MO2. Игровая проверка ожидается.
+
+## 2026-11-23 — Исправление жёсткой блокировки поворота волков (`MovementPlannerAgentKeepOffset::PlanMovement` vtable hook)
+
+### Контекст и анализ игрового лога (`23:34`–`23:36`)
+После коммита `2927120` пользователь сообщил, что волки перестали поворачиваться вообще и не атакуют по приказу. Анализ свежего `SummonControlFramework.log` и трассировки `[AttackTrace]` подтвердил:
+* **Что заработало:** `SCF_CmdFollow` (`23:35:53`–`23:36:03`) корректно вывел всех трёх волков из боя, довёл их к игроку (`997 -> 429 -> 196`) и перевёл `Return -> Follow`; фильтр `WolfManeuver` (`23:34:15`) успешно отклонил `Fallback` и `Backoff`.
+* **Что сломалось:** во время `AttackApproach` (`order=1`, `order=2`, `order=3`) углы `yaw_deg` всех трёх волков (`0xFF001A4D`, `0xFF001A4F`, `0xFF001A54`) оставались абсолютно замороженными (`32.0°`, `27.9°`, `16.1°`) по 23–26+ секунд подряд. Так как четвероногие (`CanStrafe() == false`) движутся вдоль своего `yaw`, один волк убегал строго прочь от гиганта (`range_xy: 4009 -> 7405`), второй стоял (`speed_xy=10.5`), третий пятился (`forward_ratio=-1.00`). В `order=1` волк `0xFF001A4C` стоял замороженным на `13.5°` 23 секунды, пока гигант сам не подошёл на дистанцию снятия `KeepOffset` — в ту же миллисекунду `yaw_deg` разморозился (`332.3 -> 233.9`) и волк пошёл в атаку.
+
+### Первопричина (подтверждено в Ghidra)
+Дизассемблирование `MovementPlannerAgentKeepOffset::PlanMovement` (`SkyrimSE.exe+6FFDA0`, `VTABLE_MovementPlannerAgentKeepOffset[1]` слот `2`) и `MovementPlannerArbiter::Arbitrate` (`SkyrimSE.exe+110FB10`) показало:
+* `KeepOffset::PlanMovement` всегда записывает `facingWeight = 1.0f` и `desiredYaw = summonYaw + angle.z` (приоритет `0x87` — высший среди агентов планировщика).
+* При `angle.z != 0` это даёт постоянный крутящий момент (волки бегают по кругу).
+* При `angle.z == 0` это даёт `desiredYaw = summonYaw` с весом `1.0` на каждом кадре, что перекрывает логику арбитра (`LAB_1411105f2`: копирование `velocityYaw` в `desiredYaw` только при отсутствии заданного поворота) и полностью блокирует поворот актёра.
+* И `HorseControls::PlanMovement` (`+6FF720`), и `MovementPlannerArbiter::Arbitrate` (`+110FB10`) используют одинаковую систему координат и радианы: `desiredYaw = velocityYaw` (`param_3[8] = param_3[3]`).
+
+### Принятое решение и изменения
+* **`src/Core/MovementIntent.{h,cpp}`:** добавлены структура `KeepOffsetPlanOutput` (9 `float`, `static_assert(sizeof == 36)`) и чистая функция `AdjustKeepOffsetPlanFacing`: при движении (`velocityWeight > 0 && speed > 0.01f`) устанавливает `facingWeight = 1.0f`, `facingPitch = 0`, `facingRoll = 0`, `facingYaw = velocityYaw`; при остановке (в том числе `HoldPosition`) сбрасывает `facingWeight = 0.0f`, чтобы не мешать боевому/холостому повороту.
+* **`src/Engine/SummonMovement.{h,cpp}` и `src/Plugin/Messaging.cpp`:** добавлен vtable-хук `engine::movement::Install()` на слот `2` таблицы `RE::VTABLE_MovementPlannerAgentKeepOffset[1]` (работает и на SE 1.5.97, и на AE 1.6.1170 через `VariantID`). Так как `PlanMovement` вызывается из фоновых потоков AI/движения, принадлежность актёра к SCF проверяется через `std::atomic<bool>` fast-path + `std::shared_mutex` над `std::unordered_set<std::uint32_t>`, а `FormID` актёра извлекается за O(1) из `*(a_this - 0x08)` (`IMovementState*`) вызовом слота `1` (`DoGetNumericID`). Сторонние NPC не затрагиваются.
+* **`tests/test_movement_intent.cpp`:** добавлены 3 юнит-теста для `AdjustKeepOffsetPlanFacing` (движение, остановка/порог эпсилон, неактивная скорость).
+
+### Проверки
+* `xmake` / `xmake --rebuild SummonControlFramework`: чистая сборка, DLL развёрнута в оба инстанса MO2 (`[STB]` и `[RE2CE TEST]`).
+* `xmake run scf_tests`: **254 test cases, 0 failed cases, 0 failed checks**.
+* Игровая проверка поворота и прямолинейной атаки волков ожидается от пользователя.

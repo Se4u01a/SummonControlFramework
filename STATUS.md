@@ -103,7 +103,7 @@
   * New engine layer `src/Engine/SummonMovement.{h,cpp}` executes the order stored on `SummonModel` every tactical tick (15 Hz, main thread via the existing `PlayerCharacter::Update` hook): no new hooks, threads, spawned actors or borrowed AI packages.
   * Engine primitives (not bound by the pinned CommonLibSSE-NG, resolved via Address Library and verified against the unpacked 1.5.97 image): `Actor::KeepOffsetFromActor` (`SE 36870 / AE 37894`), `Actor::ClearKeepOffsetFromActor` (`36871 / 37895`), `Actor::SetDontMove` (`36490 / 37489`).
   * Order → intent matrix: `Attack` (explicit FocusTarget) outranks every movement order, `Follow` holds the formation slot around the player (suppressed while fighting so combat AI keeps locomotion), `Return` runs to the player and flips to `Follow` on arrival, `MoveTo` walks to the world point (owner-relative offset recomputed every tick; a destination farther than 8000 units, e.g. left behind by a cell change, is abandoned), `WaitGuard` parks the movement goal on the summon and locks translation.
-  * **Facing & keep-offset safety (2026-11-23 Ghidra fix):** Disassembly of `MovementPlannerAgentKeepOffset::PlanMovement` (`SkyrimSE.exe+6FFDA0`) and `HorseControls::PlanMovement` (`+6FF720`) proved `angle.z` is added to the summon's **own** yaw every frame, creating infinite spin torque on non-strafing quadrupeds (wolves running in circles), and `catchUpRadius == followRadius` divides by zero. `KeepOffsetFromActor` now always receives `facingOffsetDegrees = 0.0f` and `core::SafeKeepOffsetCatchUpRadius(followRadius, catchUpRadius)` (`catchUp >= follow + 10.0f`).
+  * **Facing & keep-offset safety (2026-11-23 Ghidra fix + `PlanMovement` vtable hook):** Disassembly of `MovementPlannerAgentKeepOffset::PlanMovement` (`SkyrimSE.exe+6FFDA0`) and `MovementPlannerArbiter::Arbitrate` (`+110FB10`) proved that native `PlanMovement` unconditionally writes `facingWeight = 1.0f` and `desiredYaw = summonYaw + angle.z` at priority `0x87`: non-zero `angle.z` injects perpetual spin torque, while `angle.z == 0` hard-locks yaw so non-strafing quadrupeds cannot turn at all. `KeepOffsetFromActor` passes `facingOffsetDegrees = 0.0f` and `core::SafeKeepOffsetCatchUpRadius(followRadius, catchUpRadius)`, and `engine::movement::Install()` hooks `RE::VTABLE_MovementPlannerAgentKeepOffset[1]` slot `2` (`PlanMovement`) for SCF-tracked summons to run `core::AdjustKeepOffsetPlanFacing` (`facingYaw = velocityYaw`, `facingPitch = facingRoll = 0`, `facingWeight = 1.0f` while moving; `facingWeight = 0.0f` when stationary).
   * **Focus is not overridden by movement:** `CommandQueue::ApplyToModel` turns a `SetFocusTarget` into `SummonOrder::Attack` (drops any move destination), the intent matrix yields `None` for it, and the order reverts to `Follow` when the target dies/vanishes or combat never starts within 2 s.
   * Pure geometry/rules split: `src/Core/Formation.{h,cpp}` (slot table and body-space/facing math, shared with `SquadCoordinator`) and `src/Core/MovementIntent.{h,cpp}` (intent matrix, arrival radius, move-distance limit).
   * Emergency catch-up warp (only beyond `[Recovery] fCatchUpDistance` or after 3 s without progress, same-cell only, always logged; at most one warp per Return order).
@@ -219,7 +219,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **249/249 test cases passing** (0 failures, execution time < 2 ms).
+  * **254/254 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -273,8 +273,17 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 * Focus Target is resolved from `targetActor`/`target` with an aim-cone fallback (25°, 2500 units); if both the crosshair data and the cone are empty, the diagnostic `[Crosshair]` line is the way to tell why.
 * `SetDontMove` / the combat deny bits are actor state, not framework state: turning the framework off with `[General] bEnabled = false` (or disabling the plugin) does not release them. Use any other order (or reload the save) before disabling.
 
-## 2026-11-23 — IN_PROGRESS: прямолинейный бег волков в атаке и выход из боя по «Приказ: Следовать»
+## 2026-11-23 — IN_PROGRESS: исправление блокировки поворота в `KeepOffset` (`PlanMovement` vtable hook)
 
-* **Кружение волков в `AttackApproach` (подтверждено в Ghidra `SkyrimSE.exe+6FFDA0`):** убрана подача ненулевого `angle.z` в `KeepOffsetFromActor` (движок прибавляет `angle.z` к собственному yaw суммона каждый кадр, создавая бесконечное вращение у четвероногих), устранено деление на ноль `catchUpRadius == followRadius` (`SafeKeepOffsetCatchUpRadius`), фильтр манёвров `WolfManeuver` расширен с 7 до 10 узлов (`+Reposition`, `+Backoff`, `+WatchTarget`) и включён для всех суммонов с активным фокусом.
-* **«Приказ: Следовать» (`SCF_CmdFollow`):** переведён на `SummonOrder::Return`, сбрасывает `currentTargetId`, публикует запрет боя в `CombatGate` до `BreakCombat`, удерживает режим возврата через `ShouldCompleteReturn` (`!inCombat`, дистанция ≤ `fFollowMinDistance`, минимум `2.5` с) с автоматическим переходом в `Follow`.
-* **Проверки:** `xmake` собрал и развернул DLL в оба MO2, `xmake run scf_tests` — **249/249** пройдено. Ожидается игровая проверка обоих сценариев.
+* **Подтверждено в игровом логе (`23:34`–`23:36`):**
+  * **«Приказ: Следовать» (`SCF_CmdFollow`)** работает: все 3 волка вышли из боя, добежали обратно к игроку и перешли `Return -> Follow`.
+  * **Фильтр манёвров (`WolfManeuver`)** работает: в логе зафиксированы `skipped Fallback` / `skipped Backoff`.
+  * **Регрессия коммита `2927120`:** обнуление `facingOffsetDegrees = 0.0f` сняло кружение, но вскрыло штатную жёсткую фиксацию `facingWeight = 1.0f; desiredYaw = summonYaw + 0` в `MovementPlannerAgentKeepOffset::PlanMovement` (`SkyrimSE.exe+6FFDA0`). По `[AttackTrace]` углы `yaw_deg` всех трёх волков полностью замерзали на `23–26+` с, пока действовал `KeepOffsetFromActor`, из-за чего волки бежали в исходном направлении или стояли, не умея повернуться к цели.
+* **Исправление:**
+  * В `src/Core/MovementIntent.{h,cpp}` добавлены `KeepOffsetPlanOutput` и чистая функция `AdjustKeepOffsetPlanFacing` (при движении `facingYaw = velocityYaw`, `facingPitch = facingRoll = 0`, `facingWeight = 1.0f`; при остановке `facingWeight = 0.0f`).
+  * В `src/Engine/SummonMovement.{h,cpp}` добавлен vtable-хук `engine::movement::Install()` на `RE::VTABLE_MovementPlannerAgentKeepOffset[1]` слот `2` (`PlanMovement`) с потокобезопасным реестром активных суммонов SCF (`std::shared_mutex` + `std::atomic<bool>` fast-path) и O(1)-идентификацией актёра через `IMovementState::DoGetNumericID` (слот `1`). Хук подключён в `src/Plugin/Messaging.cpp`.
+* **Проверки:** `xmake` собрал и развернул DLL в оба MO2, `xmake run scf_tests` — **254/254** пройдено (0 ошибок). Ожидается повторная игровая проверка поворота и атаки волков.
+
+### Траектория после «В атаку» — IN_PROGRESS
+
+Логгер [AttackTrace] собран и развёрнут в STB и RE2CE TEST. Ожидается проверка трассировки в Skyrim по TESTING.md.
