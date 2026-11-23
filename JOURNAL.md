@@ -831,3 +831,21 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
 * `xmake`: чистая сборка без ошибок/предупреждений, DLL/PDB/ESP развёрнуты в `[STB]` и `[RE2CE TEST]`.
 * `xmake run scf_tests`: **254 test cases, 0 failed cases, 0 failed checks**.
 * Ожидается игровая проверка взрыва огненного шара в Skyrim SE 1.5.97 (появление `[MagicHook] Refused friendly AreaEffect effect ...` в логе); предрелиз `v0.1.0-alpha.1` собран до этого фикса.
+
+## 2026-11-24 (продолжение) — Исправление индекса vtable в `MagicHook` (`VTABLE_Character[3]` -> `[4]`, SE ID `37832`)
+
+### Диагностика после неудачного ретеста
+* После первого фикса (`GetTargetAsActor`) фаербол по-прежнему наносил урон волкам, а в `SummonControlFramework.log` (`00:44:24`, `00:44:31`) при активном наложении эффектов от `0x00000014` на волков по-прежнему не было ни одной строки `[MagicHook]`.
+* Разбор RTTI CompleteObjectLocator и слотов `VTABLE_Character[0..9]` напрямую в бинарнике `SkyrimSE.exe` 1.5.97 + `version-1-5-97-0.bin` показал настоящую причину:
+  * `TESObjectREFR` имеет 4 vtable (`[0..3]`), поэтому `VTABLE_Character[3]` (`subobj_off = 0x38`, слот `1` = `0x60F240` / ID `37020` -> `jmp 0x4F12C0` / ID `32157`) — это **`IAnimationGraphManagerHolder::NotifyAnimationGraph`**, а не `MagicTarget`! Именно поэтому другой мод уже хукал этот слот, и `MagicHook` с 2026-11-11 никогда не вызывался при наложении магии.
+  * Настоящая таблица `MagicTarget` — **`VTABLE_Character[4]`** (`id 261401`, `rva 0x165E468`, `subobj_off = 0x98`):
+    * слот `0`: `0x6941D0` (`id 39204`, `sub rcx, 0x98; jmp ~Character`)
+    * слот `1`: **`0x633090` (`id 37832`, `Actor::AddTarget`)** — вызывает `MagicTarget::AddTarget` (`0x553750` / `id 33742`) и не имеет прямых вызовов в `.text` (вызывается исключительно виртуально).
+    * слот `2`: `0x619830` (`id 37342`, `Actor::GetTargetStatsObject`: `lea rax, [rcx - 0x98]; ret`).
+    * слот `3`: `0x619B00` (`id 37358`, `Actor::MagicTargetIsActor`: `mov al, 1; ret`).
+* Проведён аудит всех `VTABLE_` в `src/`: все остальные vtable-индексы корректны.
+
+### Изменения и проверки
+* **`src/FriendlyFire/MagicHook.{h,cpp}`:** хук перенесён на `RE::VTABLE_Character[4]` слот `1` (`kCharacterAddTargetSE{ 37832 }`), добавлен одноразовый лог `[MagicHook] Character MagicTarget::AddTarget seat OBSERVED running.`, сохранено корректное извлечение актёра через `a_this->GetTargetAsActor()`.
+* `xmake`: чистая сборка, DLL развёрнута в `[STB]` и `[RE2CE TEST]`.
+* `xmake run scf_tests`: **254/254** пройдено (0 ошибок). Ожидается игровая проверка фаербола.

@@ -18,10 +18,14 @@ namespace scf::friendly_fire
 {
 	namespace
 	{
+		// TESObjectREFR owns vtables [0..3] ([3] at +0x38 is IAnimationGraphManagerHolder).
+		// Actor/Character::MagicTarget is sub-vtable [4] (+0x98 on SE 1.5.97, +0xA0 on AE).
+		constexpr std::size_t kMagicTargetVtableIndex = 4;
 		constexpr std::size_t kAddTargetSlot = 1;
-		constexpr REL::ID kCharacterAddTargetSE{ 37020 };
+		constexpr REL::ID kCharacterAddTargetSE{ 37832 };  // SkyrimSE.exe+0x633090 (Actor::AddTarget)
 
 		std::atomic<std::int64_t> s_lastLogMs{ 0 };
+		std::atomic<bool> s_observed{ false };
 
 		bool RateLimitedLog()
 		{
@@ -71,6 +75,9 @@ namespace scf::friendly_fire
 		{
 			static bool thunk(RE::MagicTarget* a_this, RE::MagicTarget::AddTargetData& a_data)
 			{
+				if (!s_observed.exchange(true, std::memory_order_relaxed)) {
+					logger::info("[MagicHook] Character MagicTarget::AddTarget seat OBSERVED running.");
+				}
 				if (ShouldRefuse(a_this, a_data)) {
 					return false;
 				}
@@ -147,21 +154,23 @@ namespace scf::friendly_fire
 			return false;
 		}
 
-		REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_Character[3] };
+		REL::Relocation<std::uintptr_t> vtable{ RE::VTABLE_Character[kMagicTargetVtableIndex] };
 		const auto current = *reinterpret_cast<const std::uintptr_t*>(vtable.address() + kAddTargetSlot * sizeof(void*));
 		const auto expected = kCharacterAddTargetSE.address();
 		const auto& module = REL::Module::get();
 		const bool insideGame = current >= module.base() &&
 		                        current < module.base() + module.segment(REL::Segment::textx).offset() + module.segment(REL::Segment::textx).size();
 		if (current != expected && insideGame) {
-			logger::error("[MagicHook] Character MagicTarget slot {} holds 0x{:X}, expected 0x{:X}; not installed.", kAddTargetSlot, current, expected);
+			logger::error("[MagicHook] Character MagicTarget (vtable[{}]) slot {} holds 0x{:X}, expected 0x{:X}; not installed.",
+				kMagicTargetVtableIndex, kAddTargetSlot, current, expected);
 			return false;
 		}
 
 		AddTargetHook::func = current;
 		vtable.write_vfunc(kAddTargetSlot, AddTargetHook::thunk);
-		logger::info("[MagicHook] Character MagicTarget::AddTarget (vtable[3] slot {}) hooked, chaining (original 0x{:X}){}.",
-			kAddTargetSlot, AddTargetHook::func.address(), current != expected ? " - slot was already hooked by another plugin" : "");
+		logger::info("[MagicHook] Character MagicTarget::AddTarget (vtable[{}] slot {}) hooked, chaining (original 0x{:X}){}.",
+			kMagicTargetVtableIndex, kAddTargetSlot, AddTargetHook::func.address(),
+			current != expected ? " - slot was already hooked by another plugin" : "");
 		return true;
 	}
 }

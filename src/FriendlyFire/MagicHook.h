@@ -7,10 +7,13 @@ namespace scf::friendly_fire
 	// enchantments, shouts and EXPLOSIONS (the fireball that hits the ground next to a
 	// summon applies its fire damage here with AddTargetData::areaTarget set).
 	//
-	// VERIFIED on the unpacked SkyrimSE 1.5.97 image (2026-11-11): Character's MagicTarget
-	// sub-vtable is VTABLE_Character[3] (id 261400 -> +165E3C8); slot 1 is id 37020
-	// (+60F240, `jmp +4F12C0`, id 32157 = the shared MagicTarget::AddTarget body:
-	// rcx = the MagicTarget sub-object, rdx = AddTargetData*, returns bool).
+	// VERIFIED on the unpacked SkyrimSE 1.5.97 image (2026-11-24, RTTI subobj_off = 0x98):
+	// TESObjectREFR owns vtables [0..3] ([3] at +0x38 is IAnimationGraphManagerHolder);
+	// Character's MagicTarget sub-vtable is VTABLE_Character[4] (SE id 261401 -> +165E468):
+	//   slot 0: +6941D0 (id 39204, sub rcx, 0x98; jmp Character::~Character)
+	//   slot 1: +633090 (id 37832, Actor::AddTarget -> calls base MagicTarget::AddTarget id 33742)
+	//   slot 2: +619830 (id 37342, Actor::GetTargetStatsObject: lea rax, [rcx - 0x98]; ret)
+	//   slot 3: +619B00 (id 37358, Actor::MagicTargetIsActor: mov al, 1; ret)
 	//
 	// For a protected summon (commanded by the player, or by a player teammate when
 	// bProtectAllyOwnedSummons) a HOSTILE / DETRIMENTAL effect whose caster is the player,
