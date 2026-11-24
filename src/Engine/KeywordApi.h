@@ -1,45 +1,75 @@
 #pragma once
 
 #include "Core/EntityID.h"
+#include "Core/KeywordApi.h"
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace RE
 {
 	class Actor;
+	class EffectSetting;
 	class PlayerCharacter;
+	class SpellItem;
 }
 
 namespace scf::engine::keywords
 {
-	// Keyword API (see core/KeywordApi.h for the names and README "Keyword API").
-	// Load() runs at kDataLoaded: every BGSKeyword whose EditorID is one of the API names
-	// (any plugin, several records per name allowed) is remembered per flag. No such
-	// keyword in the load order -> Active() is false and nothing is scanned.
+	// Keyword API v2 (see Core/KeywordApi.h and docs/KEYWORDS.md).
+	// Load() runs at kDataLoaded: every BGSKeyword whose EditorID is recognized by
+	// core::ParseKeywordEditorId (any plugin, several records per name allowed) is bound
+	// once at startup. If no mod defines any SCF_* keyword, Active() is false and nothing
+	// is scanned.
 	void Load();
-	[[nodiscard]] bool Active() noexcept;
+	void Reset();
 
-	// Main thread. Flags of an actor: keyword on its base (TESObjectREFR::HasKeyword
-	// through the base form), on its race, or on the base effect of an active magic
-	// effect (Actor::HasMagicEffectWithKeyword, id 19220: GetMagicTarget()->
-	// MagicTarget::HasMagicEffectWithKeyword).
-	[[nodiscard]] std::uint8_t FlagsOf(RE::Actor* a_actor);
+	[[nodiscard]] bool Active() noexcept;
+	[[nodiscard]] bool WorldActive() noexcept;
+	[[nodiscard]] bool SummonActive() noexcept;
+
+	// Main thread. World-scoped flags of any actor (PassThrough, Threat, FriendlyFire,
+	// AutoRegister): keyword on base NPC_, RACE, or active magic effect MGEF.
+	[[nodiscard]] core::KeywordFlags WorldFlagsOf(RE::Actor* a_actor);
+
+	// Main thread. Full flag bitmask of an actor (optionally including a conjuration
+	// source MGEF on the commander).
+	[[nodiscard]] core::KeywordFlags FlagsOf(RE::Actor* a_actor, const RE::EffectSetting* a_sourceEffect = nullptr);
+
+	// Main thread. Full aggregated keyword profile (flags + numeric parameters) of a
+	// summon, reading NPC_, RACE, active MGEFs on the actor, and the conjuration source
+	// MGEF if provided.
+	[[nodiscard]] core::SummonKeywordProfile ProfileOf(RE::Actor* a_actor, const RE::EffectSetting* a_sourceEffect = nullptr);
+
+	// Checks whether any effect of `a_spell` (or its associated summoned NPC_/RACE) carries
+	// any keyword matching `a_flag`. Safe to call from main/cast hooks (e.g. SummonLimit
+	// and Persistence).
+	[[nodiscard]] bool SpellHasFlag(const RE::SpellItem* a_spell, core::KeywordFlags a_flag) noexcept;
+
+	// Convenience helper for SummonLimit::LimitThunk (SCF_FreeSlot / SCF_IgnoreLimit).
+	[[nodiscard]] bool SpellHasFreeSlot(const RE::SpellItem* a_spell) noexcept;
+
+	// Main thread -> ANY THREAD snapshot for FriendlyFire hooks
+	// (kKwFriendlyFireProtected | kKwAllowFriendlyFire).
+	void PublishFriendlyFireFlags(const std::unordered_map<core::EntityID, core::KeywordFlags>& a_flags);
+	[[nodiscard]] core::KeywordFlags FriendlyFireFlagsOf(std::uint32_t a_actorId) noexcept;
 
 	// Main thread. Head of the actor's side: the player for the player and the player's
 	// teammates, a commanded actor's (summon's) commander's leader, else the actor.
 	[[nodiscard]] core::EntityID LeaderOf(RE::Actor* a_actor);
 
-	// One loaded actor as the keyword rules see it this tick.
+	// One loaded actor as the world keyword rules see it this tick.
 	struct WorldActor
 	{
 		RE::Actor* actor{ nullptr };
 		core::EntityID id{ core::InvalidEntityID };
 		core::EntityID leader{ core::InvalidEntityID };
-		std::uint8_t flags{ 0 };
+		core::KeywordFlags flags{ core::kKwNone };
 	};
 
 	// Main thread, once per tactical tick: the player and every live, 3D-loaded actor of
-	// the high process list with its flags and leader. Empty while the API is idle.
-	[[nodiscard]] std::vector<WorldActor> ScanWorld(RE::PlayerCharacter* a_player);
+	// the high process list with its world flags and leader. Empty while world scanning
+	// is idle and `a_includeWithoutKeywords` is false.
+	[[nodiscard]] std::vector<WorldActor> ScanWorld(RE::PlayerCharacter* a_player, bool a_includeWithoutKeywords = false);
 }

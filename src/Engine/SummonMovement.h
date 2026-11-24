@@ -2,6 +2,7 @@
 
 #include "Core/CatchUp.h"
 #include "Core/EntityID.h"
+#include "Core/Formation.h"
 #include "Core/MovementIntent.h"
 #include "Core/Settings.h"
 #include "Core/StateMachine.h"
@@ -54,7 +55,10 @@ namespace scf::engine::movement
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize,
 		float a_now,
-		bool a_combatPermitted);
+		bool a_combatPermitted,
+		bool a_allowCatchUpWarp = true,
+		core::FormationSector a_sector = core::FormationSector::Default,
+		bool a_stationary = false);
 
 	// Refreshes the order-entered clock when the player explicitly re-issues an order
 	// (e.g. casting Follow/Return again while already returning) so the Return disengage

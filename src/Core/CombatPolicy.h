@@ -29,6 +29,9 @@ namespace scf::core
 		// combat is not allowed so the actor cannot swing or cast even if combat slips
 		// through the denial seat (Passive must never attack, Return must run home).
 		bool disableAttacks{ false };
+
+		// Automatic SCR policy. It can pin a target without enabling explicit Attack behavior.
+		bool radiusManaged{ false };
 	};
 
 	// `a_hasLiveTarget` is the engine-side fact that the model's currentTargetId still

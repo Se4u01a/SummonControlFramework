@@ -1,5 +1,7 @@
 #include "Engine/Persistence.h"
+#include "Core/KeywordApi.h"
 #include "Core/SummonRegistry.h"
+#include "Engine/KeywordApi.h"
 #include "PCH.h"
 
 #include <RE/A/ActiveEffect.h>
@@ -303,7 +305,9 @@ namespace scf::engine::persistence
 				s_state.GetSlotCount(), s_state.GetAppliedReserve());
 		}
 
-		if (!current.persistentSummons) {
+		std::unordered_map<core::EntityID, RE::ActiveEffect*> effects;
+		const bool kwActive = keywords::SummonActive();
+		if (!current.persistentSummons && !kwActive) {
 			if (s_state.GetSlotCount() > 0 || s_state.GetAppliedReserve() > 0.0f) {
 				logger::info("[Persistence] persistent mode off: dropping {} slot(s).", s_state.GetSlotCount());
 				ReleaseReserve(a_player);
@@ -312,8 +316,63 @@ namespace scf::engine::persistence
 			return;
 		}
 
-		std::unordered_map<core::EntityID, RE::ActiveEffect*> effects;
 		CollectCommandedEffects(a_player, effects);
+
+		const auto slotAllowedByKeywords = [&](const core::PersistentSlot& a_slot) -> bool {
+			if (a_slot.actorId != core::InvalidEntityID) {
+				if (auto* actor = RE::TESForm::LookupByID<RE::Actor>(a_slot.actorId)) {
+					const auto it = effects.find(a_slot.actorId);
+					const auto* base = (it != effects.end() && it->second) ? it->second->GetBaseObject() : nullptr;
+					return core::ResolvePersistencePolicy(true, current.persistentSummons, keywords::FlagsOf(actor, base));
+				}
+			}
+			if (a_slot.spellFormId != 0) {
+				if (const auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(a_slot.spellFormId)) {
+					core::KeywordFlags flags = core::kKwNone;
+					if (keywords::SpellHasFlag(spell, core::kKwPersistent)) {
+						flags |= core::kKwPersistent;
+					}
+					if (keywords::SpellHasFlag(spell, core::kKwNoPersistence)) {
+						flags |= core::kKwNoPersistence;
+					}
+					return core::ResolvePersistencePolicy(true, current.persistentSummons, flags);
+				}
+			}
+			return current.persistentSummons;
+		};
+
+		if (kwActive) {
+			std::vector<core::EntityID> disallowedSlots;
+			for (const auto& slot : s_state.GetSlots()) {
+				if (!slotAllowedByKeywords(slot)) {
+					disallowedSlots.push_back(slot.slotId);
+				}
+			}
+			for (const auto slotId : disallowedSlots) {
+				s_state.Remove(slotId);
+			}
+		}
+
+		if (!current.persistentSummons) {
+			bool anyLivePersistent = false;
+			for (auto* actor : a_liveSummons) {
+				if (!actor) {
+					continue;
+				}
+				const auto it = effects.find(actor->GetFormID());
+				const auto* base = (it != effects.end() && it->second) ? it->second->GetBaseObject() : nullptr;
+				if (core::ResolvePersistencePolicy(true, false, keywords::FlagsOf(actor, base))) {
+					anyLivePersistent = true;
+					break;
+				}
+			}
+			if (!anyLivePersistent && s_state.GetSlotCount() == 0) {
+				if (s_state.GetAppliedReserve() > 0.0f) {
+					ReleaseReserve(a_player);
+				}
+				return;
+			}
+		}
 
 		std::unordered_set<core::EntityID> live;
 		live.reserve(a_liveSummons.size());
@@ -371,10 +430,12 @@ namespace scf::engine::persistence
 			const bool castByPlayer = CastByPlayer(effect, a_player);
 			const bool officialOrigin = IsOfficialMasterOrigin(effect->spell);
 			const bool blacklisted = !current.IsSpellAllowed(spellId);
-			if (!core::ShouldTrackSummonSpell(isSummonCreature, castByPlayer, officialOrigin, blacklisted, current)) {
+			const bool baseAllowed = core::ShouldTrackSummonSpell(isSummonCreature, castByPlayer, officialOrigin, blacklisted, current);
+			const auto kwFlags = kwActive ? keywords::FlagsOf(actor, effect->GetBaseObject()) : core::kKwNone;
+			if (!core::ResolvePersistencePolicy(baseAllowed, current.persistentSummons, kwFlags)) {
 				logger::debug("[Persistence] summon 0x{:08X}: spell 0x{:08X} left unmanaged "
-							  "(summon creature {}, cast by player {}, official master {}, blacklisted {}, vanilla-only {}).",
-					actorId, spellId, isSummonCreature, castByPlayer, officialOrigin, blacklisted, current.vanillaSpellsOnly);
+							  "(summon creature {}, cast by player {}, official master {}, blacklisted {}, vanilla-only {}, kw 0x{:X}).",
+					actorId, spellId, isSummonCreature, castByPlayer, officialOrigin, blacklisted, current.vanillaSpellsOnly, kwFlags);
 				continue;
 			}
 
@@ -470,7 +531,8 @@ namespace scf::engine::persistence
 
 	void OnSummonDied(core::EntityID a_summonId, float a_now)
 	{
-		if (a_summonId == core::InvalidEntityID || !s_state.GetSettings().persistentSummons) {
+		if (a_summonId == core::InvalidEntityID ||
+		    (!s_state.GetSettings().persistentSummons && s_state.GetSlotCount() == 0)) {
 			return;
 		}
 		if (s_state.MarkDead(a_summonId, a_now)) {
@@ -495,7 +557,7 @@ namespace scf::engine::persistence
 
 	bool IsEnabled() noexcept
 	{
-		return s_state.GetSettings().persistentSummons;
+		return s_state.GetSettings().persistentSummons || s_state.GetSlotCount() > 0;
 	}
 
 	void Reset()

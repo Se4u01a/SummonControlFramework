@@ -1,9 +1,11 @@
 #include "Engine/SummonLimit.h"
 #include "Core/SummonLimit.h"
+#include "Engine/KeywordApi.h"
 #include "PCH.h"
 
 #include <RE/A/Actor.h>
 #include <RE/P/PlayerCharacter.h>
+#include <RE/S/SpellItem.h>
 
 #include <atomic>
 #include <cstring>
@@ -20,6 +22,7 @@ namespace scf::engine::summonlimit
 		using HandleEntryPoint_t = void (*)(std::uint32_t, RE::Actor*, void*, float*);
 		HandleEntryPoint_t s_original{ nullptr };
 		std::atomic<std::uint32_t> s_playerLimit{ 0 };
+		std::atomic<std::uint32_t> s_freeSlotCount{ 0 };
 		std::atomic<bool> s_loggedRaise{ false };
 		bool s_installed{ false };
 
@@ -31,12 +34,19 @@ namespace scf::engine::summonlimit
 			}
 			const auto configured = s_playerLimit.load(std::memory_order_relaxed);
 			const float perk = *a_value;
-			const float raised = core::ApplyPlayerSummonLimit(perk, configured);
+			const float base = core::ApplyPlayerSummonLimit(perk, configured);
+			std::uint32_t extra = s_freeSlotCount.load(std::memory_order_relaxed);
+			const auto* spell = static_cast<const RE::SpellItem*>(a_spell);
+			const bool castIsFreeSlot = spell && keywords::SpellHasFreeSlot(spell);
+			if (castIsFreeSlot) {
+				++extra;
+			}
+			const float raised = base + static_cast<float>(extra);
 			if (raised != perk) {
 				*a_value = raised;
-				if (!s_loggedRaise.exchange(true, std::memory_order_relaxed)) {
-					logger::info("[SummonLimit] player summon limit raised: perks give {:.0f}, uPlayerSummonLimit {} -> {:.0f}.",
-						perk, configured, raised);
+				if (!s_loggedRaise.exchange(true, std::memory_order_relaxed) || castIsFreeSlot) {
+					logger::info("[SummonLimit] player summon limit raised: perks give {:.0f}, uPlayerSummonLimit {}, freeSlots +{} -> {:.0f}.",
+						perk, configured, extra, raised);
 				}
 			}
 		}
@@ -82,5 +92,10 @@ namespace scf::engine::summonlimit
 			logger::info("[SummonLimit] uPlayerSummonLimit = {} ({}).", a_playerLimit,
 				a_playerLimit == 0 ? "vanilla perks decide" : "player limit raised to at least this");
 		}
+	}
+
+	void PublishFreeSlots(std::uint32_t a_freeSlotCount) noexcept
+	{
+		s_freeSlotCount.store(a_freeSlotCount, std::memory_order_relaxed);
 	}
 }

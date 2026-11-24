@@ -17,6 +17,12 @@ namespace scf::core
 		return a_pinnedHandle;
 	}
 
+	std::uint32_t ChooseRadiusSelectorAnswer(std::uint32_t engineAnswer, std::uint32_t pin,
+		bool alive, PinMembership membership) noexcept
+	{
+		return engineAnswer && alive && membership == PinMembership::Held ? pin : 0;
+	}
+
 	const char* ToString(PinMembership a_membership) noexcept
 	{
 		switch (a_membership) {

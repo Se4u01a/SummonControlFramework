@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Core/FrameworkContext.h"
+#include "Core/KeywordApi.h"
+#include "Engine/KeywordApi.h"
 #include "FriendlyFire/RelationshipClassifier.h"
 
 #include <RE/A/Actor.h>
@@ -59,31 +61,36 @@ namespace scf::friendly_fire::query
 	// True when the friendly-fire matrix considers this actor a protected summon: either
 	// registered in SCF's SummonRegistry, or - for a summon created a moment ago and not
 	// registered yet - commanded by the player (or by a player teammate when allies are
-	// protected). Mirrors HitHook's dynamic fallback so the reaction seats cannot drift.
+	// protected), adjusted by Keyword API v2 overrides (SCF_FriendlyFireProtected /
+	// SCF_AllowFriendlyFire).
 	[[nodiscard]] inline bool IsProtectedActor(const RE::Actor* a_target, const FriendlyFireSettings& a_settings)
 	{
 		if (!a_target || !a_settings.enabled) {
 			return false;
 		}
 
+		const auto targetId = a_target->GetFormID();
 		const auto playerId = PlayerId();
-		if (RelationshipClassifier::IsProtectedTarget(
-				a_target->GetFormID(),
-				core::FrameworkContext::GetSingleton().GetRegistry(),
-				a_settings,
-				playerId,
-				IsAllyActor)) {
-			return true;
+		bool isProtected = RelationshipClassifier::IsProtectedTarget(
+			targetId,
+			core::FrameworkContext::GetSingleton().GetRegistry(),
+			a_settings,
+			playerId,
+			IsAllyActor);
+
+		if (!isProtected) {
+			if (auto commanding = a_target->GetCommandingActor()) {
+				const auto commanderId = commanding->GetFormID();
+				if (commanderId == playerId) {
+					isProtected = a_settings.protectPlayerOwnedSummons;
+				} else if (a_settings.protectAllyOwnedSummons && IsAllyActor(commanderId)) {
+					isProtected = true;
+				}
+			}
 		}
 
-		auto commanding = a_target->GetCommandingActor();
-		if (!commanding) {
-			return false;
-		}
-		const auto commanderId = commanding->GetFormID();
-		if (commanderId == playerId) {
-			return a_settings.protectPlayerOwnedSummons;
-		}
-		return a_settings.protectAllyOwnedSummons && IsAllyActor(commanderId);
+		return core::ResolveFriendlyFireProtection(
+			isProtected,
+			engine::keywords::FriendlyFireFlagsOf(targetId));
 	}
 }

@@ -3,9 +3,31 @@
 #include "Core/Types.h"
 
 #include <cstddef>
+#include <cstdint>
 
 namespace scf::core
 {
+	// Tactical formation sector around the owner, optionally forced via Keyword API v2
+	// (SCF_FormationFront / SCF_FormationFlank / SCF_FormationBack and role aliases).
+	enum class FormationSector : std::uint8_t
+	{
+		Default = 0, // Historical rear-arc / concentric-rings layout
+		Front   = 1, // Vanguard arc ahead of the owner (-45..+45 deg)
+		Flank   = 2, // Left/right flanking positions (+/-80..+/-110 deg)
+		Back    = 3  // Rear-guard arc behind the owner (140..220 deg, slightly wider radius)
+	};
+
+	constexpr const char* ToString(FormationSector a_sector) noexcept
+	{
+		switch (a_sector) {
+		case FormationSector::Default: return "Default";
+		case FormationSector::Front:   return "Front";
+		case FormationSector::Flank:   return "Flank";
+		case FormationSector::Back:    return "Back";
+		default:                       return "Unknown";
+		}
+	}
+
 	// Formation slot geometry shared by the tactical squad coordinator (AI) and the
 	// engine-facing movement driver.
 	//
@@ -68,6 +90,15 @@ namespace scf::core
 	// Slot position relative to the owner, in owner body space.
 	Vec3 FormationSlotOffsetLocal(std::size_t a_slotIndex, std::size_t a_squadSize, float a_radius, const FormationLayout& a_layout) noexcept;
 	Vec3 FormationSlotOffsetLocal(std::size_t a_slotIndex, std::size_t a_squadSize, float a_radius) noexcept;
+
+	// Sector-aware slot position in owner body space. For FormationSector::Default
+	// delegates directly to FormationSlotOffsetLocal.
+	Vec3 FormationSlotOffsetLocalForSector(
+		FormationSector a_sector,
+		std::size_t a_slotIndex,
+		std::size_t a_sectorSize,
+		float a_radius,
+		const FormationLayout& a_layout = {}) noexcept;
 
 	// Distance from the owner to the slot (equals the slot offset length).
 	float FormationSlotRadius(std::size_t a_slotIndex, std::size_t a_squadSize, float a_radius, const FormationLayout& a_layout) noexcept;

@@ -38,7 +38,7 @@ namespace scf::core
 	{
 		SummonCreature, // Standard vanilla summon (Atronach, Familiar, Dremora)
 		Reanimate,      // Dead Thrall / Zombie (post-MVP)
-		Scripted        // Custom mod summon via Papyrus
+		Scripted        // Custom mod summon via Papyrus or SCF_AutoRegister
 	};
 
 	constexpr const char* ToString(SummonType a_type) noexcept
@@ -85,11 +85,14 @@ namespace scf::core
 		bool isDead{ false };
 		bool isSuspended{ false };
 
-		// Registered through the Papyrus API (SCF.RegisterSummon): the script, not the
-		// engine's commanded-actor roster, owns the record's lifetime. The tactical sync
-		// therefore never drops it for "not in the roster"; it goes away on
-		// UnregisterSummon, on the actor's death, or when the form itself is gone.
+		// Registered through the Papyrus API (SCF.RegisterSummon) or SCF_AutoRegister:
+		// the script/keyword, not the engine's commanded-actor roster, owns the record's
+		// lifetime.
 		bool explicitRegistration{ false };
+
+		// Tagged with SCF_FreeSlot / SCF_IgnoreLimit: backed by the engine roster for
+		// lifetime, but does not consume a conjuration slot and is never displaced.
+		bool freeSlot{ false };
 
 		SummonModel model{};
 	};
@@ -117,13 +120,8 @@ namespace scf::core
 		[[nodiscard]] std::size_t GetOwnerMaxSummons(EntityID a_ownerId) const noexcept;
 
 		// a_explicitRegistration marks a record whose lifetime SCF owns instead of the
-		// engine roster (Papyrus registration). A roster refresh never clears the flag: the
-		// sync re-registers every tracked summon on every tick and would otherwise wipe it.
-		//
-		// The owner's conjuration limit applies to roster-backed summons only: a
-		// roster-independent record (see IsRosterIndependent) never displaces one and is
-		// never displaced itself, so registering a scripted summon cannot cost the player a
-		// conjuration slot and a full roster cannot silently drop it.
+		// engine roster (Papyrus / SCF_AutoRegister). a_freeSlot marks a summon tagged
+		// with SCF_FreeSlot / SCF_IgnoreLimit that occupies no conjuration slot.
 		bool RegisterSummon(
 			EntityID a_ownerId,
 			EntityID a_summonId,
@@ -131,19 +129,20 @@ namespace scf::core
 			float a_duration,
 			float a_timestamp,
 			EntityID* a_outDisplaced = nullptr,
-			bool a_explicitRegistration = false);
+			bool a_explicitRegistration = false,
+			bool a_freeSlot = false);
+
+		void SetFreeSlot(EntityID a_summonId, bool a_freeSlot) noexcept;
 
 		bool UnregisterSummon(EntityID a_summonId, const char* a_reason);
 
 		// True when the engine's commanded-actor roster is not authoritative for this
-		// record's lifetime: an explicitly registered summon (released by UnregisterSummon,
-		// death or a vanished form) or a reanimated corpse (released when the reanimate
-		// effect ends and the engine stops reporting the owner as its commanding actor).
-		//
-		// Such a record also does not occupy a conjuration slot: it never displaces a
-		// roster-backed summon to make room, and it is never displaced itself - nothing but
-		// its own signal would release it, so a displacement would leak a dead record.
+		// record's lifetime (explicit registration or reanimate).
 		[[nodiscard]] bool IsRosterIndependent(EntityID a_summonId) const noexcept;
+
+		// True when this record counts against the owner's conjuration slot cap.
+		// False for roster-independent records and SCF_FreeSlot summons.
+		[[nodiscard]] bool OccupiesConjurationSlot(EntityID a_summonId) const noexcept;
 
 		// The records the tactical sync releases: active summons of a_ownerId that the
 		// engine roster no longer lists and whose lifetime the roster owns. Explicitly

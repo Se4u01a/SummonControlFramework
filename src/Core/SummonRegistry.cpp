@@ -37,9 +37,8 @@ namespace scf::core
 			if (record.ownerId == a_ownerId &&
 			    !record.isDead &&
 			    record.lifecycle == SummonLifecycleState::Active &&
-			    // Only a record the engine roster backs can be displaced: an explicit
-			    // registration or a thrall would be dropped without a release signal.
-			    !IsRosterIndependent(id)) {
+			    // Only a record occupying a conjuration slot can be displaced.
+			    OccupiesConjurationSlot(id)) {
 				if (record.registrationTimestamp < oldestTime) {
 					oldestTime = record.registrationTimestamp;
 					oldestId = id;
@@ -57,7 +56,8 @@ namespace scf::core
 		float a_duration,
 		float a_timestamp,
 		EntityID* a_outDisplaced,
-		bool a_explicitRegistration)
+		bool a_explicitRegistration,
+		bool a_freeSlot)
 	{
 		if (a_summonId == InvalidEntityID || a_ownerId == InvalidEntityID) {
 			return false;
@@ -80,6 +80,9 @@ namespace scf::core
 			// Only ever turned on here: the tactical tick refreshes every tracked summon
 			// with the default flag and must not revoke an explicit registration.
 			it->second.explicitRegistration = it->second.explicitRegistration || a_explicitRegistration;
+			if (a_freeSlot) {
+				it->second.freeSlot = true;
+			}
 
 			// No log line here: this path runs for every tracked summon on every
 			// tactical tick (15 Hz), and the refresh is not an event. Duration and
@@ -88,10 +91,9 @@ namespace scf::core
 		}
 
 		// 2. Capacity check for the owner's conjuration limit: displace the oldest
-		//    roster-backed summon when the slots are full. A roster-independent record
-		//    (explicit registration, reanimate) lives outside the limit - it takes no slot
-		//    and displaces nobody - so this whole check is skipped for it.
-		const bool occupiesSlot = !(a_explicitRegistration || a_type == SummonType::Reanimate);
+		//    slot-occupying summon when the slots are full. Roster-independent records
+		//    and SCF_FreeSlot summons take no slot and displace nobody.
+		const bool occupiesSlot = !(a_explicitRegistration || a_freeSlot || a_type == SummonType::Reanimate);
 		const std::size_t limit = GetOwnerMaxSummons(a_ownerId);
 
 		if (occupiesSlot) {
@@ -100,7 +102,7 @@ namespace scf::core
 				if (record.ownerId == a_ownerId &&
 				    !record.isDead &&
 				    record.lifecycle == SummonLifecycleState::Active &&
-				    !IsRosterIndependent(id)) {
+				    OccupiesConjurationSlot(id)) {
 					++slotsInUse;
 				}
 			}
@@ -140,23 +142,31 @@ namespace scf::core
 		record.isDead = false;
 		record.isSuspended = false;
 		record.explicitRegistration = a_explicitRegistration;
+		record.freeSlot = a_freeSlot;
 		record.model.id = a_summonId;
 		record.model.ownerId = a_ownerId;
 
 		_records[a_summonId] = record;
 
 		if (_logCallback) {
-			// The limit column is the owner's conjuration slots; a roster-independent
+			// The limit column is the owner's conjuration slots; a non-slot
 			// record is registered next to them, not inside them.
 			std::snprintf(logBuf, sizeof(logBuf),
 				"[Registry] Registered summon %u for owner %u (%s, duration: %.1fs, active: %zu/%zu%s)",
 				a_summonId, a_ownerId, ToString(a_type), a_duration,
 				GetActiveSummonsForOwner(a_ownerId).size(), limit,
-				IsRosterIndependent(a_summonId) ? ", outside the summon limit" : "");
+				!OccupiesConjurationSlot(a_summonId) ? ", outside the summon limit" : "");
 			_logCallback(logBuf);
 		}
 
 		return true;
+	}
+
+	void SummonRegistry::SetFreeSlot(EntityID a_summonId, bool a_freeSlot) noexcept
+	{
+		if (auto it = _records.find(a_summonId); it != _records.end()) {
+			it->second.freeSlot = a_freeSlot;
+		}
 	}
 
 	bool SummonRegistry::UnregisterSummon(EntityID a_summonId, const char* a_reason)
@@ -185,6 +195,15 @@ namespace scf::core
 			return false;
 		}
 		return it->second.explicitRegistration || it->second.type == SummonType::Reanimate;
+	}
+
+	bool SummonRegistry::OccupiesConjurationSlot(EntityID a_summonId) const noexcept
+	{
+		const auto it = _records.find(a_summonId);
+		if (it == _records.end()) {
+			return false;
+		}
+		return !it->second.explicitRegistration && !it->second.freeSlot && it->second.type != SummonType::Reanimate;
 	}
 
 	std::vector<EntityID> SummonRegistry::GetOrphanedSummons(

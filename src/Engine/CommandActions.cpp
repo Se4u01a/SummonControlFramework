@@ -1,8 +1,11 @@
 #include "Engine/CommandActions.h"
+#include "Core/KeywordApi.h"
 #include "Core/SummonModel.h"
+#include "Engine/KeywordApi.h"
 #include "PCH.h"
 
 #include <RE/A/Actor.h>
+#include <RE/E/EffectSetting.h>
 #include <RE/E/ExtraLeveledCreature.h>
 #include <RE/M/MagicCaster.h>
 #include <RE/S/SendHUDMessage.h>
@@ -12,6 +15,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -78,8 +82,10 @@ namespace scf::engine::actions
 		}
 
 		// Summon base candidates, most specific first: the leveled original / template
-		// base, the actor's own base, then its TPLT chain.
-		const Resolved* FindForSummon(RE::Actor* a_summon)
+		// base, the actor's own base, then its TPLT chain. Keyword API v2 overrides
+		// (SCF_CmdDetonate / SCF_CmdRush) take precedence over the catalog entry while
+		// reusing any configured spell / cooldown when applicable.
+		std::optional<Resolved> FindForSummon(RE::Actor* a_summon, const RE::EffectSetting* a_sourceEffect)
 		{
 			std::vector<RE::TESForm*> candidates;
 			if (auto* leveled = a_summon->extraList.GetByType<RE::ExtraLeveledCreature>()) {
@@ -92,12 +98,32 @@ namespace scf::engine::actions
 				auto* next = npc->baseTemplateForm;
 				npc = next ? next->As<RE::TESNPC>() : nullptr;
 			}
+
+			const Resolved* catalogEntry = nullptr;
 			for (auto* form : candidates) {
 				if (const auto* found = FindForBase(form)) {
-					return found;
+					catalogEntry = found;
+					break;
 				}
 			}
-			return s_fallback ? &*s_fallback : nullptr;
+			if (!catalogEntry && s_fallback) {
+				catalogEntry = &*s_fallback;
+			}
+
+			if (keywords::SummonActive()) {
+				const auto profile = keywords::ProfileOf(a_summon, a_sourceEffect);
+				if (const auto kwOverride = core::ResolveCommandActionOverride(profile)) {
+					Resolved resolved{};
+					resolved.action = *kwOverride;
+					resolved.cooldownSeconds = catalogEntry ? catalogEntry->cooldownSeconds : 8.0f;
+					if (*kwOverride == core::CommandAction::Detonate && catalogEntry) {
+						resolved.spell = catalogEntry->spell;
+					}
+					return resolved;
+				}
+			}
+
+			return catalogEntry ? std::optional<Resolved>{ *catalogEntry } : std::nullopt;
 		}
 
 		void NudgeSpeed(RE::Actor* a_actor)
@@ -169,13 +195,18 @@ namespace scf::engine::actions
 			s_byBase.size(), s_fallback ? core::ToString(s_fallback->action) : "none", s_rushBonus, s_rushSeconds);
 	}
 
-	Outcome Execute(RE::Actor* a_summon, const core::SummonModel* a_model, RE::Actor* a_target, float a_now)
+	Outcome Execute(
+		RE::Actor* a_summon,
+		const core::SummonModel* a_model,
+		RE::Actor* a_target,
+		float a_now,
+		const RE::EffectSetting* a_sourceEffect)
 	{
 		if (!a_summon || a_summon->IsDead()) {
 			return Outcome::Skipped;
 		}
 		const auto id = a_summon->GetFormID();
-		const auto* entry = FindForSummon(a_summon);
+		const auto entry = FindForSummon(a_summon, a_sourceEffect);
 		if (!entry || entry->action == core::CommandAction::None) {
 			logger::info("[Command] Summon 0x{:08X} ({}) has no command action.", id, a_summon->GetName());
 			++s_batch.skipped;
@@ -220,6 +251,17 @@ namespace scf::engine::actions
 		case core::CommandAction::Detonate:
 			{
 				const bool detonate = entry->action == core::CommandAction::Detonate;
+				if (!entry->spell) {
+					if (detonate) {
+						s_cooldowns.Forget(id);
+						a_summon->KillImmediate();
+						logger::info("[Command] Summon 0x{:08X} DETONATES immediately (SCF_CmdDetonate without catalog spell).", id);
+						++s_batch.detonations;
+						return Outcome::Detonated;
+					}
+					++s_batch.skipped;
+					return Outcome::Skipped;
+				}
 				RE::Actor* castTarget = targetOk ? a_target : nullptr;
 				if (!castTarget && detonate && entry->spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
 					castTarget = a_summon;
@@ -274,9 +316,9 @@ namespace scf::engine::actions
 		s_batch = {};
 	}
 
-	bool HasCommand(RE::Actor* a_summon)
+	bool HasCommand(RE::Actor* a_summon, const RE::EffectSetting* a_sourceEffect)
 	{
-		const auto* entry = a_summon ? FindForSummon(a_summon) : nullptr;
+		const auto entry = a_summon ? FindForSummon(a_summon, a_sourceEffect) : std::nullopt;
 		return entry && entry->action != core::CommandAction::None;
 	}
 

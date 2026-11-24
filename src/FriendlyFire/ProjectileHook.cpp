@@ -1,5 +1,7 @@
 #include "FriendlyFire/ProjectileHook.h"
 #include "Core/FrameworkContext.h"
+#include "Core/KeywordApi.h"
+#include "Engine/KeywordApi.h"
 #include "FriendlyFire/RelationshipClassifier.h"
 #include "PCH.h"
 
@@ -95,6 +97,10 @@ namespace scf::friendly_fire
 					}
 				}
 			}
+
+			isProtected = core::ResolveFriendlyFireProtection(
+				isProtected,
+				engine::keywords::FriendlyFireFlagsOf(targetId));
 
 			if (!isProtected) {
 				return false;

@@ -32,7 +32,7 @@ MGEF_ATTACK_TARGET = 0x01000803
 SPEL_HOLD_POSITION = 0x01000811
 SPEL_FOLLOW        = 0x01000812
 SPEL_ATTACK_TARGET = 0x01000813
-NEXT_OBJECT_ID     = 0x000814
+NEXT_OBJECT_ID     = 0x000817
 
 # MGEF DATA offsets (152 bytes, SSE)
 OFF_FLAGS      = 0x00
@@ -314,9 +314,13 @@ def main():
         ),
     ]
 
-    count = len(projectiles) + len(effects) + len(spells) + 1
+    radius_keywords = [
+        record(b"KYWD", 0x01000814 + i, sub(b"EDID", zstr_ascii(f"aaMZkw_SummonCombatArea{radius}")))
+        for i, radius in enumerate((200, 500, 1000))
+    ]
+    count = len(projectiles) + len(effects) + len(spells) + len(radius_keywords) + 1
     header = b"".join([
-        sub(b"HEDR", struct.pack("<fII", 1.70, count + 4, NEXT_OBJECT_ID)),
+        sub(b"HEDR", struct.pack("<fII", 1.70, count + 5, NEXT_OBJECT_ID)),
         sub(b"CNAM", zstr_ascii("Sequoia")),
         sub(b"SNAM", zstr_ascii("Summon Control Framework quick-cast command spells (Hold Position, Follow, Attack Target).")),
         sub(b"MAST", zstr_ascii("Skyrim.esm")),
@@ -324,6 +328,7 @@ def main():
     ])
 
     plugin = record(b"TES4", 0, header, flags=0x200)  # ESL flag
+    plugin += group(b"KYWD", radius_keywords)
     plugin += group(b"PROJ", projectiles) + group(b"MGEF", effects) + group(b"SPEL", spells) + group(b"CSTY", [style])
 
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)

@@ -12,10 +12,15 @@ namespace scf::engine::summonlimit
 	// a commanded actor (id 38993, +683D70). Arguments: ecx = 68, rdx = the caster (perk
 	// owner), r8 = the spell, r9 = float* holding iMaxSummonedCreatures (id 506252) that the
 	// perks modify. The thunk calls the original and, when the caster is the player, raises
-	// the float with core::ApplyPlayerSummonLimit. The engine then rounds it and dispels the
-	// oldest summons beyond it exactly as in vanilla. NPC casters are untouched.
+	// the float with core::ApplyPlayerSummonLimit plus active/cast SCF_FreeSlot bonuses.
+	// The engine then rounds it and dispels the oldest summons beyond it exactly as in
+	// vanilla. NPC casters are untouched.
 	bool Install();
 
 	// Main thread: [General] uPlayerSummonLimit (0 = vanilla perks).
 	void Publish(std::uint32_t a_playerLimit) noexcept;
+
+	// Main thread: number of currently active player summons tagged with SCF_FreeSlot /
+	// SCF_IgnoreLimit so they never consume normal conjuration slots.
+	void PublishFreeSlots(std::uint32_t a_freeSlotCount) noexcept;
 }

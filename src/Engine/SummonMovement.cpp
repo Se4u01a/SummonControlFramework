@@ -884,7 +884,10 @@ namespace scf::engine::movement
 		std::size_t a_slotIndex,
 		std::size_t a_squadSize,
 		float a_now,
-		bool a_combatPermitted)
+		bool a_combatPermitted,
+		bool a_allowCatchUpWarp,
+		core::FormationSector a_sector,
+		bool a_stationary)
 	{
 		if (!a_owner || !a_summon) {
 			return;
@@ -1007,7 +1010,9 @@ namespace scf::engine::movement
 			summonPosition,
 			a_owner->GetAngleZ(),
 			a_slotIndex,
-			a_squadSize);
+			a_squadSize,
+			a_sector,
+			a_stationary);
 
 		RE::Actor* approachAnchor = nullptr;
 
@@ -1043,9 +1048,9 @@ namespace scf::engine::movement
 			// the player, which dragged the summon around instead of at the enemy.
 			const bool isWolf = wolf::UsesWolfSkeleton(a_summon);
 			const auto focusId = attackTarget->GetFormID();
-			const bool charge = isWolf
+			const bool charge = !a_stationary && (isWolf
 				? core::ShouldChargeWolfFocus(attackDistance, state.wolfMeleeFocus != focusId)
-				: !(fightingFocus && closeEnough) && attackDistance > kAttackApproachRange;
+				: !(fightingFocus && closeEnough) && attackDistance > kAttackApproachRange);
 			state.wolfMeleeFocus = isWolf && !charge ? focusId : 0;
 			if (charge) {
 				intent.mode = core::MovementMode::AttackApproach;
@@ -1110,11 +1115,13 @@ namespace scf::engine::movement
 			}
 			context.ownerMounted = a_owner->IsOnMount();
 
-			const core::CatchUpDecision decision = core::DecideCatchUp(context, observation, state.catchUp, catchUpTuning);
-			if (decision.warp) {
-				TryCatchUpWarp(a_summon, a_owner, id, a_model, decision, observation, catchUpTuning, a_settings, a_slotIndex, a_squadSize, state, a_now);
-			} else {
-				NoteCatchUpRefusal(id, a_model, decision, observation, state);
+			if (a_allowCatchUpWarp) {
+				const core::CatchUpDecision decision = core::DecideCatchUp(context, observation, state.catchUp, catchUpTuning);
+				if (decision.warp) {
+					TryCatchUpWarp(a_summon, a_owner, id, a_model, decision, observation, catchUpTuning, a_settings, a_slotIndex, a_squadSize, state, a_now);
+				} else {
+					NoteCatchUpRefusal(id, a_model, decision, observation, state);
+				}
 			}
 		} else if (intent.mode == core::MovementMode::AttackApproach && approachAnchor) {
 			const core::FollowTuning paceTuning = core::FollowTuningFrom(a_settings);
@@ -1159,7 +1166,7 @@ namespace scf::engine::movement
 
 		// 4. The vanilla FollowTo package pulls a summon back to within Min Radius of the
 		// player; orders that keep it away from the player release that leash.
-		leash::UpdateForSummon(a_summon, core::ReleasesFollowLeash(a_model));
+		leash::UpdateForSummon(a_summon, core::ReleasesFollowLeash(a_model, a_stationary));
 	}
 
 	void NotifyOrderIssued(core::EntityID a_id, core::SummonOrder a_order, float a_now)

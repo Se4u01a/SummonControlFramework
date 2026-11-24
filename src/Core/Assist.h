@@ -5,7 +5,7 @@
 
 namespace scf::core
 {
-	// PoE2-style minion targeting (PoE2_Minion_Parity_Plan.md, stage M2). Pure rules; the
+	// PoE2-style minion targeting (stage M2; see docs/ARCHITECTURE.md). Pure rules; the
 	// engine side is the hit-event sink in src/Engine/EventAdapter.cpp (assist) and the
 	// StartCombat seat in src/Engine/CombatGate.cpp (aggression radius).
 

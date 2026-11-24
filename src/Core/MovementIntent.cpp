@@ -165,8 +165,17 @@ namespace scf::core
 		const Vec3& /*a_summonPosition*/,
 		float a_ownerYawRadians,
 		std::size_t a_slotIndex,
-		std::size_t a_squadSize) noexcept
+		std::size_t a_squadSize,
+		FormationSector a_sector,
+		bool a_stationary) noexcept
 	{
+		if (a_stationary) {
+			MovementIntent intent{};
+			intent.mode = MovementMode::HoldPosition;
+			intent.lockTranslation = true;
+			return intent;
+		}
+
 		const auto& movement = a_settings.movement;
 
 		// 1. Attack (explicit FocusTarget): the player asked for a kill. It outranks
@@ -239,7 +248,8 @@ namespace scf::core
 		layout.innerRingScale = a_settings.squad.formationInnerRingScale;
 		layout.minSlotDistance = a_settings.squad.formationMinSlotDistance;
 		layout.maxExpansion = a_settings.squad.formationMaxExpansion;
-		intent.localOffset = FormationSlotOffsetLocal(a_slotIndex, a_squadSize, movement.followMinDistance, layout);
+		intent.localOffset = FormationSlotOffsetLocalForSector(
+			a_sector, a_slotIndex, a_squadSize, movement.followMinDistance, layout);
 		intent.followRadius = std::max(kMinFollowRadius, movement.followMinDistance * 0.5f);
 		intent.catchUpRadius = SafeKeepOffsetCatchUpRadius(
 			intent.followRadius,
@@ -248,8 +258,11 @@ namespace scf::core
 		return intent;
 	}
 
-	bool ReleasesFollowLeash(const SummonModel& a_model) noexcept
+	bool ReleasesFollowLeash(const SummonModel& a_model, bool a_stationary) noexcept
 	{
+		if (a_stationary) {
+			return true;
+		}
 		switch (a_model.order) {
 		case SummonOrder::MoveTo:
 			return a_model.hasMoveTarget;

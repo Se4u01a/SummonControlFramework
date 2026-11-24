@@ -43,5 +43,9 @@ namespace scf::core
 		bool a_pinnedAlive,
 		PinMembership a_membership) noexcept;
 
+	// The automatic zone allows a single registered target or no target.
+	std::uint32_t ChooseRadiusSelectorAnswer(std::uint32_t a_engineAnswer,
+		std::uint32_t a_pinnedHandle, bool a_alive, PinMembership a_membership) noexcept;
+
 	const char* ToString(PinMembership a_membership) noexcept;
 }

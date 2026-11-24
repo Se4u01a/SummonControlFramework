@@ -1,9 +1,10 @@
-"""Build SCF_KeywordApiTest.esp - a test plugin for the SCF keyword API (README "Keyword API").
+"""Build SCF_KeywordApiTest.esp - a test plugin for the SCF Keyword API v2 (docs/KEYWORDS.md).
 
     python tools/make_keyword_test_esp.py <Skyrim.esm> <output.esp>
 
 The plugin (Skyrim SE, form version 44, ESL-flagged .esp, master Skyrim.esm) holds:
-  * KYWD SCF_PassThroughFriends / SCF_PassThroughAll / SCF_Untargetable;
+  * KYWD records for Keyword API v1 (PassThroughFriends, PassThroughAll, Untargetable)
+    followed by Keyword API v2 flags and representative parametric keywords;
   * per keyword, a non-hostile Script-archetype effect carrying it, as
       - a fire-and-forget "target actor" spell, 120 s ("SCF Test: <name>"), cast at a summon/NPC;
       - a constant self ability ("SCF Test Ability: <name>"), for `<ref>.addspell` / `removespell`.
@@ -30,10 +31,53 @@ ARCHETYPE_SCRIPT = 1
 FLAG_NO_HIT_EVENT, FLAG_NO_DURATION, FLAG_NO_MAGNITUDE, FLAG_NO_AREA = 0x20, 0x200, 0x400, 0x800
 FLAG_FX_PERSIST, FLAG_PAINLESS = 0x1000, 0x04000000
 
+# Keep the original 3 v1 entries first so existing test FormIDs remain stable.
 KEYWORDS = [
     ("SCF_PassThroughFriends", "Pass Through Friends"),
     ("SCF_PassThroughAll", "Pass Through All"),
     ("SCF_Untargetable", "Untargetable"),
+    # Keyword API v2: Threat & Friendly Fire
+    ("SCF_HighThreat", "High Threat"),
+    ("SCF_LowThreat", "Low Threat"),
+    ("SCF_FriendlyFireProtected", "Friendly Fire Protected"),
+    ("SCF_AllowFriendlyFire", "Allow Friendly Fire"),
+    # Keyword API v2: Lifecycle & Persistence
+    ("SCF_AutoRegister", "Auto Register"),
+    ("SCF_Unmanaged", "Unmanaged"),
+    ("SCF_FreeSlot", "Free Slot"),
+    ("SCF_Persistent", "Persistent"),
+    ("SCF_NoPersistence", "No Persistence"),
+    # Keyword API v2: Combat, Orders, Stealth & Specialty
+    ("SCF_NonCombat", "Non Combat"),
+    ("SCF_DefaultPassive", "Default Passive"),
+    ("SCF_DefaultDefensive", "Default Defensive"),
+    ("SCF_DefaultAggressive", "Default Aggressive"),
+    ("SCF_IgnoreOrders", "Ignore Orders"),
+    ("SCF_IgnoreHold", "Ignore Hold"),
+    ("SCF_IgnoreFollow", "Ignore Follow"),
+    ("SCF_IgnoreAttackOrder", "Ignore Attack Order"),
+    ("SCF_NoAssist", "No Assist"),
+    ("SCF_NoCircling", "No Circling"),
+    ("SCF_Bodyguard", "Bodyguard"),
+    ("SCF_HuntCasters", "Hunt Casters"),
+    ("SCF_HuntRanged", "Hunt Ranged"),
+    ("SCF_FinishLowHP", "Finish Low HP"),
+    ("SCF_HoldFireInStealth", "Hold Fire In Stealth"),
+    ("SCF_IgnoreCombatRadius", "Ignore Combat Radius"),
+    # Keyword API v2: Movement, Formation & Command Actions
+    ("SCF_Stationary", "Stationary"),
+    ("SCF_NoCatchUpWarp", "No Catch Up Warp"),
+    ("SCF_NoCombatLeash", "No Combat Leash"),
+    ("SCF_FormationFront", "Formation Front"),
+    ("SCF_FormationFlank", "Formation Flank"),
+    ("SCF_FormationBack", "Formation Back"),
+    ("SCF_CmdRush", "Command Rush"),
+    ("SCF_CmdDetonate", "Command Detonate"),
+    # Representative parametric numeric keywords
+    ("SCF_CombatRadius_500", "Combat Radius 500"),
+    ("SCF_Leash_800", "Leash 800"),
+    ("SCF_FollowDist_300", "Follow Dist 300"),
+    ("SCF_SpeedMult_140", "Speed Mult 140"),
 ]
 
 
@@ -154,7 +198,7 @@ def main():
     header = b"".join([
         sub(b"HEDR", struct.pack("<fII", 1.71, count, next_id & 0xFFFFFF)),
         sub(b"CNAM", zstr("Summon Control Framework")),
-        sub(b"SNAM", zstr("Test plugin for the SCF keyword API (SCF_PassThroughFriends / SCF_PassThroughAll / SCF_Untargetable).")),
+        sub(b"SNAM", zstr("Test plugin for the SCF Keyword API v2.")),
         sub(b"MAST", zstr("Skyrim.esm")),
         sub(b"DATA", b"\0" * 8),
     ])

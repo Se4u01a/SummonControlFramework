@@ -7,12 +7,16 @@
 #include "Engine/WolfManeuver.h"
 
 #include <RE/A/Actor.h>
+#include <RE/A/ActorValueOwner.h>
 #include <RE/B/BSAtomic.h>
 #include <RE/C/CombatController.h>
 #include <RE/C/CombatGroup.h>
+#include <RE/T/TESObjectWEAP.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <mutex>
@@ -68,6 +72,7 @@ namespace scf::engine::combat
 		{
 			bool           allowCombat{ true };
 			bool           restrictToTarget{ false };
+			bool           radiusManaged{ false };
 			core::EntityID target{ core::InvalidEntityID };
 			std::chrono::steady_clock::time_point lastDenyLog{};
 
@@ -79,16 +84,26 @@ namespace scf::engine::combat
 			bool            pinAppliedLogged{ false };
 			bool            canAttackOverrideLogged{ false };
 			std::chrono::steady_clock::time_point lastPinDeclineLog{};
+
+			// Keyword API v2 directives.
+			bool               alwaysNoCircling{ false };
+			bool               ignoreAggressionRadius{ false };
+			core::KeywordFlags specialtyFlags{ core::kKwNone };
+			core::EntityID     ownerId{ core::InvalidEntityID };
 		};
 
 		// Shared with the StartCombat / CanAttackActor call sites and the selector seat (any thread).
 		std::mutex                                 s_mutex;
 		std::unordered_map<RE::FormID, Permission> s_permissions;
 
-		// Keyword API SCF_Untargetable: actors nobody may pick as a combat target,
-		// guarded by s_mutex; the count lets the seats skip the lock when empty.
+		// Keyword API threat sets (SCF_Untargetable, SCF_HighThreat/TauntPriority, SCF_LowThreat),
+		// guarded by s_mutex; atomic counts let the selector seat skip the lock when empty.
 		std::unordered_set<RE::FormID> s_untargetable;
+		std::unordered_set<RE::FormID> s_highThreat;
+		std::unordered_set<RE::FormID> s_lowThreat;
 		std::atomic<std::uint32_t> s_untargetableCount{ 0 };
+		std::atomic<std::uint32_t> s_threatCount{ 0 };
+		std::atomic<std::uint32_t> s_specialtyCount{ 0 };
 		std::chrono::steady_clock::time_point s_lastUntargetableDenyLog{};
 		std::atomic<std::uint64_t> s_untargetableReplaced{ 0 };
 		std::atomic<std::uint64_t> s_untargetableCleared{ 0 };
@@ -136,6 +151,47 @@ namespace scf::engine::combat
 		static_assert(offsetof(RE::CombatTarget, targetHandle) == 0x00);
 		static_assert(sizeof(RE::ActorHandle) == sizeof(std::uint32_t));
 
+		float HorizontalDist(const RE::NiPoint3& a_lhs, const RE::NiPoint3& a_rhs) noexcept
+		{
+			return std::hypot(a_lhs.x - a_rhs.x, a_lhs.y - a_rhs.y);
+		}
+
+		float HorizontalDist(const RE::NiPoint3& a_lhs, const core::Vec3& a_rhs) noexcept
+		{
+			return std::hypot(a_lhs.x - a_rhs.x, a_lhs.y - a_rhs.y);
+		}
+
+		bool HasRangedWeaponEquipped(const RE::Actor* a_actor)
+		{
+			if (!a_actor) {
+				return false;
+			}
+			for (const bool left : { false, true }) {
+				if (const auto* equipped = a_actor->GetEquippedObject(left)) {
+					if (const auto* weapon = equipped->As<RE::TESObjectWEAP>()) {
+						if (weapon->IsBow() || weapon->IsCrossbow() || weapon->IsStaff()) {
+							return true;
+						}
+					}
+				}
+			}
+			return false;
+		}
+
+		float ActorHealthFraction(RE::Actor* a_actor)
+		{
+			auto* avo = a_actor ? a_actor->AsActorValueOwner() : nullptr;
+			if (!avo) {
+				return 1.0f;
+			}
+			const float cur = avo->GetActorValue(RE::ActorValue::kHealth);
+			const float max = a_actor->GetActorValueMax(RE::ActorValue::kHealth);
+			if (!(max > 0.0f)) {
+				return 1.0f;
+			}
+			return std::clamp(cur / max, 0.0f, 1.0f);
+		}
+
 		core::PinMembership GroupMembership(RE::CombatGroup* a_group, const RE::ActorHandle& a_handle)
 		{
 			RE::BSReadLockGuard guard(a_group->lock);
@@ -155,7 +211,9 @@ namespace scf::engine::combat
 				if (!s_selectorSeatObserved.exchange(true, std::memory_order_relaxed)) {
 					logger::info("[TargetPin] selector seat OBSERVED running (first CombatTargetSelector::SelectTarget call).");
 				}
-				if (s_pinCount.load(std::memory_order_relaxed) == 0 || !a_selector || !a_out) {
+				if ((s_pinCount.load(std::memory_order_acquire) == 0 &&
+				     s_specialtyCount.load(std::memory_order_acquire) == 0) ||
+				    !a_selector || !a_out) {
 					return;
 				}
 				if (*reinterpret_cast<const std::uintptr_t*>(a_selector) != a_expectedVtable) {
@@ -175,13 +233,82 @@ namespace scf::engine::combat
 				const auto self = attacker->GetFormID();
 
 				RE::ActorHandle pinned{};
+				bool radiusManaged = false;
+				core::KeywordFlags specialtyFlags = core::kKwNone;
+				core::EntityID ownerId = core::InvalidEntityID;
+				core::Vec3 ownerPos{};
 				{
 					std::lock_guard lock(s_mutex);
 					const auto it = s_permissions.find(self);
-					if (it == s_permissions.end() || !it->second.allowCombat || !it->second.restrictToTarget) {
+					if (it == s_permissions.end()) {
 						return;
 					}
-					pinned = it->second.pinnedHandle;
+					radiusManaged = it->second.radiusManaged;
+					if (radiusManaged && (!it->second.allowCombat || !it->second.pinnedHandle ||
+					    s_untargetable.contains(it->second.target))) {
+						*a_out = 0;
+						return;
+					}
+					if (!it->second.allowCombat) {
+						return;
+					}
+					if (it->second.restrictToTarget) {
+						pinned = it->second.pinnedHandle;
+					} else if ((it->second.specialtyFlags & core::kKwTargetingSpecialtyMask) != 0) {
+						specialtyFlags = it->second.specialtyFlags;
+						ownerId = it->second.ownerId;
+						ownerPos = s_aggressionCentre;
+					} else {
+						return;
+					}
+				}
+				if (specialtyFlags != core::kKwNone) {
+					auto* group = controller->combatGroup;
+					if (!group || *a_out == 0) {
+						return;
+					}
+					const auto summonPos = attacker->GetPosition();
+					std::vector<core::SpecialtyCandidate> candidates;
+					std::vector<RE::FormID> ids;
+					{
+						RE::BSReadLockGuard guard(group->lock);
+						candidates.reserve(group->targets.size());
+						ids.reserve(group->targets.size());
+						for (const auto& entry : group->targets) {
+							const auto targetPtr = entry.targetHandle.get();
+							auto* target = targetPtr.get();
+							core::SpecialtyCandidate c{};
+							c.handle = entry.targetHandle.native_handle();
+							c.lost = entry.flags.any(RE::CombatTarget::Flags::kTargetLost) ||
+							         !target || target->IsDead() || target->IsDisabled() || !target->Is3DLoaded();
+							if (!c.lost) {
+								c.isCasting = target->IsCasting(nullptr);
+								c.hasRangedWeapon = HasRangedWeaponEquipped(target);
+								c.healthFraction = ActorHealthFraction(target);
+								const auto targetTarget = target->GetActorRuntimeData().currentCombatTarget.get();
+								c.attackingOwner = targetTarget && ownerId != core::InvalidEntityID &&
+								                   targetTarget->GetFormID() == ownerId;
+								const auto& tpos = target->GetPosition();
+								c.distanceToOwner = HorizontalDist(tpos, ownerPos);
+								c.distanceToSummon = HorizontalDist(tpos, summonPos);
+							}
+							candidates.push_back(c);
+							ids.push_back(target ? target->GetFormID() : 0);
+						}
+					}
+					if (s_untargetableCount.load(std::memory_order_acquire) != 0) {
+						std::lock_guard lock(s_mutex);
+						for (std::size_t i = 0; i < candidates.size(); ++i) {
+							if (ids[i] != 0 && s_untargetable.contains(ids[i])) {
+								candidates[i].lost = true;
+							}
+						}
+					}
+					const auto chosen = core::ChooseSummonTargetBySpecialty(*a_out, specialtyFlags, candidates);
+					if (chosen != 0 && chosen != *a_out) {
+						*a_out = chosen;
+					}
+					return;
 				}
 				if (!pinned) {
 					return;
@@ -194,18 +321,21 @@ namespace scf::engine::combat
 				auto* group = controller->combatGroup;
 				const auto membership = (alive && group) ? GroupMembership(group, pinned) : core::PinMembership::Absent;
 
-				const std::uint32_t answer = core::ChooseSelectorAnswer(engineAnswer, pinned.native_handle(), alive, membership);
-				if (answer != engineAnswer) {
-					*a_out = answer;
-				}
-
-				// Diagnostics (rate-limited): did the pin take, and if not, why.
+				const std::uint32_t answer = radiusManaged ?
+					core::ChooseRadiusSelectorAnswer(engineAnswer, pinned.native_handle(), alive, membership) :
+					core::ChooseSelectorAnswer(engineAnswer, pinned.native_handle(), alive, membership);
+				// Policy can change while GroupMembership reads the combat group.
+				// Revalidate the pin before writing a selector result.
 				std::lock_guard lock(s_mutex);
 				const auto it = s_permissions.find(self);
-				if (it == s_permissions.end()) {
+				if (it == s_permissions.end() || it->second.pinnedHandle != pinned ||
+				    it->second.radiusManaged != radiusManaged) {
 					return;
 				}
 				auto& permission = it->second;
+				if (answer != engineAnswer) {
+					*a_out = answer;
+				}
 				if (answer == pinned.native_handle() && engineAnswer != 0) {
 					if (!permission.pinAppliedLogged) {
 						permission.pinAppliedLogged = true;
@@ -231,12 +361,13 @@ namespace scf::engine::combat
 			}
 		}
 
-		// SCF_Untargetable in ANY actor's target selection (same seat, before the pin):
-		// an untargetable answer becomes another usable group target, or none.
+		// Keyword API threat rules in ANY actor's target selection (same seat, before the pin):
+		// SCF_Untargetable (avoid/clear), SCF_HighThreat/SCF_TauntPriority (draw aggro),
+		// and SCF_LowThreat (deprioritize when normal targets exist).
 		void AvoidUntargetable(void* a_selector, std::uint32_t* a_out, std::uintptr_t a_expectedVtable) noexcept
 		{
 			try {
-				if (s_untargetableCount.load(std::memory_order_relaxed) == 0 || !a_selector || !a_out || *a_out == 0) {
+				if (s_threatCount.load(std::memory_order_acquire) == 0 || !a_selector || !a_out || *a_out == 0) {
 					return;
 				}
 				if (*reinterpret_cast<const std::uintptr_t*>(a_selector) != a_expectedVtable) {
@@ -249,15 +380,22 @@ namespace scf::engine::combat
 					return;
 				}
 
+				const auto attackerPtr = controller->attackerHandle.get();
+				const RE::Actor* attacker = attackerPtr.get();
 				const std::uint32_t engineAnswer = *a_out;
-				std::vector<core::SelectorCandidate> candidates;
+				std::vector<core::ThreatCandidate> candidates;
 				std::vector<RE::FormID> ids;
 				{
 					RE::BSReadLockGuard guard(group->lock);
 					candidates.reserve(group->targets.size());
+					ids.reserve(group->targets.size());
 					for (const auto& entry : group->targets) {
 						const auto actor = entry.targetHandle.get();
-						candidates.push_back({ entry.targetHandle.native_handle(), false, entry.flags.any(RE::CombatTarget::Flags::kTargetLost) });
+						core::ThreatCandidate c{};
+						c.handle = entry.targetHandle.native_handle();
+						c.lost = entry.flags.any(RE::CombatTarget::Flags::kTargetLost) || (actor && actor->IsDead());
+						c.distance = (attacker && actor) ? HorizontalDist(attacker->GetPosition(), actor->GetPosition()) : 0.0f;
+						candidates.push_back(c);
 						ids.push_back(actor ? actor->GetFormID() : 0);
 					}
 				}
@@ -265,14 +403,20 @@ namespace scf::engine::combat
 				{
 					std::lock_guard lock(s_mutex);
 					for (std::size_t i = 0; i < candidates.size(); ++i) {
-						candidates[i].untargetable = ids[i] != 0 && s_untargetable.contains(ids[i]);
+						if (ids[i] != 0) {
+							candidates[i].untargetable = s_untargetable.contains(ids[i]);
+							candidates[i].highThreat = s_highThreat.contains(ids[i]);
+							candidates[i].lowThreat = s_lowThreat.contains(ids[i]);
+						}
 						answerUntargetable = answerUntargetable || (candidates[i].handle == engineAnswer && candidates[i].untargetable);
 					}
 				}
-				const auto answer = core::ChooseTargetAvoidingUntargetable(engineAnswer, answerUntargetable, candidates);
+				const auto answer = core::ChooseEnemyTargetByThreat(engineAnswer, candidates);
 				if (answer != engineAnswer) {
 					*a_out = answer;
-					(answer != 0 ? s_untargetableReplaced : s_untargetableCleared).fetch_add(1, std::memory_order_relaxed);
+					if (answerUntargetable) {
+						(answer != 0 ? s_untargetableReplaced : s_untargetableCleared).fetch_add(1, std::memory_order_relaxed);
+					}
 				}
 			} catch (...) {
 				// Never throw into engine code; the engine's answer stands.
@@ -324,13 +468,17 @@ namespace scf::engine::combat
 		void RecountPins()
 		{
 			std::uint32_t count = 0;
+			std::uint32_t specialtyCount = 0;
 			bool hasWolf = false;
 			for (const auto& [_, permission] : s_permissions) {
-				hasWolf |= permission.focusedWolf;
-				count += (permission.restrictToTarget && permission.pinnedHandle) ? 1 : 0;
+				hasWolf |= (permission.focusedWolf || permission.alwaysNoCircling);
+				count += (permission.radiusManaged || (permission.restrictToTarget && permission.pinnedHandle)) ? 1 : 0;
+				specialtyCount += (permission.allowCombat && !permission.restrictToTarget && !permission.radiusManaged &&
+				                   (permission.specialtyFlags & core::kKwTargetingSpecialtyMask) != 0) ? 1 : 0;
 			}
-			s_hasFocusedWolf.store(hasWolf, std::memory_order_relaxed);
-			s_pinCount.store(count, std::memory_order_relaxed);
+			s_hasFocusedWolf.store(hasWolf, std::memory_order_release);
+			s_pinCount.store(count, std::memory_order_release);
+			s_specialtyCount.store(specialtyCount, std::memory_order_release);
 		}
 
 		// Main-thread only.
@@ -339,8 +487,21 @@ namespace scf::engine::combat
 			bool attacksDisabled{ false };
 			bool known{ false };
 			bool combatBreakLogged{ false };
+			RE::ActorHandle radiusActor{};
+			bool previousAttackDisabled{};
+			bool previousCastDisabled{};
 		};
 		std::unordered_map<RE::FormID, AppliedGate> s_applied;
+
+		void RestoreRadiusFlags(const AppliedGate& a_applied)
+		{
+			if (const auto actor = a_applied.radiusActor.get()) {
+				using Flags = RE::Actor::BOOL_FLAGS;
+				auto& flags = actor->GetActorRuntimeData().boolFlags;
+				flags.set(a_applied.previousAttackDisabled, Flags::kAttackingDisabled);
+				flags.set(a_applied.previousCastDisabled, Flags::kCastingDisabled);
+			}
+		}
 
 		bool StartCombatGateThunk(RE::Actor* a_self, RE::Actor* a_target, RE::CombatGroup* a_group)
 		{
@@ -365,7 +526,7 @@ namespace scf::engine::combat
 				}
 
 				std::lock_guard lock(s_mutex);
-				if (s_untargetableCount.load(std::memory_order_relaxed) != 0 && s_untargetable.contains(targetId)) {
+				if (s_untargetableCount.load(std::memory_order_acquire) != 0 && s_untargetable.contains(targetId)) {
 					return false;
 				}
 				const auto it = s_permissions.find(a_self);
@@ -373,7 +534,7 @@ namespace scf::engine::combat
 					return false;
 				}
 				auto& permission = it->second;
-				if (!permission.allowCombat || !permission.restrictToTarget ||
+				if (permission.radiusManaged || !permission.allowCombat || !permission.restrictToTarget ||
 				    static_cast<RE::FormID>(permission.target) != targetId) {
 					return false;
 				}
@@ -394,7 +555,7 @@ namespace scf::engine::combat
 				return false;
 			}
 			if (a_self && a_target && a_self != a_target &&
-			    s_pinCount.load(std::memory_order_relaxed) != 0 &&
+			    s_pinCount.load(std::memory_order_acquire) != 0 &&
 			    ShouldAllowExplicitFocusAttack(a_self->GetFormID(), a_target)) {
 				return true;
 			}
@@ -467,7 +628,7 @@ namespace scf::engine::combat
 			std::lock_guard lock(s_mutex);
 
 			// Keyword API: nobody starts a fight against an SCF_Untargetable actor.
-			if (a_target && s_untargetableCount.load(std::memory_order_relaxed) != 0 &&
+			if (a_target && s_untargetableCount.load(std::memory_order_acquire) != 0 &&
 				a_target->GetFormID() != a_self && s_untargetable.contains(a_target->GetFormID())) {
 				const auto now = std::chrono::steady_clock::now();
 				if (now - s_lastUntargetableDenyLog >= std::chrono::seconds(2)) {
@@ -494,12 +655,26 @@ namespace scf::engine::combat
 			} else if (permission.restrictToTarget) {
 				deny = targetId != static_cast<RE::FormID>(permission.target);
 				reason = "focus-target-only";
-			} else if (a_target && s_aggressionRadius > 0.0f) {
-				// PoE2-style aggression radius (stage M2): an engine-chosen fight only
-				// against actors near the owner. Explicit focus orders never come here.
+			} else if (a_target) {
 				const auto& position = a_target->GetPosition();
-				deny = !core::IsWithinAggressionRadius(s_aggressionCentre, { position.x, position.y, position.z }, s_aggressionRadius);
-				reason = "outside aggression radius";
+				bool bodyguardThreat = false;
+				if ((permission.specialtyFlags & core::kKwBodyguard) != 0) {
+					const auto targetTarget = a_target->GetActorRuntimeData().currentCombatTarget.get();
+					const auto ttId = targetTarget ? targetTarget->GetFormID() : static_cast<RE::FormID>(0);
+					bodyguardThreat = (ttId != 0 && (ttId == permission.ownerId || ttId == a_self));
+					const bool nearOwner = core::IsWithinAggressionRadius(s_aggressionCentre, { position.x, position.y, position.z }, core::kBodyguardAlertRadius);
+					if (!bodyguardThreat && !nearOwner) {
+						deny = true;
+						reason = "bodyguard: target not threatening owner";
+					}
+				}
+				if (!deny && !bodyguardThreat && !permission.ignoreAggressionRadius && s_aggressionRadius > 0.0f) {
+					// PoE2-style aggression radius (stage M2): an engine-chosen fight only
+					// against actors near the owner. Explicit focus orders and active threats
+					// intercepted by SCF_Bodyguard are not blocked by the radius.
+					deny = !core::IsWithinAggressionRadius(s_aggressionCentre, { position.x, position.y, position.z }, s_aggressionRadius);
+					reason = "outside aggression radius";
+				}
 			}
 
 			if (deny) {
@@ -527,7 +702,7 @@ namespace scf::engine::combat
 
 	bool HasFocusedWolf() noexcept
 	{
-		return s_hasFocusedWolf.load(std::memory_order_relaxed);
+		return s_hasFocusedWolf.load(std::memory_order_acquire);
 	}
 
 	bool BlocksWolfManeuver(const RE::CombatController& controller, std::size_t index, const char* name)
@@ -543,7 +718,7 @@ namespace scf::engine::combat
 		}
 		auto& permission = it->second;
 		if (!core::BlocksWolfManeuver(permission.focusedWolf, permission.pinnedHandle.native_handle(),
-			controller.targetHandle.native_handle())) {
+			controller.targetHandle.native_handle(), permission.alwaysNoCircling)) {
 			return false;
 		}
 		const auto bit = 1u << index;
@@ -621,19 +796,34 @@ namespace scf::engine::combat
 	void PublishUntargetable(const std::vector<keywords::WorldActor>& a_world)
 	{
 		std::unordered_set<RE::FormID> untargetable;
+		std::unordered_set<RE::FormID> highThreat;
+		std::unordered_set<RE::FormID> lowThreat;
 		for (const auto& world : a_world) {
-			if (world.flags & core::kUntargetable) {
+			if (world.flags & core::kKwUntargetable) {
 				untargetable.insert(world.id);
 			}
+			if (world.flags & core::kKwHighThreat) {
+				highThreat.insert(world.id);
+			}
+			if (world.flags & core::kKwLowThreat) {
+				lowThreat.insert(world.id);
+			}
 		}
+		const auto totalThreat = static_cast<std::uint32_t>(untargetable.size() + highThreat.size() + lowThreat.size());
 		{
 			std::lock_guard lock(s_mutex);
 			if (untargetable != s_untargetable) {
 				logger::info("[CombatGate] SCF_Untargetable actors: {} (was {}).", untargetable.size(), s_untargetable.size());
 			}
+			if (highThreat != s_highThreat || lowThreat != s_lowThreat) {
+				logger::info("[CombatGate] Threat keywords: highThreat={}, lowThreat={}.", highThreat.size(), lowThreat.size());
+			}
 			s_untargetable = untargetable;
+			s_highThreat = std::move(highThreat);
+			s_lowThreat = std::move(lowThreat);
 		}
-		s_untargetableCount.store(static_cast<std::uint32_t>(untargetable.size()), std::memory_order_relaxed);
+		s_untargetableCount.store(static_cast<std::uint32_t>(untargetable.size()), std::memory_order_release);
+		s_threatCount.store(totalThreat, std::memory_order_release);
 		if (untargetable.empty()) {
 			return;
 		}
@@ -684,7 +874,7 @@ namespace scf::engine::combat
 		}
 	}
 
-	void UpdateForSummon(RE::Actor* a_summon, const core::CombatPolicy& a_policy)
+	void UpdateForSummon(RE::Actor* a_summon, const core::CombatPolicy& a_policy, const SummonCombatDirectives& a_directives)
 	{
 		if (!a_summon) {
 			return;
@@ -704,16 +894,25 @@ namespace scf::engine::combat
 		// Suppress melee circling/flanking maneuvers for ANY focused summon under an
 		// explicit Attack order (all hooked leaves belong to CloseMovement /
 		// FlankingMovement, leaving Advance, Chase and RangedMovement untouched).
-		const bool focusedWolf = static_cast<bool>(pinnedHandle);
+		const bool focusedWolf = pinnedHandle && !a_policy.radiusManaged;
 
 		// 1. Publish the policy for the StartCombat / CanAttackActor seats and the target pin.
 		{
 			std::lock_guard lock(s_mutex);
 			auto& permission = s_permissions[id];
-			const bool pinChanged = permission.pinnedHandle != pinnedHandle;
+			const bool pinChanged = permission.pinnedHandle != pinnedHandle || permission.radiusManaged != a_policy.radiusManaged;
+			const bool directivesChanged = permission.alwaysNoCircling != a_directives.alwaysNoCircling ||
+			                               permission.specialtyFlags != a_directives.specialtyFlags ||
+			                               permission.allowCombat != a_policy.allowCombat ||
+			                               permission.restrictToTarget != a_policy.restrictToTarget;
+			permission.radiusManaged = a_policy.radiusManaged;
 			permission.allowCombat = a_policy.allowCombat;
 			permission.restrictToTarget = a_policy.restrictToTarget;
 			permission.target = a_policy.target;
+			permission.alwaysNoCircling = a_directives.alwaysNoCircling;
+			permission.ignoreAggressionRadius = a_directives.ignoreAggressionRadius;
+			permission.specialtyFlags = a_directives.specialtyFlags;
+			permission.ownerId = a_directives.ownerId;
 			if (pinChanged || permission.focusedWolf != focusedWolf) {
 				permission.focusedWolf = focusedWolf;
 				permission.loggedManeuvers = 0;
@@ -726,16 +925,39 @@ namespace scf::engine::combat
 					logger::info("[TargetPin] Summon 0x{:08X} pin released", id);
 				}
 				RecountPins();
+			} else if (directivesChanged) {
+				RecountPins();
 			}
 		}
 
 		// 2. Native attack/cast deny bits while combat is forbidden.
 		auto& applied = s_applied[id];
+		if (applied.radiusActor && applied.radiusActor != a_summon->GetHandle()) {
+			RestoreRadiusFlags(applied);
+			applied = {};
+		}
+
+		if (a_policy.radiusManaged && !applied.radiusActor) {
+			using Flags = RE::Actor::BOOL_FLAGS;
+			const auto& flags = a_summon->GetActorRuntimeData().boolFlags;
+			applied.radiusActor = a_summon->GetHandle();
+			// If SCF already owned the denial, it is not an external baseline.
+			applied.previousAttackDisabled = !applied.known && flags.any(Flags::kAttackingDisabled);
+			applied.previousCastDisabled = !applied.known && flags.any(Flags::kCastingDisabled);
+		} else if (!a_policy.radiusManaged && applied.radiusActor) {
+			RestoreRadiusFlags(applied);
+			applied = {};
+			applied.known = !a_policy.disableAttacks;
+		}
 		if (!applied.known || applied.attacksDisabled != a_policy.disableAttacks) {
-			a_summon->GetActorRuntimeData().boolFlags.set(
-				a_policy.disableAttacks,
-				RE::Actor::BOOL_FLAGS::kAttackingDisabled,
-				RE::Actor::BOOL_FLAGS::kCastingDisabled);
+			if (a_policy.radiusManaged && !a_policy.disableAttacks) {
+				RestoreRadiusFlags(applied);
+			} else {
+				a_summon->GetActorRuntimeData().boolFlags.set(
+					a_policy.disableAttacks,
+					RE::Actor::BOOL_FLAGS::kAttackingDisabled,
+					RE::Actor::BOOL_FLAGS::kCastingDisabled);
+			}
 			applied.attacksDisabled = a_policy.disableAttacks;
 			applied.known = true;
 			logger::info("[CombatGate] Summon 0x{:08X} attacks/casts disabled={}", id, a_policy.disableAttacks);
@@ -765,7 +987,27 @@ namespace scf::engine::combat
 			RecountPins();
 		}
 		std::erase_if(s_applied, [&a_liveSummons](const auto& a_entry) {
-			return a_liveSummons.find(static_cast<core::EntityID>(a_entry.first)) == a_liveSummons.end();
+			if (a_liveSummons.contains(a_entry.first)) {
+				return false;
+			}
+			RestoreRadiusFlags(a_entry.second);
+			return true;
+		});
+	}
+
+	void ClearRadiusPolicies()
+	{
+		{
+			std::lock_guard lock(s_mutex);
+			std::erase_if(s_permissions, [](const auto& entry) { return entry.second.radiusManaged; });
+			RecountPins();
+		}
+		std::erase_if(s_applied, [](const auto& entry) {
+			if (!entry.second.radiusActor) {
+				return false;
+			}
+			RestoreRadiusFlags(entry.second);
+			return true;
 		});
 	}
 
@@ -776,8 +1018,15 @@ namespace scf::engine::combat
 			s_permissions.clear();
 			RecountPins();
 			s_untargetable.clear();
+			s_highThreat.clear();
+			s_lowThreat.clear();
 		}
 		s_untargetableCount.store(0, std::memory_order_relaxed);
+		s_threatCount.store(0, std::memory_order_relaxed);
+		s_specialtyCount.store(0, std::memory_order_relaxed);
+		for (const auto& [_, applied] : s_applied) {
+			RestoreRadiusFlags(applied);
+		}
 		s_applied.clear();
 		logger::info("[CombatGate] Combat policy state reset.");
 	}

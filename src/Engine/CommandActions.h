@@ -7,6 +7,7 @@
 namespace RE
 {
 	class Actor;
+	class EffectSetting;
 }
 
 namespace scf::core
@@ -22,7 +23,8 @@ namespace scf::engine::actions
 	// core::DefaultCommandCatalogText() when missing, never overwritten). Forms are
 	// resolved once at kDataLoaded through TESDataHandler::LookupForm; a summon matches
 	// through ExtraLeveledCreature's original/template base, its own base and that base's
-	// TPLT chain (baseTemplateForm), else the Default line.
+	// TPLT chain (baseTemplateForm), else the Default line. Keyword API v2 overrides
+	// (SCF_CmdRush / SCF_CmdDetonate) take precedence over the INI catalog.
 	//
 	// Actions (main thread, from UpdateHook's command drain):
 	//   * Rush         - temporary-modifier SpeedMult bonus for fRushSeconds (speed is
@@ -31,8 +33,9 @@ namespace scf::engine::actions
 	//   * CastAtTarget - MagicCaster(kInstant)::CastSpellImmediate(spell, target), blame =
 	//                    the summon (Papyrus Spell.Cast does the same; aimed spells fly at
 	//                    the target).
-	//   * Detonate     - the same cast (at the target, or on itself for a Self spell) and
-	//                    then KillImmediate, like the Dispel command.
+	//   * Detonate     - the same cast (at the target, or on itself for a Self spell; or
+	//                    direct KillImmediate when triggered by SCF_CmdDetonate without an
+	//                    explicit catalog spell) and then KillImmediate.
 	// Cooldown per summon (core::CommandCooldowns) on the scheduler clock.
 
 	void Load();
@@ -45,15 +48,20 @@ namespace scf::engine::actions
 		Detonated
 	};
 
-	// a_target may be null (only a Self-delivery Detonate works without one).
-	Outcome Execute(RE::Actor* a_summon, const core::SummonModel* a_model, RE::Actor* a_target, float a_now);
+	// a_target may be null (only a Self-delivery / spell-less Detonate works without one).
+	Outcome Execute(
+		RE::Actor* a_summon,
+		const core::SummonModel* a_model,
+		RE::Actor* a_target,
+		float a_now,
+		const RE::EffectSetting* a_sourceEffect = nullptr);
 
 	// After one Command key press has been executed for every summon: HUD summary.
 	void ReportBatch();
 
 	// Minion panel (M6): whether the summon has a command action, and the seconds left
 	// on its cooldown (0 = ready). Main thread.
-	[[nodiscard]] bool HasCommand(RE::Actor* a_summon);
+	[[nodiscard]] bool HasCommand(RE::Actor* a_summon, const RE::EffectSetting* a_sourceEffect = nullptr);
 	[[nodiscard]] float CooldownRemaining(std::uint32_t a_summonId, float a_now);
 
 	// Every tactical tick: end expired Rush speed bonuses.

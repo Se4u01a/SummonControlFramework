@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Core/Formation.h"
 #include "Core/Settings.h"
 #include "Core/SummonModel.h"
 #include "Core/Types.h"
@@ -238,6 +239,8 @@ namespace scf::core
 	// Translates the summon's current order into a movement intent.
 	//
 	// Rules, highest priority first:
+	//   * Stationary keyword (SCF_Stationary / SCF_Turret): always holds position with
+	//     locked translation regardless of order or combat.
 	//   * Attack (explicit FocusTarget) wins over any movement order: the combat AI
 	//     drives the summon.
 	//   * WaitGuard holds its ground, even in combat.
@@ -246,13 +249,9 @@ namespace scf::core
 	//   * MoveTo walks to the stored destination (owner-relative, recomputed every tick
 	//     so a moving owner does not drag the destination along); a destination beyond
 	//     kMaxMoveToDistance is ignored as stale.
-	//   * Follow keeps the formation slot, but only while the summon is NOT fighting:
-	//     an engaged summon must be driven by the combat AI, not dragged back by us.
-	//     `a_combatPermitted` is the CombatPolicy answer for this tick: when the policy
-	//     forbids combat (Passive, Return, MoveTo) the summon keeps following even if the
-	//     engine still reports it in combat.
-	//     The engine combat flag is the only authority; a stale model target (a focus
-	//     command whose enemy disengaged) must not freeze the follow order.
+	//   * Follow keeps the formation slot (optionally constrained to `a_sector`), but
+	//     only while the summon is NOT fighting: an engaged summon must be driven by
+	//     the combat AI, not dragged back by us.
 	MovementIntent BuildMovementIntent(
 		const SummonModel& a_model,
 		bool a_inCombat,
@@ -262,7 +261,9 @@ namespace scf::core
 		const Vec3& a_summonPosition,
 		float a_ownerYawRadians,
 		std::size_t a_slotIndex,
-		std::size_t a_squadSize) noexcept;
+		std::size_t a_squadSize,
+		FormationSector a_sector = FormationSector::Default,
+		bool a_stationary = false) noexcept;
 
 	// Keep charging the same wolf focus until melee handoff. After handoff the
 	// wider restart radius lets the combat AI finish a bite on a moving target.
@@ -277,9 +278,9 @@ namespace scf::core
 
 	// True for orders that need the summon away from the player, during which the
 	// vanilla FollowTo package's "stay within Min Radius of the caster" pull is released
-	// (src/Engine/FollowLeash.cpp): MoveTo with a destination, Attack, WaitGuard.
-	// Follow and Return keep the vanilla follow (it agrees with them).
-	bool ReleasesFollowLeash(const SummonModel& a_model) noexcept;
+	// (src/Engine/FollowLeash.cpp): MoveTo with a destination, Attack, WaitGuard, or
+	// any stationary/turret summon.
+	bool ReleasesFollowLeash(const SummonModel& a_model, bool a_stationary = false) noexcept;
 
 	// Shape of the engine's summon follow package when its creation was not observed:
 	// a runtime-created form (FormID 0xFF......) of package type kPackage (18) whose data

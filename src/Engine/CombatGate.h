@@ -2,6 +2,7 @@
 
 #include "Core/CombatPolicy.h"
 #include "Core/EntityID.h"
+#include "Core/KeywordApi.h"
 #include "Core/Types.h"
 #include "Engine/KeywordApi.h"
 
@@ -16,6 +17,16 @@ namespace RE
 
 namespace scf::engine::combat
 {
+	// Per-summon keyword directives enforced inside CombatGate hooks (StartCombat,
+	// CombatTargetSelector::SelectTarget, and WolfManeuver).
+	struct SummonCombatDirectives
+	{
+		bool alwaysNoCircling{ false };
+		bool ignoreAggressionRadius{ false };
+		core::KeywordFlags specialtyFlags{ core::kKwNone };
+		core::EntityID ownerId{ core::InvalidEntityID };
+	};
+
 	// The combat denial seat: the single place where the framework decides whether a
 	// managed summon may enter or keep a fight at all.
 	//
@@ -32,15 +43,12 @@ namespace scf::engine::combat
 	// Install() is called once at kDataLoaded. UpdateForSummon()/RetainOnly()/ResetAll()
 	// are main-thread only; ShouldDenyStartCombat() runs on whatever thread calls
 	// StartCombat and only touches the mutex-protected policy table.
-
 	//
-	// Third layer, the target pin (FocusTarget): a chaining write_vfunc on slot 6
-	// (SelectTarget) of CombatTargetSelectorStandard and CombatTargetSelectorFixed. The
-	// engine re-chooses a fighting actor's target every combat update through those
-	// selectors, so writing CombatController::targetHandle from the main thread is
-	// overwritten; the seat answers the selector with the focused actor instead (rules in
-	// core::ChooseSelectorAnswer). Runs on the combat job threads; reads only the
-	// mutex-protected table and the group's target list under the group's own read lock.
+	// Third layer, the target pin (FocusTarget) + Keyword API v2 threat & specialty
+	// selection: a chaining write_vfunc on slot 6 (SelectTarget) of
+	// CombatTargetSelectorStandard and CombatTargetSelectorFixed. Runs on the combat job
+	// threads; reads only the mutex-protected table and the group's target list under the
+	// group's own read lock.
 
 	bool Install();
 	bool HasFocusedWolf() noexcept;
@@ -50,26 +58,29 @@ namespace scf::engine::combat
 	// engine-chosen fights (Follow / Guard). Radius <= 0 disables the rule.
 	void PublishAggressionArea(const core::Vec3& a_ownerPosition, float a_radius);
 
-	// Keyword API, SCF_Untargetable (main thread, every tactical tick):
-	//   * the StartCombat seat refuses any fight whose target is untargetable;
-	//   * the CombatTargetSelector seat replaces an untargetable answer with another
-	//     group target (core::ChooseTargetAvoidingUntargetable), or none;
-	//   * an actor whose current combat target is untargetable and whose group has no
-	//     other usable target leaves combat here (BreakCombat).
+	// Keyword API threat snapshot (main thread, every tactical tick):
+	//   * SCF_Untargetable: StartCombat refuses, SelectTarget moves off or clears, and
+	//     an actor whose only target is untargetable leaves combat (BreakCombat).
+	//   * SCF_HighThreat / SCF_TauntPriority: SelectTarget prioritizes closest high-threat.
+	//   * SCF_LowThreat: SelectTarget prefers normal targets whenever available.
 	void PublishUntargetable(const std::vector<keywords::WorldActor>& a_world);
 
 	// Leave combat through the engine's own StopCombat (main thread). Never writes the
 	// CombatController members: the combat workers own them.
 	void BreakCombat(RE::Actor* a_actor);
 
-	// Publish and enforce the policy for one summon (main thread, each tactical tick).
-	void UpdateForSummon(RE::Actor* a_summon, const core::CombatPolicy& a_policy);
+	// Publish and enforce the policy + keyword directives for one summon (main thread).
+	void UpdateForSummon(
+		RE::Actor* a_summon,
+		const core::CombatPolicy& a_policy,
+		const SummonCombatDirectives& a_directives = {});
 
 	// Drop bookkeeping for summons that left the engine roster.
 	void RetainOnly(const std::unordered_set<core::EntityID>& a_liveSummons);
 
 	// kPreLoadGame / kNewGame.
 	void ResetAll();
+	void ClearRadiusPolicies();
 
 	// True when `a_self` is a managed summon whose current policy forbids starting
 	// combat with `a_target` (or with anything at all). ANY THREAD — called from the

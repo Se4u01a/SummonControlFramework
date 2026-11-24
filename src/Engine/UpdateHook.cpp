@@ -1,24 +1,27 @@
 #include "Engine/UpdateHook.h"
-#include "Core/CommandQueue.h"
 #include "Core/CombatPolicy.h"
+#include "Core/CommandQueue.h"
+#include "Core/Formation.h"
 #include "Core/FrameworkContext.h"
+#include "Core/KeywordApi.h"
+#include "Core/SummonLimit.h"
 #include "Core/SummonModel.h"
 #include "Core/SummonRegistry.h"
 #include "Engine/ActorSpace.h"
 #include "Engine/AttackTrace.h"
 #include "Engine/CombatGate.h"
+#include "Engine/CombatRadius.h"
 #include "Engine/CommandActions.h"
 #include "Engine/KeywordApi.h"
 #include "Engine/PassThrough.h"
 #include "Engine/Persistence.h"
 #include "Engine/SummonLimit.h"
-#include "Core/SummonLimit.h"
-#include "Integrations/MinionPanel.h"
-#include "Integrations/TrueHUDBackend.h"
-#include "Integrations/Papyrus.h"
 #include "Engine/SummonMovement.h"
-#include "PCH.h"
 #include "Engine/WolfManeuver.h"
+#include "Integrations/MinionPanel.h"
+#include "Integrations/Papyrus.h"
+#include "Integrations/TrueHUDBackend.h"
+#include "PCH.h"
 
 #include <RE/A/ActiveEffect.h>
 #include <RE/A/Actor.h>
@@ -34,6 +37,7 @@
 #include <RE/U/UI.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <unordered_map>
 #include <unordered_set>
@@ -45,12 +49,24 @@ namespace scf::engine::update
 	{
 		float s_totalElapsed = 0.0f;
 
+		// Keyword API v2 per-session tracking (cleared in Reset()).
+		std::unordered_set<core::EntityID> s_autoRegistered;
+		std::unordered_set<core::EntityID> s_defaultsApplied;
+
 		// Engage one explicit target (Focus order, or a Command Rush): the model must already
 		// carry it (CommandQueue::ApplyToModel of a SetFocusTarget).
-		void EngageFocus(RE::PlayerCharacter* a_player, RE::Actor* a_summon, core::SummonModel* a_model, RE::Actor* a_target)
+		void EngageFocus(
+			RE::PlayerCharacter* a_player,
+			RE::Actor* a_summon,
+			core::SummonModel* a_model,
+			RE::Actor* a_target,
+			const core::SummonKeywordProfile* a_profile = nullptr)
 		{
 			auto* target = a_target;
 			if (!target || target->IsDead() || target == a_summon || target == a_player) {
+				return;
+			}
+			if (a_profile && a_profile->Has(core::kKwNonCombat)) {
 				return;
 			}
 
@@ -61,7 +77,16 @@ namespace scf::engine::update
 			// know that this one target is permitted (a previous Attack order may have
 			// restricted combat to a different actor).
 			if (a_model) {
-				combat::UpdateForSummon(a_summon, core::BuildCombatPolicy(*a_model, true));
+				auto policy = core::BuildCombatPolicy(*a_model, true);
+				combat::SummonCombatDirectives directives{};
+				directives.ownerId = a_player ? a_player->GetFormID() : core::InvalidEntityID;
+				if (a_profile) {
+					policy = core::ApplyKeywordCombatPolicy(policy, *a_profile, false, true, true);
+					directives.alwaysNoCircling = a_profile->Has(core::kKwNoCircling);
+					directives.ignoreAggressionRadius = a_profile->Has(core::kKwIgnoreCombatRadius);
+					directives.specialtyFlags = a_profile->flags & core::kKwTargetingSpecialtyMask;
+				}
+				combat::UpdateForSummon(a_summon, policy, directives);
 			}
 
 			// Avoid tearing down and rebuilding the CombatController if the summon is already
@@ -99,12 +124,24 @@ namespace scf::engine::update
 
 		// Publishes the updated CombatPolicy BEFORE calling BreakCombat so no combat worker
 		// thread can re-enter combat in the window between StopCombat and step 5.
-		void PublishPolicyAndBreakCombat(RE::Actor* a_summon, const core::SummonModel* a_model, bool a_evaluatePackage)
+		void PublishPolicyAndBreakCombat(
+			RE::Actor* a_summon,
+			const core::SummonModel* a_model,
+			bool a_evaluatePackage,
+			const core::SummonKeywordProfile* a_profile = nullptr,
+			core::EntityID a_ownerId = core::InvalidEntityID)
 		{
 			if (a_model) {
-				combat::UpdateForSummon(
-					a_summon,
-					core::BuildCombatPolicy(*a_model, a_model->currentTargetId != core::InvalidEntityID));
+				auto policy = core::BuildCombatPolicy(*a_model, a_model->currentTargetId != core::InvalidEntityID);
+				combat::SummonCombatDirectives directives{};
+				directives.ownerId = a_ownerId;
+				if (a_profile) {
+					policy = core::ApplyKeywordCombatPolicy(policy, *a_profile, false, true, false);
+					directives.alwaysNoCircling = a_profile->Has(core::kKwNoCircling);
+					directives.ignoreAggressionRadius = a_profile->Has(core::kKwIgnoreCombatRadius);
+					directives.specialtyFlags = a_profile->flags & core::kKwTargetingSpecialtyMask;
+				}
+				combat::UpdateForSummon(a_summon, policy, directives);
 			}
 			combat::BreakCombat(a_summon);
 			if (a_evaluatePackage) {
@@ -116,11 +153,14 @@ namespace scf::engine::update
 			RE::PlayerCharacter* a_player,
 			RE::Actor* a_summon,
 			core::SummonModel* a_model,
-			const core::Command& a_cmd)
+			const core::Command& a_cmd,
+			const core::SummonKeywordProfile* a_profile,
+			const RE::EffectSetting* a_sourceEffect)
 		{
 			if (!a_summon || a_summon->IsDead()) {
 				return;
 			}
+			const auto ownerId = a_player ? a_player->GetFormID() : core::InvalidEntityID;
 
 			switch (a_cmd.type) {
 			case core::CommandType::SetFocusTarget:
@@ -131,7 +171,7 @@ namespace scf::engine::update
 					    a_model->currentTargetId == a_cmd.focusTargetId) {
 						attack_trace::Begin(*a_summon, *target, *a_cmd.attackTrace);
 					}
-					EngageFocus(a_player, a_summon, a_model, target);
+					EngageFocus(a_player, a_summon, a_model, target, a_profile);
 				}
 				break;
 
@@ -139,12 +179,12 @@ namespace scf::engine::update
 				{
 					auto* target = RE::TESForm::LookupByID<RE::Actor>(a_cmd.focusTargetId);
 					auto& ctx = core::FrameworkContext::GetSingleton();
-					const auto outcome = actions::Execute(a_summon, a_model, target, s_totalElapsed);
+					const auto outcome = actions::Execute(a_summon, a_model, target, s_totalElapsed, a_sourceEffect);
 					if (outcome == actions::Outcome::Rush && a_model) {
 						core::Command focus = a_cmd;
 						focus.type = core::CommandType::SetFocusTarget;
 						ctx.GetCommandQueue().ApplyToModel(focus, *a_model, &ctx.GetStateMachine());
-						EngageFocus(a_player, a_summon, a_model, target);
+						EngageFocus(a_player, a_summon, a_model, target, a_profile);
 					}
 				}
 				break;
@@ -154,17 +194,17 @@ namespace scf::engine::update
 				switch (a_cmd.order) {
 				case core::SummonOrder::Return:
 					logger::info("[Execution] Summon 0x{:08X} ordered to RETURN to owner", a_summon->GetFormID());
-					PublishPolicyAndBreakCombat(a_summon, a_model, true);
+					PublishPolicyAndBreakCombat(a_summon, a_model, true, a_profile, ownerId);
 					break;
 
 				case core::SummonOrder::WaitGuard:
 					logger::info("[Execution] Summon 0x{:08X} ordered to GUARD / WAIT", a_summon->GetFormID());
-					PublishPolicyAndBreakCombat(a_summon, a_model, false);
+					PublishPolicyAndBreakCombat(a_summon, a_model, false, a_profile, ownerId);
 					break;
 
 				case core::SummonOrder::Follow:
 					logger::info("[Execution] Summon 0x{:08X} ordered to FOLLOW", a_summon->GetFormID());
-					PublishPolicyAndBreakCombat(a_summon, a_model, true);
+					PublishPolicyAndBreakCombat(a_summon, a_model, true, a_profile, ownerId);
 					break;
 
 				case core::SummonOrder::MoveTo:
@@ -172,7 +212,7 @@ namespace scf::engine::update
 					// SummonModel destination stored by CommandQueue::ApplyToModel.
 					logger::info("[Execution] Summon 0x{:08X} ordered to MOVE TO ({:.1f}, {:.1f}, {:.1f})",
 						a_summon->GetFormID(), a_cmd.targetPosition.x, a_cmd.targetPosition.y, a_cmd.targetPosition.z);
-					PublishPolicyAndBreakCombat(a_summon, a_model, false);
+					PublishPolicyAndBreakCombat(a_summon, a_model, false, a_profile, ownerId);
 					break;
 
 				default:
@@ -183,7 +223,7 @@ namespace scf::engine::update
 			case core::CommandType::SetAggression:
 				if (a_cmd.aggression == core::AggressionMode::Passive) {
 					logger::info("[Execution] Summon 0x{:08X} set to PASSIVE - disengaging combat", a_summon->GetFormID());
-					PublishPolicyAndBreakCombat(a_summon, a_model, true);
+					PublishPolicyAndBreakCombat(a_summon, a_model, true, a_profile, ownerId);
 				}
 				break;
 
@@ -228,9 +268,22 @@ namespace scf::engine::update
 			// to tell the registry-owning thread from any other one (see Integrations/Papyrus.cpp).
 			papyrus::MarkGameThread();
 
+			radius::BeginTick();
 			const auto& commanded = currentProcess->middleHigh->commandedActors;
 			std::unordered_set<core::EntityID> currentEngineSummons;
 			std::unordered_map<core::EntityID, RE::Actor*> liveActors;
+			std::unordered_map<core::EntityID, core::SummonKeywordProfile> profiles;
+			std::unordered_map<core::EntityID, const RE::EffectSetting*> sourceEffects;
+			std::unordered_map<core::EntityID, float> taggedSummons;
+			const auto resolveRadius = [&](RE::Actor& actor, const RE::EffectSetting* source, const core::SummonKeywordProfile& profile) {
+				if (actor.Is3DLoaded() && ShareLoadedSpace(&actor, a_player)) {
+					const float scrRadius = radius::Resolve(actor, source);
+					const float effective = core::EffectiveCombatRadius(scrRadius, profile);
+					if (effective > 0.0f) {
+						taggedSummons.insert_or_assign(actor.GetFormID(), effective);
+					}
+				}
+			};
 
 			// PoE2 M5: the engine limit for the player (seat in engine::summonlimit), and SCF's
 			// tracking cap: never below what the engine keeps, so the registry cannot
@@ -248,6 +301,7 @@ namespace scf::engine::update
 			}
 
 			// 1. Sync engine commanded actors with SummonRegistry
+			std::uint32_t freeSlotCount = 0;
 			for (const auto& data : commanded) {
 				auto actorPtr = data.commandedActor.get();
 				if (!actorPtr) {
@@ -261,8 +315,26 @@ namespace scf::engine::update
 					continue;
 				}
 
+				const auto* sourceEffect = data.activeEffect ? data.activeEffect->GetBaseObject() : nullptr;
+				const auto profile = keywords::ProfileOf(actorPtr.get(), sourceEffect);
+				if (profile.Has(core::kKwUnmanaged)) {
+					if (registry.IsRegistered(summonId)) {
+						registry.UnregisterSummon(summonId, "SCF_Unmanaged");
+						persistence::OnSummonRemoved(summonId);
+					}
+					continue;
+				}
+
+				const bool freeSlot = profile.Has(core::kKwFreeSlot);
+				if (freeSlot) {
+					++freeSlotCount;
+				}
+
 				currentEngineSummons.insert(summonId);
 				liveActors[summonId] = actorPtr.get();
+				profiles[summonId] = profile;
+				sourceEffects[summonId] = sourceEffect;
+				resolveRadius(*actorPtr, sourceEffect, profile);
 
 				// A reanimated corpse is a commanded actor like a summoned creature; only
 				// the archetype of the effect the engine linked to it tells them apart.
@@ -281,7 +353,10 @@ namespace scf::engine::update
 					type,
 					remainingDuration,
 					a_timestamp,
-					&displaced);
+					&displaced,
+					false,
+					freeSlot);
+				registry.SetFreeSlot(summonId, freeSlot);
 
 				if (auto* model = registry.GetModel(summonId)) {
 					model->isReanimated = (type == core::SummonType::Reanimate);
@@ -291,12 +366,73 @@ namespace scf::engine::update
 					logger::info("[UpdateHook] Summon limit exceeded, displacing oldest summon 0x{:08X}", displaced);
 				}
 			}
+			summonlimit::PublishFreeSlots(freeSlotCount);
+
+			// 1a. Keyword API world scan (when any world keyword is defined in the load order)
+			//     and SCF_AutoRegister for scripted/custom friendly actors outside the roster.
+			std::vector<keywords::WorldActor> world;
+			bool worldScanned = false;
+			if (keywords::WorldActive()) {
+				world = keywords::ScanWorld(a_player, false);
+				worldScanned = true;
+
+				for (const auto& wa : world) {
+					if (!wa.actor || wa.id == ownerId || currentEngineSummons.contains(wa.id)) {
+						continue;
+					}
+					if ((wa.flags & core::kKwAutoRegister) == 0) {
+						continue;
+					}
+					if (wa.actor->IsHostileToActor(a_player) || a_player->IsHostileToActor(wa.actor)) {
+						continue;
+					}
+					if ((keywords::FlagsOf(wa.actor) & core::kKwUnmanaged) != 0) {
+						continue;
+					}
+					if (!registry.IsRegistered(wa.id)) {
+						registry.RegisterSummon(
+							ownerId,
+							wa.id,
+							core::SummonType::Scripted,
+							core::kPermanentDuration,
+							a_timestamp,
+							nullptr,
+							true,
+							true);
+						s_autoRegistered.insert(wa.id);
+						logger::info("[KeywordApi] Auto-registered actor 0x{:08X} ({}) via SCF_AutoRegister.",
+							wa.id, wa.actor->GetName());
+					}
+				}
+
+				for (auto it = s_autoRegistered.begin(); it != s_autoRegistered.end();) {
+					const auto autoId = *it;
+					auto* actor = RE::TESForm::LookupByID<RE::Actor>(autoId);
+					bool drop = !actor || actor->IsDead();
+					if (!drop && ShareLoadedSpace(actor, a_player)) {
+						const auto flags = keywords::FlagsOf(actor);
+						drop = (flags & core::kKwAutoRegister) == 0 ||
+						       (flags & core::kKwUnmanaged) != 0 ||
+						       actor->IsHostileToActor(a_player) ||
+						       a_player->IsHostileToActor(actor);
+					}
+					if (drop) {
+						if (registry.IsRegistered(autoId)) {
+							registry.UnregisterSummon(autoId, "SCF_AutoRegister ended");
+							persistence::OnSummonRemoved(autoId);
+						}
+						it = s_autoRegistered.erase(it);
+					} else {
+						++it;
+					}
+				}
+			}
 
 			// 1b. Explicitly registered summons are absent from the engine roster: the
-			//     script put them in the registry, so the registry is where the tick finds
-			//     them. They are driven like any other summon (orders, movement, combat
-			//     policy, panel row) while the actor is alive and shares the player's loaded
-			//     space; step 2b releases the ones that are gone.
+			//     script (or SCF_AutoRegister) put them in the registry, so the registry is
+			//     where the tick finds them. They are driven like any other summon (orders,
+			//     movement, combat policy, panel row) while the actor is alive and shares
+			//     the player's loaded space; step 2b releases the ones that are gone.
 			for (const auto summonId : registry.GetActiveSummonsForOwner(ownerId)) {
 				if (currentEngineSummons.contains(summonId)) {
 					continue;  // the roster already supplied it
@@ -314,7 +450,17 @@ namespace scf::engine::update
 					// record and pick it up again once the player is in its cell.
 					continue;
 				}
+				const auto profile = keywords::ProfileOf(actor, nullptr);
+				if (profile.Has(core::kKwUnmanaged)) {
+					registry.UnregisterSummon(summonId, "SCF_Unmanaged");
+					s_autoRegistered.erase(summonId);
+					persistence::OnSummonRemoved(summonId);
+					continue;
+				}
 				liveActors[summonId] = actor;
+				profiles[summonId] = profile;
+				sourceEffects[summonId] = nullptr;
+				resolveRadius(*actor, nullptr, profile);
 			}
 
 			// 2. Release the records the engine roster no longer backs. Records whose
@@ -344,6 +490,7 @@ namespace scf::engine::update
 						summonId, record->explicitRegistration ? "explicit registration" : "reanimated");
 					registry.UnregisterSummon(summonId,
 						record->explicitRegistration ? "explicit registration: form gone" : "reanimated: form gone");
+					s_autoRegistered.erase(summonId);
 					persistence::OnSummonRemoved(summonId);
 					continue;
 				}
@@ -387,6 +534,24 @@ namespace scf::engine::update
 				drivenSummons.insert(id);
 			}
 
+			// Apply one-time keyword default aggression modes (SCF_DefaultPassive /
+			// SCF_DefaultDefensive / SCF_DefaultAggressive / SCF_NonCombat) on first sight.
+			for (const auto& [id, actor] : orderedSummons) {
+				if (s_defaultsApplied.insert(id).second) {
+					if (auto* model = registry.GetModel(id)) {
+						const auto profIt = profiles.find(id);
+						if (profIt != profiles.end()) {
+							if (const auto defaultMode = core::DefaultAggressionFromKeywords(profIt->second)) {
+								model->aggression = *defaultMode;
+								logger::info("[KeywordApi] Summon 0x{:08X} initial aggression set to {} by keyword.",
+									id, core::ToString(*defaultMode));
+							}
+						}
+					}
+				}
+			}
+			std::erase_if(s_defaultsApplied, [&](core::EntityID a_id) { return !registry.IsRegistered(a_id); });
+
 			core::Command cmd{};
 			while (cmdQueue.PopNext(a_timestamp, cmd)) {
 				logger::info("[UpdateHook] Popped command (Type: {}, SummonId: 0x{:08X}, Priority: {})",
@@ -409,11 +574,31 @@ namespace scf::engine::update
 
 					auto* summonActor = it->second;
 					auto* model = registry.GetModel(sid);
+					const auto profIt = profiles.find(sid);
+					const core::SummonKeywordProfile* profile = profIt != profiles.end() ? &profIt->second : nullptr;
+					const auto srcIt = sourceEffects.find(sid);
+					const RE::EffectSetting* sourceEffect = srcIt != sourceEffects.end() ? srcIt->second : nullptr;
+
+					if (profile && !core::ShouldAcceptCommand(*profile, cmd.type, cmd.order, cmd.priority, cmd.aggression)) {
+						logger::debug("[KeywordApi] Summon 0x{:08X} rejected command {} (order {}) due to keywords.",
+							sid, core::ToString(cmd.type), core::ToString(cmd.order));
+						continue;
+					}
+
 					if (model) {
+						const auto tagged = taggedSummons.find(sid);
+						// Assist is a Tactical focus command. SCR chooses from the same
+						// in-zone candidates each tick and never replaces a legal current target.
+						if (cmd.priority == core::CommandPriority::Tactical &&
+						    cmd.type == core::CommandType::SetFocusTarget &&
+						    tagged != taggedSummons.end() &&
+						    core::UsesCombatRadius(radius::Settings(), *model, tagged->second)) {
+							continue;
+						}
 						cmdQueue.ApplyToModel(cmd, *model, &ctx.GetStateMachine());
 					}
 
-					ExecuteCommandOnActor(a_player, summonActor, model, cmd);
+					ExecuteCommandOnActor(a_player, summonActor, model, cmd, profile, sourceEffect);
 				}
 				if (cmd.type == core::CommandType::CommandAction) {
 					actions::ReportBatch();
@@ -424,6 +609,56 @@ namespace scf::engine::update
 			// 5. Per-tick order execution and continuous AI enforcement
 			const auto& settings = ctx.GetSettings().Get();
 
+			const bool radiusCollision = !orderedSummons.empty() && radius::UsesCollisionBypass(!taggedSummons.empty());
+			const bool scanRadiusEnemies = std::ranges::any_of(taggedSummons, [&](const auto& entry) {
+				const auto* model = registry.GetModel(entry.first);
+				return model && core::UsesCombatRadius(radius::Settings(), *model, entry.second);
+			});
+			if (!worldScanned && (radiusCollision || scanRadiusEnemies)) {
+				world = keywords::ScanWorld(a_player, true);
+				worldScanned = true;
+			}
+
+			// Merge conjuration source-MGEF threat flags onto world snapshot so threat keywords
+			// placed on a conjuration MGEF work identically to keywords on NPC_/RACE/active MGEF.
+			if (!profiles.empty()) {
+				std::unordered_map<core::EntityID, std::size_t> worldIndex;
+				worldIndex.reserve(world.size());
+				for (std::size_t idx = 0; idx < world.size(); ++idx) {
+					worldIndex.emplace(world[idx].id, idx);
+				}
+				for (const auto& [id, prof] : profiles) {
+					const auto threatBits = prof.flags & core::kKwThreatMask;
+					if (threatBits == core::kKwNone) {
+						continue;
+					}
+					if (const auto wit = worldIndex.find(id); wit != worldIndex.end()) {
+						world[wit->second].flags |= threatBits;
+					} else if (const auto ait = liveActors.find(id); ait != liveActors.end() && ait->second) {
+						worldIndex.emplace(id, world.size());
+						world.push_back({ ait->second, id, ownerId, threatBits });
+					}
+				}
+			}
+
+			// Publish thread-safe FriendlyFire keyword overrides (world + summon source-MGEF).
+			{
+				std::unordered_map<core::EntityID, core::KeywordFlags> ffFlags;
+				for (const auto& wa : world) {
+					if ((wa.flags & core::kKwFriendlyFireMask) != 0) {
+						ffFlags[wa.id] |= (wa.flags & core::kKwFriendlyFireMask);
+					}
+				}
+				for (const auto& [id, prof] : profiles) {
+					if ((prof.flags & core::kKwFriendlyFireMask) != 0) {
+						ffFlags[id] |= (prof.flags & core::kKwFriendlyFireMask);
+					}
+				}
+				keywords::PublishFriendlyFireFlags(ffFlags);
+			}
+
+			radius::PublishEnemies(*a_player, scanRadiusEnemies ? std::span(world) : std::span<const keywords::WorldActor>{});
+
 			// Pass-through table for the movement-avoidance and collision-filter seats:
 			// the owner and its live summons (system groups read from their controllers).
 			{
@@ -431,10 +666,15 @@ namespace scf::engine::update
 				members.reserve(orderedSummons.size() + 1);
 				members.push_back({ core::PassThroughParty{ ownerId, core::InvalidEntityID }, a_player });
 				for (const auto& [id, actor] : orderedSummons) {
-					members.push_back({ core::PassThroughParty{ id, ownerId }, actor });
+					core::PassThroughParty party{ id, ownerId };
+					if (radiusCollision) {
+						party.flags |= core::kPassThroughAll;
+					}
+					if (const auto profIt = profiles.find(id); profIt != profiles.end()) {
+						party.flags |= static_cast<std::uint8_t>(profIt->second.flags & core::kKwPassThroughMask);
+					}
+					members.push_back({ std::move(party), actor });
 				}
-				// Keyword API snapshot (empty while no mod defines the keywords).
-				const auto world = keywords::ScanWorld(a_player);
 				passthrough::Publish(members, world, settings.collision);
 				combat::PublishUntargetable(world);
 			}
@@ -444,6 +684,54 @@ namespace scf::engine::update
 				const auto& ownerPosition = a_player->GetPosition();
 				combat::PublishAggressionArea({ ownerPosition.x, ownerPosition.y, ownerPosition.z }, settings.combat.aggressionRadius);
 			}
+
+			// Stealth state for SCF_HoldFireInStealth.
+			const bool playerSneaking = a_player->IsSneaking();
+			bool playerDetected = a_player->IsInCombat();
+			if (playerSneaking && !playerDetected) {
+				const bool anyHoldFire = std::ranges::any_of(profiles, [](const auto& a_entry) {
+					return (a_entry.second.flags & core::kKwHoldFireInStealth) != 0;
+				});
+				if (anyHoldFire) {
+					const auto isHostileTargetingUs = [&](RE::Actor* a_actor) -> bool {
+						if (!a_actor || a_actor == a_player || !a_actor->IsInCombat() || !a_actor->IsHostileToActor(a_player)) {
+							return false;
+						}
+						if (const auto target = a_actor->GetActorRuntimeData().currentCombatTarget.get()) {
+							const auto tid = target->GetFormID();
+							return tid == ownerId || drivenSummons.contains(tid);
+						}
+						return false;
+					};
+					if (worldScanned) {
+						for (const auto& wa : world) {
+							if (isHostileTargetingUs(wa.actor)) {
+								playerDetected = true;
+								break;
+							}
+						}
+					} else if (auto* lists = RE::ProcessLists::GetSingleton()) {
+						for (const auto& handle : lists->highActorHandles) {
+							if (const auto actor = handle.get(); isHostileTargetingUs(actor.get())) {
+								playerDetected = true;
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			// Precompute per-sector formation counts (Default / Front / Flank / Back).
+			std::array<std::size_t, 4> sectorTotals{};
+			std::array<std::size_t, 4> sectorIndices{};
+			for (const auto& [id, _] : orderedSummons) {
+				const auto profIt = profiles.find(id);
+				const auto sector = profIt != profiles.end()
+					? core::FormationSectorFromKeywords(profIt->second)
+					: core::FormationSector::Default;
+				++sectorTotals[static_cast<std::size_t>(sector)];
+			}
+
 			for (std::size_t i = 0; i < orderedSummons.size(); ++i) {
 				const auto summonId = orderedSummons[i].first;
 				auto* summonActor = orderedSummons[i].second;
@@ -451,6 +739,8 @@ namespace scf::engine::update
 				if (!model || !summonActor) {
 					continue;
 				}
+				const auto profIt = profiles.find(summonId);
+				const core::SummonKeywordProfile profile = profIt != profiles.end() ? profIt->second : core::SummonKeywordProfile{};
 
 				// A focus target that vanished must not keep the summon locked in "attack":
 				// clear it before the combat policy is derived from it.
@@ -463,11 +753,36 @@ namespace scf::engine::update
 					}
 				}
 
+				const bool isExplicitAttack = (model->order == core::SummonOrder::Attack && model->currentTargetId != core::InvalidEntityID);
+				combat::SummonCombatDirectives directives{};
+				directives.alwaysNoCircling = profile.Has(core::kKwNoCircling);
+				directives.ignoreAggressionRadius = profile.Has(core::kKwIgnoreCombatRadius);
+				directives.specialtyFlags = profile.flags & core::kKwTargetingSpecialtyMask;
+				directives.ownerId = ownerId;
+
+				const bool keywordBlocksCombat =
+					profile.Has(core::kKwNonCombat) ||
+					(profile.Has(core::kKwHoldFireInStealth) && playerSneaking && !playerDetected && !isExplicitAttack);
+
 				// Combat policy: may this summon fight at all this tick, and against whom?
 				// The gate denies StartCombat for managed summons, sets the native
 				// attack/cast deny bits and breaks an existing fight when forbidden.
-				const core::CombatPolicy policy = core::BuildCombatPolicy(*model, model->currentTargetId != core::InvalidEntityID);
-				combat::UpdateForSummon(summonActor, policy);
+				const auto tagged = taggedSummons.find(summonId);
+				auto policy = core::BuildCombatPolicy(*model, model->currentTargetId != core::InvalidEntityID);
+				if (tagged != taggedSummons.end() && !keywordBlocksCombat) {
+					policy = radius::Update(*summonActor, *model, tagged->second, a_timestamp, directives);
+				} else {
+					policy = core::ApplyKeywordCombatPolicy(policy, profile, playerSneaking, playerDetected, isExplicitAttack);
+					combat::UpdateForSummon(summonActor, policy, directives);
+				}
+
+				const auto effectiveSettings = core::ApplyKeywordSettingsOverride(settings, profile);
+				const auto sector = core::FormationSectorFromKeywords(profile);
+				const auto sectorIdx = static_cast<std::size_t>(sector);
+				const std::size_t slotIndex = sectorIndices[sectorIdx]++;
+				const std::size_t slotTotal = sectorTotals[sectorIdx];
+				const bool stationary = profile.Has(core::kKwStationary);
+				const bool allowCatchUp = !policy.radiusManaged && !profile.Has(core::kKwNoCatchUpWarp) && !stationary;
 
 				// Movement execution for the current order (follow / return / move-to /
 				// guard / attack approach). It also flips Return back to Follow on arrival.
@@ -476,25 +791,29 @@ namespace scf::engine::update
 					summonActor,
 					*model,
 					ctx.GetStateMachine(),
-					settings,
-					i,
-					orderedSummons.size(),
+					effectiveSettings,
+					slotIndex,
+					slotTotal,
 					a_timestamp,
-					policy.allowCombat);
+					policy.allowCombat,
+					allowCatchUp,
+					sector,
+					stationary);
 
-				// Combat Leash enforcement (explicit Attack orders are exempt — highest priority).
-				if (core::ShouldEnforceCombatLeash(*model, settings.combat.enableCombatLeash, policy.allowCombat, summonActor->IsInCombat())) {
+				// Combat Leash enforcement (explicit Attack orders & stationary turrets are exempt).
+				if (!policy.radiusManaged && !stationary &&
+				    core::ShouldEnforceCombatLeash(*model, effectiveSettings.combat.enableCombatLeash, policy.allowCombat, summonActor->IsInCombat())) {
 					const float distToPlayerSq = summonActor->GetPosition().GetSquaredDistance(a_player->GetPosition());
-					const float leashRadius = settings.combat.combatLeashRadius;
+					const float leashRadius = effectiveSettings.combat.combatLeashRadius;
 					if (distToPlayerSq > leashRadius * leashRadius) {
-						if (settings.combat.returnToOwnerWhenOutsideLeash) {
+						if (effectiveSettings.combat.returnToOwnerWhenOutsideLeash) {
 							logger::info("[UpdateHook] Summon 0x{:08X} outside combat leash radius ({:.1f} > {:.1f}), returning to owner",
 								summonId, std::sqrt(distToPlayerSq), leashRadius);
 							model->order = core::SummonOrder::Return;
 							model->currentTargetId = core::InvalidEntityID;
 							model->hasMoveTarget = false;
 							ctx.GetStateMachine().TransitionTo(*model, core::SummonState::Return, "Exceeded combat leash");
-							PublishPolicyAndBreakCombat(summonActor, model, true);
+							PublishPolicyAndBreakCombat(summonActor, model, true, &profile, ownerId);
 						}
 					}
 				}
@@ -502,6 +821,7 @@ namespace scf::engine::update
 
 			// Drop bookkeeping for summons that stopped being driven (dispel, death,
 			// cell detach, displacement) so a recycled handle cannot inherit it.
+			radius::FinishTick(taggedSummons);
 			movement::RetainOnly(drivenSummons);
 			combat::RetainOnly(drivenSummons);
 
@@ -520,7 +840,9 @@ namespace scf::engine::update
 				std::vector<integrations::CommandCooldownView> cooldowns;
 				cooldowns.reserve(orderedSummons.size());
 				for (const auto& [id, actor] : orderedSummons) {
-					if (actions::HasCommand(actor)) {
+					const auto srcIt = sourceEffects.find(id);
+					const RE::EffectSetting* sourceEffect = srcIt != sourceEffects.end() ? srcIt->second : nullptr;
+					if (actions::HasCommand(actor, sourceEffect)) {
 						cooldowns.push_back({ id, actions::CooldownRemaining(id, a_timestamp), 0.0f });
 					}
 				}
@@ -556,6 +878,7 @@ namespace scf::engine::update
 					return;
 				}
 
+				radius::ConsumeMenu();
 				auto* ui = RE::UI::GetSingleton();
 				if (ui && ui->GameIsPaused()) {
 					return;
@@ -566,10 +889,19 @@ namespace scf::engine::update
 				auto& ctx = core::FrameworkContext::GetSingleton();
 				const bool enabled = ctx.GetSettings().Get().general.enabled;
 				wolf::SetFrameworkEnabled(enabled);
+				static bool wasEnabled = false;
 				if (!enabled) {
-					attack_trace::Reset("framework_disabled");
+					if (std::exchange(wasEnabled, false)) {
+						attack_trace::Reset("framework_disabled");
+						radius::Reset();
+						combat::ClearRadiusPolicies();
+						keywords::Reset();
+						summonlimit::PublishFreeSlots(0);
+						passthrough::Publish({}, {}, ctx.GetSettings().Get().collision);
+					}
 					return;
 				}
+				wasEnabled = true;
 
 				attack_trace::Tick(ctx.GetRegistry());
 				if (ctx.GetScheduler().ShouldTick(a_delta)) {
@@ -599,9 +931,14 @@ namespace scf::engine::update
 	void Reset()
 	{
 		s_totalElapsed = 0.0f;
+		s_autoRegistered.clear();
+		s_defaultsApplied.clear();
 		attack_trace::Reset("session_reset");
 		movement::ResetAll();
+		radius::Reset();
 		combat::ResetAll();
+		keywords::Reset();
+		summonlimit::PublishFreeSlots(0);
 		passthrough::ResetAll();
 		actions::Reset();
 		persistence::Reset();

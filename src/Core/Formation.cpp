@@ -155,6 +155,81 @@ namespace scf::core
 			}
 			return std::min(a_layout.minSlotDistance / spacing, maxExpansion);
 		}
+
+		float SectorBearingDeg(FormationSector a_sector, std::size_t a_index, std::size_t a_total) noexcept
+		{
+			const std::size_t index = a_index % a_total;
+			switch (a_sector) {
+			case FormationSector::Front:
+				if (a_total == 1) {
+					return 0.0f;
+				}
+				if (a_total == 2) {
+					return (index == 0) ? -30.0f : 30.0f;
+				}
+				if (a_total == 3) {
+					if (index == 0) return -45.0f;
+					if (index == 1) return 0.0f;
+					return 45.0f;
+				}
+				{
+					const float step = 110.0f / static_cast<float>(a_total - 1);
+					return -55.0f + step * static_cast<float>(index);
+				}
+
+			case FormationSector::Flank:
+				{
+					// Alternate left (-)/right (+) flanks so single/paired flankers stay balanced.
+					const bool rightSide = (index % 2) == 1;
+					const std::size_t pairIdx = index / 2;
+					const std::size_t pairsPerSide = (a_total + 1) / 2;
+					float angle = 85.0f;
+					if (pairsPerSide > 1) {
+						const float step = 35.0f / static_cast<float>(pairsPerSide - 1);
+						angle = 75.0f + step * static_cast<float>(pairIdx);
+					}
+					return rightSide ? angle : -angle;
+				}
+
+			case FormationSector::Back:
+				if (a_total == 1) {
+					return 180.0f;
+				}
+				if (a_total == 2) {
+					return (index == 0) ? -155.0f : 155.0f;
+				}
+				if (a_total == 3) {
+					if (index == 0) return -145.0f;
+					if (index == 1) return 180.0f;
+					return 145.0f;
+				}
+				{
+					const float step = 100.0f / static_cast<float>(a_total - 1);
+					return 130.0f + step * static_cast<float>(index);
+				}
+
+			case FormationSector::Default:
+			default:
+				return ArcBearingDeg(index, a_total);
+			}
+		}
+
+		float SectorRadiusScale(FormationSector a_sector) noexcept
+		{
+			switch (a_sector) {
+			case FormationSector::Front: return 0.95f;
+			case FormationSector::Flank: return 1.00f;
+			case FormationSector::Back:  return 1.25f;
+			default:                     return 1.00f;
+			}
+		}
+
+		Vec3 RawSectorOffset(FormationSector a_sector, std::size_t a_slotIndex, std::size_t a_total, float a_radius) noexcept
+		{
+			const float bearing = DegToRad(SectorBearingDeg(a_sector, a_slotIndex, a_total));
+			const float radius = a_radius * SectorRadiusScale(a_sector);
+			return { std::sin(bearing) * radius, std::cos(bearing) * radius, 0.0f };
+		}
 	}
 
 	float FormationSlotBearingDeg(std::size_t a_slotIndex, std::size_t a_squadSize) noexcept
@@ -202,6 +277,37 @@ namespace scf::core
 		const float radius = std::max(0.0f, a_radius);
 		const float expansion = SlotExpansionFactor(total, capacity, a_layout, radius);
 		return RawSlotOffset(a_slotIndex, total, capacity, a_layout, radius * expansion);
+	}
+
+	Vec3 FormationSlotOffsetLocalForSector(
+		FormationSector a_sector,
+		std::size_t a_slotIndex,
+		std::size_t a_sectorSize,
+		float a_radius,
+		const FormationLayout& a_layout) noexcept
+	{
+		if (a_sector == FormationSector::Default) {
+			return FormationSlotOffsetLocal(a_slotIndex, a_sectorSize, a_radius, a_layout);
+		}
+
+		const std::size_t total = NormaliseSize(a_sectorSize);
+		const float radius = std::max(0.0f, a_radius);
+		float expansion = 1.0f;
+		if (a_layout.minSlotDistance > 0.0f && total > 1 && radius > 0.0f) {
+			float minSpacing = std::numeric_limits<float>::max();
+			for (std::size_t first = 0; first < total; ++first) {
+				const auto p1 = RawSectorOffset(a_sector, first, total, radius);
+				for (std::size_t second = first + 1; second < total; ++second) {
+					const auto p2 = RawSectorOffset(a_sector, second, total, radius);
+					minSpacing = std::min(minSpacing, p1.DistanceTo(p2));
+				}
+			}
+			if (minSpacing > 0.0f && minSpacing < a_layout.minSlotDistance) {
+				expansion = std::min(a_layout.minSlotDistance / minSpacing, std::max(1.0f, a_layout.maxExpansion));
+			}
+		}
+
+		return RawSectorOffset(a_sector, a_slotIndex, total, radius * expansion);
 	}
 
 	float FormationSlotRadius(std::size_t a_slotIndex, std::size_t a_squadSize, float a_radius, const FormationLayout& a_layout) noexcept

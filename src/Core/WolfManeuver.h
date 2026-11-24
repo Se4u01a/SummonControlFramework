@@ -31,8 +31,15 @@ namespace scf::core
 		}
 	};
 
-	inline bool BlocksWolfManeuver(bool a_focusedWolf, std::uint32_t a_pin, std::uint32_t a_target) noexcept
+	inline bool BlocksWolfManeuver(
+		bool a_focusedWolf,
+		std::uint32_t a_pin,
+		std::uint32_t a_target,
+		bool a_alwaysBlock = false) noexcept
 	{
+		if (a_alwaysBlock && a_target != 0) {
+			return true;
+		}
 		return a_focusedWolf && a_pin != 0 && a_pin == a_target;
 	}
 }

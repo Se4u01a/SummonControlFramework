@@ -1,10 +1,12 @@
 #include "Engine/EventAdapter.h"
 #include "Engine/AttackTrace.h"
 #include "Engine/CommandSpells.h"
+#include "Engine/KeywordApi.h"
 #include "Core/Assist.h"
 #include "Core/CommandQueue.h"
 #include "Core/EventDispatcher.h"
 #include "Core/FrameworkContext.h"
+#include "Core/KeywordApi.h"
 #include "PCH.h"
 
 #include <RE/A/ActiveEffect.h>
@@ -86,14 +88,21 @@ namespace scf::engine
 				    evt.targetId != evt.casterId && a_event->target) {
 					if (const auto* base = FindAppliedEffectSetting(a_event->target.get(), a_event->activeEffectUniqueID);
 						base && base->HasArchetype(RE::EffectSetting::Archetype::kReanimate)) {
-						ctx.GetRegistry().RegisterSummon(
-							evt.casterId,
-							evt.targetId,
-							core::SummonType::Reanimate,
-							core::kPermanentDuration,
-							ctx.GetScheduler().GetTotalElapsedTime());
-						logger::info("[EventAdapter] Actor 0x{:08X} was reanimated by the player; tracked as a reanimate.",
-							evt.targetId);
+						auto* reanimatedActor = a_event->target->As<RE::Actor>();
+						const auto profile = reanimatedActor ? keywords::ProfileOf(reanimatedActor, base) : core::SummonKeywordProfile{};
+						if (!profile.Has(core::kKwUnmanaged)) {
+							ctx.GetRegistry().RegisterSummon(
+								evt.casterId,
+								evt.targetId,
+								core::SummonType::Reanimate,
+								core::kPermanentDuration,
+								ctx.GetScheduler().GetTotalElapsedTime(),
+								nullptr,
+								false,
+								profile.Has(core::kKwFreeSlot));
+							logger::info("[EventAdapter] Actor 0x{:08X} was reanimated by the player; tracked as a reanimate.",
+								evt.targetId);
+						}
 					}
 				}
 
@@ -198,6 +207,16 @@ namespace scf::engine
 					const auto* model = registry.GetModel(summonId);
 					if (!model || !core::ShouldAssistPlayerHit(*model, targetId)) {
 						continue;
+					}
+					// Keyword API v2: skip summons that opt out of passive Assist on the actor itself
+					// (source-MGEF keywords are also checked authoritatively when the command is popped).
+					if (keywords::SummonActive()) {
+						if (auto* summonActor = RE::TESForm::LookupByID<RE::Actor>(summonId)) {
+							const auto profile = keywords::ProfileOf(summonActor);
+							if (!core::ShouldAcceptCommand(profile, core::CommandType::SetFocusTarget, core::SummonOrder::Attack, core::CommandPriority::Tactical)) {
+								continue;
+							}
+						}
 					}
 					core::Command cmd{};
 					cmd.type = core::CommandType::SetFocusTarget;

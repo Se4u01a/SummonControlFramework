@@ -2,6 +2,7 @@
 #include "Plugin/ConsoleCommands.h"
 #include "Core/FrameworkContext.h"
 #include "Engine/CombatGate.h"
+#include "Engine/CombatRadius.h"
 #include "Engine/CommandActions.h"
 #include "Engine/CommandSpells.h"
 #include "Engine/KeywordApi.h"
@@ -140,6 +141,7 @@ namespace scf::plugin
 			engine::command_spells::Load();
 			engine::actions::Load();
 			engine::keywords::Load();
+			engine::radius::Load();
 			engine::combat::Install();
 			engine::leash::Install();
 			engine::movement::Install();

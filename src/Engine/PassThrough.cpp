@@ -450,12 +450,13 @@ namespace scf::engine::passthrough
 		for (const auto& world : a_world) {
 			auto& entry = entryFor(world.actor, world.id);
 			entry.party.leaderId = world.leader;
-			entry.party.flags = world.flags;
+			entry.party.flags = static_cast<std::uint8_t>(world.flags & core::kKwPassThroughMask);
 		}
 		std::unordered_map<RE::FormID, bool> scfOwners;
 		for (const auto& member : a_members) {
 			auto& entry = entryFor(member.actor, member.party.id);
 			entry.party.ownerId = member.party.ownerId;
+			entry.party.flags |= member.party.flags;
 			if (member.party.IsSummon()) {
 				scfOwners[member.party.ownerId] = true;
 			}

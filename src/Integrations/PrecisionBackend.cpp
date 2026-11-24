@@ -1,5 +1,7 @@
 #include "Integrations/PrecisionBackend.h"
 #include "Core/FrameworkContext.h"
+#include "Core/KeywordApi.h"
+#include "Engine/KeywordApi.h"
 #include "FriendlyFire/RelationshipClassifier.h"
 #include "Integrations/PrecisionAPI.h"
 #include "PCH.h"
@@ -80,6 +82,10 @@ namespace scf::integrations
 					}
 				}
 			}
+
+			isProtected = core::ResolveFriendlyFireProtection(
+				isProtected,
+				engine::keywords::FriendlyFireFlagsOf(targetId));
 
 			if (!isProtected) {
 				return ret;

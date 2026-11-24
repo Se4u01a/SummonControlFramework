@@ -1,5 +1,7 @@
 #include "FriendlyFire/MagicHook.h"
 #include "Core/FrameworkContext.h"
+#include "Core/KeywordApi.h"
+#include "Engine/KeywordApi.h"
 #include "FriendlyFire/RelationshipClassifier.h"
 #include "PCH.h"
 
@@ -61,14 +63,17 @@ namespace scf::friendly_fire
 
 		bool IsProtected(RE::Actor* a_target, const RE::Actor* a_player, const FriendlyFireSettings& a_settings)
 		{
-			const auto commander = a_target->GetCommandingActor();
-			if (!commander) {
-				return false;
+			bool baseProtected = false;
+			if (const auto commander = a_target->GetCommandingActor()) {
+				if (commander.get() == a_player) {
+					baseProtected = a_settings.protectPlayerOwnedSummons;
+				} else {
+					baseProtected = a_settings.protectAllyOwnedSummons && commander->IsPlayerTeammate();
+				}
 			}
-			if (commander.get() == a_player) {
-				return a_settings.protectPlayerOwnedSummons;
-			}
-			return a_settings.protectAllyOwnedSummons && commander->IsPlayerTeammate();
+			return core::ResolveFriendlyFireProtection(
+				baseProtected,
+				engine::keywords::FriendlyFireFlagsOf(a_target->GetFormID()));
 		}
 
 		struct AddTargetHook
