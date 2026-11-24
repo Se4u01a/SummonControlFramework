@@ -54,7 +54,7 @@
 
 * **Файл:** [src/Core/StateMachine.h](file:///D:/projects/Summon_Control_Framework/src/Core/StateMachine.h), [src/Core/StateMachine.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/StateMachine.cpp)
 
-В плане [Summon_Control_Framework_PLAN.md](file:///D:/projects/Summon_Control_Framework/Summon_Control_Framework_PLAN.md) четко зафиксировано правило: **не смешивать логику принятия решений и анимационный пайплайн движка**.
+В плане [docs/PLAN.md](PLAN.md) четко зафиксировано правило: **не смешивать логику принятия решений и анимационный пайплайн движка**.
 
 1. **Gameplay FSM (наш чистый C++):**
    * Решает **намерение** существа: `Idle` -> `FollowOwner` -> `Guard` -> `AcquireTarget` -> `Approach` -> `Engage` -> `Return` -> `Despawn`.
@@ -284,7 +284,7 @@
 
 ## 16. Защита от дружественного огня и фильтрация атак (Friendly Fire & Attack Filtering)
 
-* **Дополнение к спецификации:** [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md) (Workstream FF-01)
+* **Спецификация:** Workstream FF-01 (интегрировано в данный раздел и `docs/PLAN.md`)
 * **Директории подсистемы:** src/FriendlyFire/, src/Integrations/
 
 ### 16.1. Разделение ответственности: Физика тел vs Боевые хитбоксы
@@ -595,7 +595,7 @@ struct StealthContext {
 * **Файлы:**
   * [src/Core/CombatPolicy.h](file:///D:/projects/Summon_Control_Framework/src/Core/CombatPolicy.h), [src/Core/CombatPolicy.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/CombatPolicy.cpp) — чистые правила «можно ли этому призыву воевать и с кем».
   * [src/Engine/CombatGate.h](file:///D:/projects/Summon_Control_Framework/src/Engine/CombatGate.h), [src/Engine/CombatGate.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/CombatGate.cpp) — место отказа `Actor::StartCombat`, нативные биты и разрыв боя.
-* **Исследование альтернативы:** [Combat_Override_Package_List_Research.md](file:///D:/projects/Summon_Control_Framework/Combat_Override_Package_List_Research.md), раздел 13 — почему CK `Combat Override Package List` + `HoldPosition` отклонён (мягкий leash, требует ESP/ESL, не умеет `Passive`/`Return`/одну цель).
+* **Исследование альтернативы (историческое решение):** CK `Combat Override Package List` + `HoldPosition` отклонён (мягкий leash, требует ESP/ESL с пакетами, не умеет `Passive`/`Return`/одну цель; заменено нативным `CombatGate` + `CombatRadius`).
 
 ### 21.1. Зачем
 Полевой лог показал «два паттерна поведения»: приказ исполнялся, но ванильный AI призыва продолжал сам выбирать бой и втягивать актора в драку (в `Passive` `StopCombat()` вызывался на каждом такте, и движок тут же входил в бой снова; `FocusTarget` запускал `StartCombat`, но суммон не атаковал, оставаясь в собственной commanded-actor логике). Требование игрока — «суммон полностью отказывается от своих паттернов и живёт по состояниям FSM» — выполняется только запретом боя на уровне движка.
@@ -828,3 +828,42 @@ bookkeeping сбрасывался бы каждый тик. Вне загруж
   * при движении (`velocityWeight > 0 && speed > 0.01f`): `facingWeight = 1.0f`, `facingPitch = 0`, `facingRoll = 0`, `facingYaw = velocityYaw`;
   * при остановке или удержании позиции (`HoldPosition`): `facingWeight = 0.0f` — поворот не блокируется, и нижестоящие агенты (боевой поворот, осмотр) работают свободно.
 * Сторонние NPC и акторы вне реестра SCF не модифицируются.
+
+## 24. Автоматический бой Summon Combat Radius
+
+`Core/CombatRadius` читает совместимый INI и принимает решение Hold / Start / Wait / Park по снимку целей. `Engine/CombatRadius` определяет минимальный радиус по базе NPC, активным эффектам и исходному эффекту в roster. `UpdateHook` использует общий снимок high process, проверяет совместное загруженное пространство и исключает союзников и `SCF_Untargetable`. Assist у призывов с действующей зоной проходит через ту же автоматическую логику.
+
+Команды игрока обрабатываются первым шагом. Боевая зона действует при `Follow` и совместимом режиме агрессии. Политика зоны в `CombatGate` пинит автоматическую цель независимо от приказа Attack. Она не активирует `WolfManeuver` или обход ванильного `CanAttackActor`. Когда текущая цель выходит за пределы зоны, запрет публикуется перед `StopCombat`. Если `StartCombat` отказал, призыв следует за игроком до следующей попытки. Таймер отдельно хранится на призыва, а исходные биты атаки и каста восстанавливаются при снятии политики SCR или очистке записи. Списки обнаружения чужих боевых групп не изменяются.
+
+Следованием управляет `SummonMovement`. При активной зоне аварийный телепорт SCF и обычный боевой поводок не вмешиваются. Коллизии обслуживает `PassThrough` через общий фильтр персонажей. `Integrations/CombatRadiusMenu` передаёт опциональному SKSE Menu Framework копию состояния, а изменения настроек потребляет игровой поток. ESP поставляет три кейворда SCR с ID `0x814–0x816`, старые формы сохраняют номера.
+---
+
+## 25. Zero-Master Keyword API v2 (`Core/KeywordApi` и `Engine/KeywordApi`, 2026-11-24)
+
+* **Файлы:**
+  * [src/Core/KeywordApi.h](file:///D:/projects/Summon_Control_Framework/src/Core/KeywordApi.h) / [src/Core/KeywordApi.cpp](file:///D:/projects/Summon_Control_Framework/src/Core/KeywordApi.cpp)
+  * [src/Engine/KeywordApi.h](file:///D:/projects/Summon_Control_Framework/src/Engine/KeywordApi.h) / [src/Engine/KeywordApi.cpp](file:///D:/projects/Summon_Control_Framework/src/Engine/KeywordApi.cpp)
+  * Полный пользовательский справочник: [docs/KEYWORDS.md](file:///D:/projects/Summon_Control_Framework/docs/KEYWORDS.md)
+
+### 25.1. Разделение областей действия (`WorldActive` vs `SummonActive`)
+При `kDataLoaded` загрузчик `engine::keywords::Load()` обходит все `RE::BGSKeyword` в `TESDataHandler`, разбирая EditorID через `core::ParseKeywordEditorId` (без учёта регистра, поддерживается произвольное количество плагинов с одинаковым EditorID). Распознанные записи разделяются на два уровня:
+* **World (`kKwWorldMask`):** `PassThroughFriends`, `PassThroughAll`, `Untargetable`, `HighThreat`/`TauntPriority`, `LowThreat`, `FriendlyFireProtected`, `AllowFriendlyFire`, `AutoRegister`. Если ни одного такого `KYWD` в загрузке нет, `WorldActive() == false` — мировое сканирование загруженных актёров в `UpdateHook` не выполняется.
+* **Summon & Parametric (`SummonActive()`):** остальные флаги поведения, специализаций, строя, турелей, приказов, персистентности, лимита и 4 параметрических префикса (`SCF_CombatRadius_<N>`, `SCF_Leash_<N>`, `SCF_FollowDist_<N>`, `SCF_SpeedMult_<N>`). Для призывов игрока `ProfileOf(actor, sourceEffect)` собирает кейворды с базы `NPC_`, расы `RACE`, всех активных `MGEF` на актёре **и** исходного `MGEF` заклинания призыва (`ActiveEffect::GetBaseObject()`).
+
+### 25.2. Точки интеграции в подсистемы
+1. **`CombatGate` (угроза врагов и специализации суммонов):**
+   * `PublishUntargetable` расширена до публикации снимка угроз (`untargetable`, `highThreat`, `lowThreat`). Селектор `CombatTargetSelector` для врагов вызывает `core::ChooseEnemyTargetByThreat` (`Untargetable` > `HighThreat` > нормальная цель > `LowThreat`).
+   * `SummonCombatDirectives` передаёт в `CombatGate` флаги специализаций (`Bodyguard`, `FinishLowHP`, `HuntCasters`, `HuntRanged`), `alwaysNoCircling` (`SCF_NoCircling`/`SCF_DirectAssault`) и `ignoreAggressionRadius` (`SCF_IgnoreCombatRadius`). Селектор для суммонов без явного фокуса вызывает `core::ChooseSummonTargetBySpecialty`.
+   * `WolfManeuver`: `core::BlocksWolfManeuver` принимает `alwaysBlock`, отключая манёвры кружения в любом бою при `SCF_NoCircling`.
+2. **Потокобезопасный снимок Friendly Fire (`PublishFriendlyFireFlags` / `FriendlyFireFlagsOf`):**
+   * `UpdateHook` на тактическом тике публикует карту `EntityID -> KeywordFlags` под `std::shared_mutex`.
+   * Все 5 точек защиты (`ProtectionQuery`, `HitHook`, `MagicHook`, `ProjectileHook`, `PrecisionBackend`) оборачивают базовую проверку через `core::ResolveFriendlyFireProtection(baseProtected, FriendlyFireFlagsOf(targetId))` (`AllowFriendlyFire` > `FriendlyFireProtected` > базовая политика).
+3. **Движение, сектора строя и турели (`Formation`, `MovementIntent`, `SummonMovement`):**
+   * `FormationSector` (`Default`, `Front`, `Flank`, `Back`) задаёт секторное распределение слотов (`FormationSlotOffsetLocalForSector`) с независимой нумерацией в каждом секторе.
+   * `SCF_Stationary`/`SCF_Turret` переводит `BuildMovementIntent` в постоянный `HoldPosition` (`lockTranslation = true`), отпускает `FollowLeash`, пропускает сближение `AttackApproach` (оставляя `StartCombat` по фокусу) и отклоняет `MoveTo`/`Return`.
+   * `ApplyKeywordSettingsOverride` строит персональную копию `SettingsData` на тик для `SCF_FollowDist_<N>`, `SCF_Leash_<N>`, `SCF_NoCombatLeash`, `SCF_NoCatchUpWarp` и `SCF_SpeedMult_<N>`.
+4. **Жизненный цикл, лимит, персистентность и команды:**
+   * `SummonRegistry` поддерживает поле `freeSlot` (`OccupiesConjurationSlot`); `SummonLimit::LimitThunk` дополнительно проверяет `keywords::SpellHasFreeSlot` при касте заклинания до вытеснения движком.
+   * `Persistence` применяет `core::ResolvePersistencePolicy` с учётом `SCF_Persistent` / `SCF_NoPersistence` (позволяя включать или отключать персистентность точечно независимо от глобального `bPersistentSummons`).
+   * `UpdateHook` и `EventAdapter` отсекают `SCF_Unmanaged` (приоритетнее `SCF_AutoRegister`), автоматически регистрируют/снимают актёров с `SCF_AutoRegister`, однократно применяют `DefaultAggressionFromKeywords`, фильтруют очередь через `ShouldAcceptCommand` и учитывают `SCF_HoldFireInStealth` в `ApplyKeywordCombatPolicy`.
+   * `CommandActions` применяет `ResolveCommandActionOverride` (`SCF_CmdDetonate` > `SCF_CmdRush`; детонация без каталожного заклинания выполняется через `KillImmediate`).

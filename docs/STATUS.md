@@ -184,7 +184,7 @@
   * Log evidence: no MoveTo in the session ever logged `arrived at MoveTo point` (points 358–1719 units away, 10–30 s each); the first Focus at 2142 units got `StartCombat -> false` and was dropped after 5 s; the second Focus entered combat (`answered with focus (engine already agreed)`, so the target pin works) but the wolf never closed the 1300–1600 units.
   * Root cause (verified on the 1.5.97 image and Skyrim.esm): the summon's own runtime package is an instance of template `FollowTo` (00025E6D) built by id 36410 with `Min Radius = fSummonedCreatureMinFollowDist` (200); it keeps pulling the summon back to the player.
   * Fix: `src/Engine/FollowLeash.{h,cpp}` releases that instance's Min/Max Radius (100000) during `MoveTo`/`Attack`/`WaitGuard` and restores the GMST values on `Follow`/`Return`; the focus approach is anchored on the target actor itself and handed to the combat AI only within 400 units; attack grace 15 s. 1 new test — **110/110 passing**.
-  * **Field status (session 2026-11-11 00:08):** NOT working — the release never fired: the summon's runtime package (type 18) has `templateParent = 0`, so it was never recognised as a FollowTo instance (`[Leash] ... template 0x00000000 ... not released`) and MoveTo is still interrupted. Focus did enter combat with the focus target. Next: stage M0 of `PoE2_Minion_Parity_Plan.md`.
+  * **Field status (session 2026-11-11 00:08):** NOT working — the release never fired: the summon's runtime package (type 18) has `templateParent = 0`, so it was never recognised as a FollowTo instance (`[Leash] ... template 0x00000000 ... not released`) and MoveTo is still interrupted. Focus did enter combat with the focus target. Next: stage M0 (follow package creation seat / shape recognition).
 * **Target Pin for FocusTarget (`CombatController` selectors) — 2026-11-10:**
   * Root cause of "Focus executed but ignored": the engine re-chooses a fighting actor's target on every `Actor::UpdateCombat` (`CombatController::UpdateTarget`, SE `+4FE300`, asks each `CombatTargetSelector` through vtable slot 6 and writes the first non-zero answer via `SetTarget`, `+4FDFE0`). SCF's main-thread writes to `CombatController::targetHandle` were overwritten on the next combat update (and raced the BSJobs combat workers).
   * New seat in `CombatGate`: chaining `write_vfunc` on slot 6 `SelectTarget` of `CombatTargetSelectorStandard` (SE vtable id 265605, function `+7B5E50`) and `CombatTargetSelectorFixed` (265607, `+7B6920`), verified on the unpacked 1.5.97 image. For a summon with a FocusTarget it answers with the focused actor when the engine holds a target, the focus is alive/loaded and it is a held (not `kTargetLost`) target of the summon's combat group (`core::ChooseSelectorAnswer`, `src/Core/TargetPin.{h,cpp}`).
@@ -220,7 +220,7 @@
   * In-game bridge forwarding events to `spdlog` in `Documents\\My Games\\Skyrim Special Edition\\SKSE\\SummonControlFramework.log`.
 * **Automated Unit Tests (`scf_tests.exe`):**
   * Self-contained, zero-dependency test harness (`check.h`).
-  * **254/254 test cases passing** (0 failures, execution time < 2 ms).
+  * **266/266 test cases passing** (0 failures, execution time < 2 ms).
 * **SKSE Plugin Infrastructure:**
   * Configured via `xmake.lua` targeting MSVC 2022 (C++23).
   * Multi-runtime support: Skyrim SE 1.5.97.0 (exact match) and Steam AE 1.6.1170 via Address Library (`commonlibsse-ng.plugin`).
@@ -240,7 +240,7 @@
 
 ## Implemented and Deployed to MO2: FF-01 (Friendly Fire Protection & Attack Filtering)
 
-Specification reference: [Friendly_Fire_Protection_Addendum.md](Friendly_Fire_Protection_Addendum.md).
+Specification reference: Workstream FF-01 (см. `docs/ARCHITECTURE.md` §16).
 
 * **FF-Stage A (Relationship Classification & Matrix Policy):**
   * `src/FriendlyFire/RelationshipClassifier.h/.cpp`: classifies sources as `Player`, `PlayerAlly`, `PlayerOwnedSummon`, `AlliedSummon`, `Neutral`, `Hostile`, or `Unknown`.
@@ -299,6 +299,35 @@ Baseline clean testing in `[RE2CE TEST] Mod Organizer` is complete. The active t
 
 ## 2026-11-24 — DONE: перенос проектной документации в `docs/` и обновление `AGENTS.md`
 
-* Вся проектная документация (`PLAN.md`, `ARCHITECTURE.md`, `STATUS.md`, `JOURNAL.md`, `TESTING.md`, `PoE2_Minion_Parity_Plan.md`, `Friendly_Fire_Protection_Addendum.md`, `Combat_Override_Package_List_Research.md`) перенесена в каталог `docs/` через `git mv` с сохранением истории.
+* Вся проектная документация (`PLAN.md`, `ARCHITECTURE.md`, `STATUS.md`, `JOURNAL.md`, `TESTING.md` и устаревшие спецификации, впоследствии удалённые перед v0.2.0) перенесена в каталог `docs/` через `git mv` с сохранением истории.
 * В корне репозитория оставлены только `AGENTS.md` и `README.md`; обновлены ссылки в `README.md`, `tools/scene/README.md` и `docs/STATUS.md`.
 * `AGENTS.md` дополнен обязательным регламентом ведения 5 базовых документов в `docs/` (включая автоинициализацию для новых проектов и явное разделение автотестов и реальных/полевых проверок).
+
+## 2026-11-24 — IN_PROGRESS: интеграция SummonCombatRadius
+
+Реализованы зона, удержание цели, парковка, совместимый INI и панели меню. DLL и ESP собраны и установлены в STB и RE2CE TEST. 259 автотестов и проверка записей ESP прошли. Движение, коллизии и включение через меню ожидают проверки в Skyrim по TESTING.md.
+## 2026-11-24 — IN_PROGRESS: Keyword API v2 (расширенное управление суммонами через кейворды)
+
+* **Собрано и покрыто автотестами:**
+  * Реализован полный **Zero-Master Keyword API v2** (36 флагов, 10 алиасов, 4 параметрических числовых префикса `SCF_CombatRadius_<N>`, `SCF_Leash_<N>`, `SCF_FollowDist_<N>`, `SCF_SpeedMult_<N>`) в `Core/KeywordApi`, `Core/Formation`, `Core/MovementIntent`, `Core/WolfManeuver`, `Core/SummonRegistry` и подключён во все адаптеры (`Engine/KeywordApi`, `CombatGate`, `CombatRadius`, `SummonMovement`, `SummonLimit`, `Persistence`, `CommandActions`, `EventAdapter`, `PassThrough`, `UpdateHook`, `FriendlyFire/*`, `Integrations/PrecisionBackend`).
+  * Расширен генератор тестового ESP `tools/make_keyword_test_esp.py` (все 40 кейвордов + заклинания и способности, FormID v1 сохранены).
+  * Написана подробная документация `docs/KEYWORDS.md`, обновлены `README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/PLAN.md`, `docs/JOURNAL.md`.
+  * Проверены команды: `xmake build -y` (0 ошибок, DLL развёрнута в `[STB]` и `[RE2CE TEST]`), `xmake run scf_tests` (**266/266** тестов пройдено, 0 ошибок, включая 14 тестов в `tests/test_keyword_api.cpp`).
+* **Ожидает реальной/ручной проверки в игре:**
+  * Полевые сценарии `TEST-KW-6..12` в Skyrim SE 1.5.97 с `SCF_KeywordApiTest.esp` (см. `docs/TESTING.md`).
+
+## 2026-11-24 — DONE: предрелизная полировка, ревью кода, `docs/PROJECT_MAP.md` и релиз `v0.2.0`
+
+* **Собрано и покрыто автотестами:**
+  * Создана полная карта проекта `docs/PROJECT_MAP.md`; обновлена документация (`README.md`, `docs/ARCHITECTURE.md`, `docs/PLAN.md`, `docs/STATUS.md`, `docs/TESTING.md`, `docs/JOURNAL.md`), удалены 3 устаревших плана (`Combat_Override_Package_List_Research.md`, `PoE2_Minion_Parity_Plan.md`, `Friendly_Fire_Protection_Addendum.md`) и 2 дубликата заголовков (`src/third_party/{FUCK_API.h,IconsFontAwesome6.h}`).
+  * По итогам ревью кода исправлены 5 дефектов:
+    1. `src/Engine/UpdateHook.cpp`: fallback-скан `ProcessLists::highActorHandles` для `SCF_HoldFireInStealth`, когда `worldScanned == false` (нет world-кейвордов и SCR).
+    2. `src/Engine/UpdateHook.cpp`: очистка `s_defaultsApplied` по `!registry.IsRegistered(a_id)` вместо `!drivenSummons.contains(a_id)` — предотвращает перезапись ручной агрессии после временной выгрузки ячейки.
+    3. `src/Engine/CombatGate.cpp`: `SCF_Bodyguard` проверяется до `fAggressionRadius`, чтобы телохранитель мог перехватывать дальних лучников/магов, атакующих владельца.
+    4. `src/Engine/CombatRadius.cpp`: добавлена проверка `RACE`-кейвордов в `radius::Resolve` (единообразие с `KeywordApi::ProfileOf`).
+    5. `src/Engine/CombatGate.cpp`: усилены барьеры памяти (`memory_order_release` / `memory_order_acquire`) для атомарных счётчиков `s_pinCount`, `s_specialtyCount`, `s_untargetableCount`, `s_threatCount`, `s_hasFocusedWolf`.
+  * Версия в `xmake.lua` поднята до `0.2.0`, обновлены `.gitignore` и `docs/JOURNAL.md` (удалён stray NUL-байт).
+  * Проверены `xmake build -y` (0 ошибок/предупреждений) и `xmake run scf_tests` (**266/266** тестов пройдено, 0 ошибок).
+  * Собраны релизные архивы `dist/SummonControlFramework-v0.2.0.zip` и `dist/SummonControlFramework-v0.2.0-pdb.zip`, создан аннотированный git-тег `v0.2.0`.
+* **Ожидает реальной/ручной проверки в игре (Skyrim SE 1.5.97):**
+  * Полевые сценарии `MagicHook` (взрыв фаербола), `PlanMovement` (поворот волков в `KeepOffset`), Summon Combat Radius и Keyword API v2 (`TEST-KW-6..12`) из `docs/TESTING.md`.

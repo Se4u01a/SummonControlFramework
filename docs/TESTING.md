@@ -164,15 +164,17 @@ xmake run scf_tests
 * `tests/test_settings.cpp` (+1): новые секции INI читаются, пишутся и ограничиваются (в т.ч. `uPlayerSummonLimit` ≤ 32).
 * `tests/test_summon_limit.cpp` (2): лимит игрока поднимается до настройки, но не ниже перков; NaN/inf безопасны; лимит учёта SCF не ниже росписи движка.
 
-### Suite R: Keyword API (`KeywordApi`) — 7 tests
+### Suite R: Keyword API v1 & v2 (`KeywordApi`) — 14 tests
 Файл `tests/test_keyword_api.cpp`.
-* `TestKeywordEditorIds`: три EditorID API без учёта регистра; прочие — не API.
-* `TestKeywordPassThroughFriends`: призыв напарника с кейвордом проходит сквозь игрока и напарника, но не сквозь бандита; без кейворда — нет; неизвестный лидер не совпадает.
-* `TestKeywordPassThroughAll`: проходит сквозь всех, даже при выключенном `bEnableCollisionBypass`.
-* `TestKeywordUntargetableHostilesPass`: враги проходят сквозь недоступного, союзники — нет.
-* `TestSelectorAvoidsUntargetable`: недоступный ответ селектора заменяется следующей годной целью, иначе 0.
-* `TestRefilterOnlyRelevantRows`: обычные актёры не перефильтровываются; появление/смена/потеря флага — да.
-* `TestPassThroughSignature`: подпись зависит от флагов, лидера и множества врагов, но не от их порядка.
+* **v1 (обратная совместимость, 7 тестов):** `TestKeywordEditorIds`, `TestKeywordPassThroughFriends`, `TestKeywordPassThroughAll`, `TestKeywordUntargetableHostilesPass`, `TestSelectorAvoidsUntargetable`, `TestRefilterOnlyRelevantRows`, `TestPassThroughSignature`.
+* **v2 (7 тестов):**
+  * `TestKeywordV2ParseFlagsAndAliases`: разбор всех 36 флагов, всех алиасов без учёта регистра и классификация `IsWorldKeywordFlags`.
+  * `TestKeywordV2ParseParametricAndMerge`: парсинг и клампинг `SCF_CombatRadius_<N>`, `SCF_Leash_<N>`, `SCF_FollowDist_<N>`, `SCF_SpeedMult_<N>`, отсечение некорректных суффиксов, правило слияния (минимум для дистанций, мультипликативное сложение для скорости).
+  * `TestKeywordV2EnemyThreatSelection`: `ChooseEnemyTargetByThreat` — `Untargetable` перекрывает `HighThreat`, `HighThreat` перетягивает врагов с обычных целей с сохранением stickiness, `LowThreat` уступает обычным целям и остаётся фоллбеком.
+  * `TestKeywordV2SummonSpecialties`: `ChooseSummonTargetBySpecialty` — `Bodyguard` > `FinishLowHP` > `HuntCasters` > `HuntRanged` + stickiness.
+  * `TestKeywordV2CommandFilteringAndDefaults`: `ShouldAcceptCommand` (`IgnoreOrders`, `IgnoreHold`, `IgnoreFollow`, `IgnoreAttackOrder`, `NoAssist`, `NonCombat`, `Stationary`), `DefaultAggressionFromKeywords`, `ApplyKeywordCombatPolicy` (`HoldFireInStealth`, `NonCombat`).
+  * `TestKeywordV2SettingsFormationStationaryAndWolf`: `ApplyKeywordSettingsOverride`, сектора строя `Front`/`Flank`/`Back`, стационарная турель (`HoldPosition` + `lockTranslation` + `ReleasesFollowLeash`) и `BlocksWolfManeuver(..., alwaysBlock=true)`.
+  * `TestKeywordV2FriendlyFirePersistenceActionsRadiusAndFreeSlot`: `ResolveFriendlyFireProtection`, `ResolvePersistencePolicy`, `ResolveCommandActionOverride`, `EffectiveCombatRadius` и `SummonRegistry::freeSlot` (не занимает слот и не вытесняется).
 
 ### Suite Q: PoE2 command actions (`CommandActions`) — 5 tests
 Файл `tests/test_command_actions.cpp`, этап M3.
@@ -238,7 +240,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 | Component | Evidence |
 |---|---|
 | Plugin build output | `SummonControlFramework.dll` generated (~647 KB, with `.pdb`) |
-| Core unit tests | 249/249 passing via `scf_tests.exe` (< 2 ms) |
+| Core unit tests | 266/266 passing via `scf_tests.exe` (< 2 ms) |
 | MO2 deployment | Deployed to `mods\Summon Control Framework` in both MO2 instances and enabled |
 
 ### Verified In Gameplay (Skyrim SE 1.5.97.0 via MO2)
@@ -256,7 +258,7 @@ Suite G (`Settings`) дополнительно проверяет значен�
 
 ## 4. Acceptance Criteria: Friendly Fire Protection & Attack Filtering (FF-01)
 
-Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/projects/Summon_Control_Framework/Friendly_Fire_Protection_Addendum.md).
+Specification reference: Workstream FF-01 (см. `docs/ARCHITECTURE.md` §16 и `docs/PLAN.md` §8.4).
 
 ### Suite FF-1: Защита от урона (Damage Protection)
 * [ ] **FF-1.1 (Player Melee):** Обычные и силовые атаки игрока оружием ближнего боя не наносят урон зарегистрированным призывам игрока.
@@ -418,3 +420,23 @@ Specification reference: [Friendly_Fire_Protection_Addendum.md](file:///D:/proje
 После попадания по живому врагу отфильтровать `[AttackTrace]` в `SummonControlFramework.log` в каталоге логов SKSE. Для нескольких призывов проверить общий `order`, отдельные `summon`, `START` с исходной позицией и целью попадания, серию `MOVE` с живой позицией цели и `ATTACK_POS` на последнем кадре. `speed_xy` около нуля означает остановку, отрицательный `forward_ratio` — движение назад относительно корпуса, около нуля при ненулевой скорости — преимущественно боковое движение.
 
 Сравнить `FIRST_ATTACK` с началом укуса и `FIRST_HIT` с первым попаданием этого же призыва по назначенной цели. Сигнал `hostile_spell_cast` означает событие применения враждебного заклинания при активном фокусе, а `hit_only` — что начало анимации или каст не наблюдались до попадания. Убедиться, что промах заклинанием приказа не открывает трассу, повторный приказ открывает новый номер, а отмена и исчезновение цели дают `END` с причиной. При отсутствии результата трасса заканчивается через 60 с.
+
+## Игровая проверка Summon Combat Radius
+
+- В тестовом патче добавить фамильяру и реанимированному NPC или их эффектам призыва `aaMZkw_SummonCombatArea500`. Режим `Follow`. На открытой площадке приблизиться к живому врагу с измеряемой дистанцией. Проверить старт на 500 и отказ на 501; после старта проверить удержание на 575 и разрыв на 576. Подвести второго врага ближе к призыву до пересечения 575 и убедиться, что пин держит первую цель.
+- За границей удержания проверить ретаргет к ближайшему призыву врагу внутри 500, затем вариант без замены. Пока идёт кулдаун, призыв выходит из старого боя. При отсутствии цели следует за игроком без телепорта SCF и не отвечает, когда его бьют извне.
+- Проверить «В атаку» дальше 575, «Следовать» и Passive. Обычный удар игрока по врагу за пределами зоны не должен превращаться в явный приказ. Убрать кейворд и сверить поведение с обычным SCF. Проверить загрузку старого сохранения, выгрузку ячейки и отключение SCR на живом реанимированном.
+- В SKSE Menu Framework открыть **Summon Combat Radius → Status / Settings**. Проверить включение после старта с `[Main] enabled=false`, **Reload INI**, **Reset summon tracking** и переключение прохода сквозь враждебных NPC. Стены должны по-прежнему препятствовать движению.
+- В `[CombatRadius]` сверить выбранную цель, причину остановки и результат `StartCombat`. По `[AttackTrace]` сравнить время до первой атаки по явному приказу. Границы, выбор цели и разбор INI покрыты `tests/test_combat_radius.cpp`.
+
+## Игровая проверка Keyword API v2
+
+Тестовый плагин со всеми 40 кейвордами и заклинаниями собирается командой `python tools/make_keyword_test_esp.py <Skyrim.esm> SCF_KeywordApiTest.esp`. Полный справочник — в `docs/KEYWORDS.md`.
+
+* **[ ] TEST-KW-6 (Threat: HighThreat & LowThreat):** повесить `SCF_HighThreat` на танка-призыва и `SCF_LowThreat` на атронаха. В бою с несколькими врагами враги переключаются на танка (пока он жив), а при его смерти сначала бьют игрока, и лишь в отсутствие обычных целей — `LowThreat`.
+* **[ ] TEST-KW-7 (Specialties: Bodyguard / HuntCasters / HuntRanged / FinishLowHP):** проверить перенаправление автоматического выбора цели у призывов с соответствующими способностями из `SCF_KeywordApiTest.esp`; убедиться, что явный «Приказ: В атаку» перекрывает специализацию.
+* **[ ] TEST-KW-8 (Stationary / Turret & Formation Sectors):** повесить `SCF_Turret` на атронаха — он остаётся на месте при удалении игрока, игнорирует `MoveTo`/`Return`, но атакует цели и принимает фокус «В атаку». Повесить `SCF_RoleTank`, `SCF_RoleMelee`, `SCF_RoleRanged` на трёх призывов — проверить распределение впереди, по флангам и позади игрока.
+* **[ ] TEST-KW-9 (Orders, NonCombat & Stealth):** `SCF_NonCombat` на призыве не позволяет ему вступать в бой и отклоняет «В атаку»; `SCF_HoldFireInStealth` подавляет бой, пока игрок скрыт, и разрешает его при обнаружении или явном фокусе; `SCF_IgnoreHold`/`SCF_IgnoreFollow`/`SCF_NoAssist` фильтруют соответствующие приказы.
+* **[ ] TEST-KW-10 (FriendlyFire overrides):** повесить `SCF_AllowFriendlyFire` на своего призыва — урон от оружия/снарядов/AoE игрока начинает проходить; повесить `SCF_FriendlyFireProtected` на нейтрального/квестового NPC — атаки и заклинания игрока перестают наносить ему урон.
+* **[ ] TEST-KW-11 (FreeSlot, Persistence, AutoRegister, Unmanaged):** `SCF_FreeSlot` на `MGEF` призыва не вытесняет существующих суммонов сверх лимита; `SCF_Persistent` включает авто-возрождение при `bPersistentSummons = false`, а `SCF_NoPersistence` отключает при `true`; `SCF_AutoRegister` на произвольном живом NPC добавляет его в `scf registry` и снимает при удалении эффекта; `SCF_Unmanaged` исключает призыв из управления SCF.
+* **[ ] TEST-KW-12 (Parametric keywords & M3):** проверить `SCF_CombatRadius_500`, `SCF_Leash_800`, `SCF_FollowDist_250`, `SCF_SpeedMult_140` и `SCF_CmdDetonate`/`SCF_CmdRush` по поведению и логам `[KeywordApi]` / `[CombatRadius]` / `[Movement]`.

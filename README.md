@@ -2,118 +2,92 @@
 
 [![Build and Test](https://img.shields.io/badge/build-xmake-blue.svg)](https://xmake.io)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-purple.svg)]()
-[![Skyrim](https://img.shields.io/badge/Skyrim-SE%20%7C%20AE-brightgreen.svg)]()
+[![Skyrim](https://img.shields.io/badge/Skyrim-SE%201.5.97%20%7C%20AE%201.6.x-brightgreen.svg)]()
 
-Фреймворк для Skyrim Special Edition / Anniversary Edition, расширяющий управление призванными существами (тактические режимы, выбор приоритетов боя, приказы и бесконфликтные коллизии отряда).
+SKSE-фреймворк для **Skyrim Special Edition / Anniversary Edition**, обеспечивающий полный контроль над призванными существами: 3 быстрых заклинания приказов, защита от дружественного огня со сквозным пролётом оружия/стрел/магии, бесконфликтные коллизии, встроенная боевая зона **Summon Combat Radius**, **Zero-Master Keyword API v2**, постоянные призывы с авто-возрождением, панель миньонов и **Papyrus API**.
 
-Проектная документация ведётся в каталоге `docs/`:
-* [План разработки (`docs/PLAN.md`)](docs/PLAN.md)
-* [Архитектура (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)
-* [Текущий статус (`docs/STATUS.md`)](docs/STATUS.md)
-* [Инженерный журнал (`docs/JOURNAL.md`)](docs/JOURNAL.md)
-* [Тестирование (`docs/TESTING.md`)](docs/TESTING.md)
-
----
-
-## 🛠 Требования к окружению
-
-* **ОС:** Windows 10/11 x64
-* **Компилятор:** Visual Studio 2022 (MSVC v143+, C++23)
-* **Система сборки:** [xmake](https://xmake.io) 3.0.8+ (`winget install xmake` или через официальный инсталлятор)
-* **CommonLibSSE-NG:** Ветка `ng` (локальная копия в `D:\Games\Issen\CommonLibSSE-NG` или путь через переменную окружения `COMMONLIBSSE_NG_PATH`)
-* **Целевая версия Skyrim:**
-  * Steam AE 1.6.1170 (основной тестовый рантайм для PoC)
-  * Skyrim SE 1.5.97 (поддерживается через Address Library)
+### Документация (`docs/`)
+* [Карта проекта (`docs/PROJECT_MAP.md`)](docs/PROJECT_MAP.md) — слои, главный тик и ответственность каждого файла
+* [Руководство по Keyword API v2 (`docs/KEYWORDS.md`)](docs/KEYWORDS.md) — полный справочник всех `SCF_*` кейвордов, примеров KID/SPID и приоритетов
+* [Архитектура (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md) — внутреннее устройство, хуки, контракты и ограничения
+* [План разработки (`docs/PLAN.md`)](docs/PLAN.md) — дорожная карта и статусы этапов
+* [Текущий статус (`docs/STATUS.md`)](docs/STATUS.md) — что проверено автотестами и что подтверждено в игре
+* [Тестирование (`docs/TESTING.md`)](docs/TESTING.md) — команды автотестов и полевые тест-кейсы
+* [Инженерный журнал (`docs/JOURNAL.md`)](docs/JOURNAL.md) — хронология исследований и решений
 
 ---
 
-## 🚀 Сборка
+## 📦 Установка из релиза
 
-### 1. Настройка проекта
-```powershell
-# Конфигурация в режиме releasedbg (отладочные символы + оптимизация)
-xmake f -m releasedbg -y
-```
+1. Установите обязательные зависимости: **SKSE64** и **Address Library for SKSE Plugins** под вашу версию Skyrim.
+2. Установите архив `SummonControlFramework-v*.zip` через **Mod Organizer 2** или **Vortex** (как обычный мод).
+3. Включите плагин **`SummonControlFramework.esp`** (имеет флаг **ESL** — не занимает слот ESP).
+4. Запустите игру: 3 заклинания приказов будут выданы игроку автоматически при загрузке сохранения или старте новой игры (`[Spells] bAutoGrantCommandSpells = true`).
+5. Для настройки в игре откройте меню **FLICK** (по умолчанию `F7` → категория `Gameplay`), если установлен `FUCK.dll`, или редактируйте `Data/SKSE/Plugins/SummonControlFramework.ini`.
 
-### 2. Компиляция
-```powershell
-xmake build -y
-```
-После первой сборки выходные файлы доступны по пути:
-* DLL плагина: `build\windows\x64\releasedbg\SummonControlFramework.dll`
-* Отладочные символы: `build\windows\x64\releasedbg\SummonControlFramework.pdb`
-* Бинарник тестов: `build\windows\x64\releasedbg\scf_tests.exe`
-
-### 3. Автоматическое копирование в папку мода MO2 / Vortex
-При конфигурации можно указать каталог `deploy_dir`:
-```powershell
-xmake f -m releasedbg --deploy_dir="C:/Games/MO2/mods/SummonControlFramework/SKSE/Plugins"
-xmake build -y
-```
-Бинарники будут автоматически копироваться в каталог мода после каждой успешной сборки.
+> **Отладочные символы:** отдельный архив `SummonControlFramework-v*-pdb.zip` содержит `.pdb` для читаемых стектрейсов в Crash Logger и требуется только для диагностики.
 
 ---
 
-## 🧪 Запуск автоматических тестов
+## ✨ Основные возможности
 
-Чистая логика принятия решений (`Core` и `AI`) компилируется в автономный исполняемый файл и выполняется без запуска игры:
-
-```powershell
-xmake run scf_tests
-```
-
-Тесты проверяют:
-* Переходы состояний Gameplay FSM (`Follow`, `Guard`, `AcquireTarget`, `Approach`, `Engage`, `Return`).
-* Защиту от дребезга при потере цели (Hysteresis / Debounce).
-* Разрыв поводка при удалении от игрока (`Leash Break`).
-* Приоритеты и режимы агрессии селектора целей (`Passive`, `Defensive`, `Aggressive`, `FocusTarget`).
-* Защиту от дружественного огня по владельцу и союзным призывам.
-
----
-
----
-
-## ✨ Управление отрядом: 3 заклинания с быстрым кастом
-
-Приказы призывам отдаются через 3 обычных заклинания для рук (`Either Hand`, `0` маны, быстрый каст `0.1` с, школа Колдовства, без прокачки навыка) из ESL-плагина `SummonControlFramework.esp` — удобно использовать через Wheeler, Spell Hotbar или избранное:
+### 1. Управление отрядом: 3 заклинания с быстрым кастом
+Приказы призывам отдаются через 3 заклинания для рук (`Either Hand`, `0` маны, быстрый каст `0.1` с, школа Колдовства, без прокачки навыка) из ESL-плагина `SummonControlFramework.esp` — удобно использовать через Wheeler, Spell Hotbar или избранное:
 
 | Заклинание | EditorID | Действие |
 |---|---|---|
 | **Приказ: Держать позицию** | `SCF_CmdHoldPosition` | Призывы прерывают бой и удерживают текущую позицию (`WaitGuard`). |
-| **Приказ: Следовать** | `SCF_CmdFollow` | Призывы прерывают бой и возвращаются следовать за игроком (`Follow`). |
-| **Приказ: В атаку** | `SCF_CmdAttackTarget` | При допустимом попадании цель получает команду вступить в бой с игроком, а призывы — атаковать её. Действует и на нейтральную цель. |
+| **Приказ: Следовать** | `SCF_CmdFollow` | Призывы прерывают бой, возвращаются к игроку и переходят в следование (`Return -> Follow`). |
+| **Приказ: В атаку** | `SCF_CmdAttackTarget` | При допустимом попадании цель вступает в бой с игроком, а призывы фокусируются строго на ней (действует и на нейтральную цель). |
 
-* Включите `SummonControlFramework.esp` (ESL, не занимает слот ESP) в списке плагинов MO2.
-* Заклинания автоматически выдаются игроку при загрузке сохранения или старте новой игры (`[Spells] bAutoGrantCommandSpells = true`); в меню FLICK доступны чекбокс автовыдачи и кнопки ручной выдачи/удаления.
+* Также доступны консольные команды: `scf status`, `scf registry`, `scf reload`, `scf order <return | follow | guard | moveto [x y z] | passive | defensive | aggressive | focus <FormID>>`, `scf help` (поддерживается алиас `sfc`).
 * Пересборка плагина из `Skyrim.esm`: `python tools/make_command_spells_esp.py <Skyrim.esm> data/SummonControlFramework.esp`.
+
+### 2. Защита от дружественного огня и сквозные атаки (Friendly Fire & Pass-Through)
+* **Ближний бой:** с установленным **Precision** оружие физически пролетает сквозь союзных призывов без хитстопа (`bIgnoreHit = true`) и бьёт врага за ними; без Precision `HitHook` обнуляет урон, стаггер и агро.
+* **Снаряды:** `ProjectileHook` пропускает стрелы, болты и магические снаряды сквозь союзных призывов без детонации.
+* **Магия и AoE:** `MagicHook` (`Actor::AddTarget`) защищает призывов от дружественных прямых заклинаний, концентрации, криков, зачарований и AoE-взрывов (фаерболы), не мешая лечению и баффам.
+* **Добивания и реакции:** `KillmoveHook` и `HitReactionHook` блокируют добивания и стаггер по своим призывам.
+* **Бесконфликтные коллизии (`PassThrough`):** игрок и призывы одного владельца не блокируют друг друга в дверях и коридорах (`bhkCollisionFilter` + `MovementAvoidanceManager`).
+
+### 3. Summon Combat Radius (встроенный SCR v7.2)
+Автоматическая боевая зона работает у призыва в режиме следования, если у него есть один из кейвордов `aaMZkw_SummonCombatArea200`, `aaMZkw_SummonCombatArea500` или `aaMZkw_SummonCombatArea1000` (либо параметрический `SCF_CombatRadius_<N>`). Добавьте кейворд на базу `NPC_`, `RACE` или `MGEF` призыва через xEdit / Creation Kit / KID. Сам `SummonControlFramework.esp` содержит базовые кейворды и оставляет их назначение модам и патчам; если загружен оригинальный мод SCR, SCF распознает его кейворды.
+
+* Новые цели выбираются внутри радиуса `R` от игрока; текущая цель удерживается до `R + 75`. Явный приказ «В атаку» действует и за пределами зоны.
+* Конфигурация: `Data/SKSE/Plugins/SummonCombatRadius.ini` (секция `[Keywords]` заменяет встроенные радиусы). В опциональном **SKSE Menu Framework** доступны панели **Summon Combat Radius → Status / Settings** с кнопкой **Reload INI**.
+* `[Collision] enabled` включает проход собственных призывов сквозь других персонажей через фильтр `PassThrough` SCF.
+
+### 4. Постоянные призывы, лимит армии и панель миньонов
+* **Постоянные призывы (`Persistence`):** продление действия призыва, авто-возрождение после смерти, опциональный резерв макс. маны и сохранение состояния в SKSE co-save.
+* **Лимит армии (`SummonLimit`):** настраиваемый бонус к лимиту призывов, режим `bUnlimitedSummons` и поддержка кейворда `SCF_FreeSlot`.
+* **Панель миньонов (`MinionPanel`):** опциональный HUD-оверлей (`FUCK.dll`, переключение по клавише `uMinionPanelToggleKey`) со списком активных/возрождающихся призывов.
 
 ---
 
-## 🔑 Keyword API для других модов
+## 🔑 Keyword API v2 для других модов
 
-SCF меняет поведение любого актёра, у которого есть кейворд с одним из EditorID ниже. Для Keyword API отдельный мастер не требуется: создайте запись `KYWD` с этим EditorID в своём плагине (или возьмите её из любого плагина в загрузке) и повесьте её:
+SCF поддерживает **Zero-Master Keyword API v2** — декларативное управление поведением суммонов, заклинаний призыва и произвольных актёров с помощью стандартных записей `KYWD` (`SCF_*`) **без зависимости от `SummonControlFramework.esp`**. Подробный справочник всех 36 флагов, 10 алиасов, 4 параметрических числовых кейвордов, матрицы приоритетов и примеров KID/SPID вынесен в **[`docs/KEYWORDS.md`](docs/KEYWORDS.md)**.
 
-* на базу актёра (`NPC_`) или его расу (`RACE`) — в CK/xEdit или через KID/SPID;
-* на базовый эффект (`MGEF`) — тогда правило действует, пока эффект активен на актёре (заклинание, зелье, способность, зачарование).
+Краткий обзор категорий:
+* **Коллизии (World):** `SCF_PassThroughFriends`, `SCF_PassThroughAll`.
+* **Угроза и выбор цели врагами (World):** `SCF_Untargetable`, `SCF_HighThreat` (`SCF_TauntPriority`), `SCF_LowThreat`.
+* **Дружественный огонь (World):** `SCF_FriendlyFireProtected`, `SCF_AllowFriendlyFire`.
+* **Регистрация, лимит и персистентность:** `SCF_AutoRegister`, `SCF_Unmanaged` (`SCF_IgnoreSummon`), `SCF_FreeSlot` (`SCF_IgnoreLimit`), `SCF_Persistent`, `SCF_NoPersistence`.
+* **Боевой режим, приказы и скрытность:** `SCF_NonCombat` (`SCF_AlwaysPassive`), `SCF_DefaultPassive`/`Defensive`/`Aggressive`, `SCF_IgnoreOrders`/`Hold`/`Follow`/`AttackOrder`, `SCF_NoAssist`, `SCF_NoCircling` (`SCF_DirectAssault`), `SCF_HoldFireInStealth`, `SCF_IgnoreCombatRadius`.
+* **Специализации авто-выбора цели:** `SCF_Bodyguard`, `SCF_FinishLowHP`, `SCF_HuntCasters`, `SCF_HuntRanged`.
+* **Движение, турели, сектора строя и M3-команды:** `SCF_Stationary` (`SCF_Turret`), `SCF_NoCatchUpWarp`, `SCF_NoCombatLeash`, `SCF_FormationFront`/`Flank`/`Back` (`SCF_RoleTank`/`Melee`/`Ranged`/`Support`), `SCF_CmdRush`, `SCF_CmdDetonate`.
+* **Параметрические числовые кейворды:** `SCF_CombatRadius_<N>`, `SCF_Leash_<N>`, `SCF_FollowDist_<N>`, `SCF_SpeedMult_<N>`.
 
-| EditorID | Что делает |
-|---|---|
-| `SCF_PassThroughFriends` | Актёр проходит сквозь «своих» и не обходит их при поиске пути. Свои — актёры с тем же лидером: игрок, его напарники и все их призывы составляют одну сторону; у призыва NPC лидер — призвавший NPC. |
-| `SCF_PassThroughAll` | Актёр проходит сквозь любых актёров, включая врагов. |
-| `SCF_Untargetable` | Враждебные актёры не выбирают его целью боя (`StartCombat` отклоняется, выбор цели переходит на другую цель группы, при отсутствии другой цели враг выходит из боя) и проходят сквозь него. |
+* Кейворды читаются с `NPC_`, `RACE`, активных `MGEF` и исходного `MGEF` заклинания призыва; регистр не важен; нулевой CPU-оверхед, если кейворды не объявлены.
+* Проверочный ESP со всеми 40 кейвордами и заклинаниями: `python tools/make_keyword_test_esp.py <Skyrim.esm> SCF_KeywordApiTest.esp`.
 
-* Правило применяется к паре, если кейворд есть хотя бы у одного из двух актёров. Регистр EditorID не важен; можно завести несколько записей с одним EditorID в разных плагинах.
-* Кейворды работают независимо от настроек `[Collision]` в `SummonControlFramework.ini` (те управляют только собственным проходом сквозь у призывов SCF).
-* Проверка — раз в тактический тик (~15 Гц) по игроку и всем актёрам в «высоком» процессе. Если ни один плагин не объявил эти кейворды, система не работает и ничего не стоит.
-* Удары, снаряды и заклинания не меняются: отключаются только столкновения тел (контроллер персонажа) и обход при движении.
-* Проверочный плагин: `python tools/make_keyword_test_esp.py <Skyrim.esm> SCF_KeywordApiTest.esp` — кейворды API плюс заклинания и способности, которые их вешают (см. [`docs/TESTING.md`](docs/TESTING.md)).
-* Только Skyrim SE 1.5.97 (как и остальные engine seats SCF). Лог: `[KeywordApi] ...` при загрузке, `[CombatGate] ... SCF_Untargetable ...` в игре.
+---
 
 ## 🐍 Papyrus API для других модов
 
-Если призыв вашего мода движок не числит среди призванных существ игрока (скриптовое существо, модифицированный призыв, кастомная нежить), зарегистрируйте его явно — SCF начнёт вести его как обычный призыв: приказы игрока, следование и MoveTo, политика боя, защита от дружественного огня, правила коллизий и панель миньонов.
+Если призыв вашего мода движок не числит среди призванных существ игрока (скриптовое существо, кастомная нежить), зарегистрируйте его явно — SCF начнёт вести его как обычный призыв (для бескриптовой альтернативы см. `SCF_AutoRegister` в [`docs/KEYWORDS.md`](docs/KEYWORDS.md)).
 
-Контракт лежит исходником: `scripts/Source/SCF.psc` (класс `SCF`, глобальные нативы). Компилируйте свои скрипты против этого файла, положив его в `Scripts/Source` (он шипится вместе с плагином) — VM находит нативы по паре «класс `SCF` + имя функции».
+Контракт поставляется в `scripts/Source/SCF.psc` (класс `SCF`, глобальные нативы):
 
 ```papyrus
 bool Function RegisterSummon(Actor akSummon, Actor akOwner = None) global native
@@ -123,50 +97,79 @@ Actor[] Function GetSummons(Actor akOwner = None) global native
 int Function GetSummonCount(Actor akOwner = None) global native
 ```
 
-* Владелец — **только игрок**; без аргумента владельца подразумевается игрок. Чужой владелец отклоняется (`false` + строка `[Papyrus]` в логе).
-* Регистрация живёт, пока скрипт не вызовет `UnregisterSummon`, пока актёр не умрёт или пока не исчезнет его форма. Смерть/диспелл заклинания регистрацию не снимают — это ваша ответственность (например, `OnDeath` или `OnEffectFinish`). Актёр, которого движок и сам числит призванным, после `UnregisterSummon` вернётся в реестр на следующем тике: этой записью владеет роспись движка, а не скрипт.
-* Регистрация **не занимает слот лимита призывов** и никогда не вытесняется лимитом: скриптовый призыв не отнимает у игрока ванильного суммона.
-* Призванный актёр должен существовать (форма загружена) и быть живым в момент вызова `RegisterSummon`; в другой ячейке запись сохраняется, но движение и бой включаются, когда игрок окажется в том же загруженном пространстве.
-* `GetSummons`/`GetSummonCount` возвращают только живые активные записи, отсортированные по FormID. Панель миньонов помечает такие записи как `[Scripted]`.
-* Нативы регистрируются без `callableFromTasklets`: вызывайте их из обычных скриптов/функций, не из tasklet-контекста (например, не из `JContainers`-тасклетов).
+* Владелец — **только игрок** (`akOwner = None` подразумевает игрока).
+* Скриптовая регистрация **не занимает слот лимита призывов** и не вытесняется лимитом; снимать её при смерти/диспелле (`UnregisterSummon`) должен вызывающий скрипт.
+* Нативы вызываются из обычных функций Papyrus (не из tasklet-контекста).
 
-## 🧩 Зависимости и матрица деградации функционала
+---
 
-Фреймворк спроектирован по принципу **Graceful Fallback**: отсутствие опциональных модификаций не приводит к вылетам, но влияет на физику и боевые возможности.
+## 🧩 Зависимости и матрица совместимости
 
-### 1. Обязательные требования (Hard Requirements)
-Без них плагин не загрузится движком:
-* **Skyrim Special Edition (1.5.97)** или **Anniversary Edition (1.6.x)**.
-* **SKSE64** (версия под вашу сборку игры).
-* **Address Library for SKSE Plugins** (ersion-1-5-97-0.bin или соответствующий версии игры).
+Фреймворк спроектирован по принципу **Graceful Fallback**: отсутствие опциональных модов не вызывает вылетов.
 
-### 2. Зависимости отдельных возможностей (Feature-Dependent Integrations)
+### Обязательные требования (Hard Requirements)
+* **Skyrim Special Edition 1.5.97** (основной проверенный рантайм) или **Anniversary Edition 1.6.x** (поддерживается через Address Library; отдельные SE-специфичные seat'ы имеют безопасный fallback).
+* **SKSE64** под вашу версию игры.
+* **Address Library for SKSE Plugins**.
 
+### Опциональные интеграции (Feature-Dependent)
 | Компонент / Мод | Затрагиваемый функционал | Без этого компонента | С этим компонентом |
 |---|---|---|---|
-| **[Precision](https://www.nexusmods.com/skyrimspecialedition/mods/72347)** (v2.0.4+) | **Melee Pass-Through** (Сквозной пролет оружия сквозь сумонов) | Работает базовый HitHook: урон сумону обнуляется (damage = 0), агро подавляется, но ванильный хитбокс рейкаста вызывает хитстоп/остановку замаха на сумоне. | Активируется PrecisionBackend (IgnoreHit = true): лезвие меча со свистом физически пролетает сквозь тело сумона без хитстопа и поражает врага позади него. |
-| **Behavior Data Injector** | Интеграция Precision | Precision не может перехватить поведение графа анимаций и кадры атаки. | Precision работает штатно. |
-| **Перк «Парные души»** (player.addperk 000581DE) или мод на мультипризыв | **Отряд из 2+ существ** (maxSummonsPerOwner >= 2) | Ванильный движок Skyrim SE имеет жесткий лимит commandedActors = 1. При касте второго сумона первый мгновенно рассеивается. | Игрок может призвать и удерживать одновременно 2 и более существ; SCF корректно координирует отряд. |
-| **SSE Display Tweaks** | Режим окна без рамки и физика при высоком FPS | Игра запускается в эксклюзивном полноэкранном режиме, Alt-Tab может подвешивать игру, физика при FPS > 60 может сбоить. | Идеальное окно без рамки нативное разрешению, мгновенный Alt-Tab, адаптивный физический шаг Havok. |
-| **ConsolePlusPlus** | Удобство управления через консоль | Невозможно вставить команду из буфера обмена (Ctrl+V), нет истории команд. | Вставка команд через Ctrl+V, история команд по стрелкам ↑/↓. |
-| **Console Font Fix** (onts_console.swf) | Читаемость консоли | При случайном переключении на русскую раскладку консоль выводит квадраты □□□. | Корректное отображение русских и английских букв. |
+| **[Precision](https://www.nexusmods.com/skyrimspecialedition/mods/72347)** (v2.0.4+) | **Melee Pass-Through** | `HitHook` обнуляет урон и агро, но удар останавливается на хитбоксе призыва. | `PrecisionBackend` (`bIgnoreHit = true`): оружие физически пролетает сквозь призыва без хитстопа и бьёт врага за ним. |
+| **FLICK / FUCK.dll** (v7 API) | Внутриигровое меню настроек и **Панель миньонов** | Настройки читаются из `SummonControlFramework.ini`. | Интерактивное меню по `F7` (`Gameplay`), управление заклинаниями и оверлей панели миньонов. |
+| **SKSE Menu Framework** | Панели **Summon Combat Radius** | Настройки SCR читаются из `SummonCombatRadius.ini`. | Живые панели **Summon Combat Radius → Status / Settings** и **Reload INI**. |
+| **TrueHUD** | Индикаторы HUD | Базовая работа без TrueHUD-индикаторов. | Поддержка опционального бэкенда TrueHUD. |
+| **Перк «Парные души»** (`000581DE`) или `[SummonLimit]` SCF | Отряд из 2+ существ | Ванильный лимит = 1 существо (если не включён лимит SCF). | Координация отряда из 2+ призывов. |
 
-## 📂 Структура проекта
+---
+
+## 🛠 Сборка из исходников и автотесты
+
+### Требования к окружению разработчика
+* **ОС:** Windows 10/11 x64
+* **Компилятор:** Visual Studio 2022 (MSVC v143+, C++23)
+* **Система сборки:** [xmake](https://xmake.io) 3.0.8+
+* **CommonLibSSE-NG:** ветка `ng` (переменная окружения `COMMONLIBSSE_NG_PATH`, либо `extern/CommonLibSSE-NG`)
+
+### Сборка и запуск тестов
+```powershell
+# Конфигурация (отладочные символы + оптимизация)
+xmake f -m releasedbg -y
+
+# Сборка DLL плагина (SE + AE) и автономного раннера тестов
+xmake build -y
+
+# Запуск автономных юнит-тестов ядра (без запуска Skyrim)
+xmake run scf_tests
+```
+
+Выходные артефакты:
+* `build\windows\x64\releasedbg\SummonControlFramework.dll`
+* `build\windows\x64\releasedbg\SummonControlFramework.pdb`
+* `build\windows\x64\releasedbg\scf_tests.exe`
+
+---
+
+## 📂 Структура репозитория
 
 ```text
 Summon_Control_Framework/
 ├── src/
-│   ├── Core/               # Чистая модель: EntityID, Types, SummonModel, StateMachine
-│   ├── AI/                 # Тактический ИИ: TargetSelector
-│   ├── Plugin/             # SKSE обвязка: RuntimeGate
-│   ├── PCH.h               # Прекомпилированный заголовок
-│   └── main.cpp            # SKSEPluginLoad и точка входа плагина
-├── tests/
-│   ├── check.h             # Легковесный тест-раннер
-│   ├── main.cpp            # Точка входа тестов
-│   ├── test_fsm.cpp        # Тесты конечного автомата
-│   └── test_target_selector.cpp # Тесты селектора целей
-├── docs/                   # Проектная документация (PLAN, ARCHITECTURE, STATUS, JOURNAL, TESTING, спецификации)
-├── AGENTS.md               # Инженерные стандарты и регламент ведения документации
+│   ├── Core/               # Чистое C++23 ядро (без заголовков Skyrim)
+│   ├── AI/                 # TargetSelector, SquadCoordinator
+│   ├── Collision/          # CollisionPairClassifier
+│   ├── FriendlyFire/       # RelationshipClassifier + Hit/Magic/Projectile/Killmove/HitReaction hooks
+│   ├── Engine/             # UpdateHook, CombatGate, CombatRadius, SummonMovement, PassThrough, KeywordApi, Persistence, SummonLimit, CommandSpells и др.
+│   ├── Integrations/       # Precision, FLICK/FUCK, MinionPanel, CombatRadiusMenu, TrueHUD, Papyrus
+│   ├── Plugin/             # RuntimeGate, Messaging, ConsoleCommands
+│   └── main.cpp            # SKSEPluginLoad
+├── data/                   # SummonControlFramework.esp (ESL)
+├── scripts/Source/         # Papyrus-контракт SCF.psc
+├── tools/                  # Генераторы ESP и консольная тестовая сцена
+├── tests/                  # Автономные юнит-тесты ядра (266 тестов)
+├── docs/                   # PROJECT_MAP, KEYWORDS, ARCHITECTURE, PLAN, STATUS, TESTING, JOURNAL
+├── AGENTS.md               # Инженерные стандарты
 └── xmake.lua               # Конфигурация сборки
 ```
+
+Подробное описание каждого файла см. в [`docs/PROJECT_MAP.md`](docs/PROJECT_MAP.md).

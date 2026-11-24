@@ -16,7 +16,7 @@ end
 includes(commonlib_path)
 
 set_project("SummonControlFramework")
-set_version("0.1.0")
+set_version("0.2.0")
 
 add_rules("mode.debug", "mode.releasedbg")
 add_rules("plugin.compile_commands.autoupdate")
@@ -32,7 +32,7 @@ set_warnings("allextra")
 set_policy("build.fence", true)
 set_policy("check.auto_ignore_flags", false)
 
--- Runtimes: SE + AE (Steam AE 1.6.1170 is primary target for PoC)
+-- Runtimes: SE 1.5.97 (primary tested runtime) + AE 1.6.x via Address Library
 set_config("skyrim_vr", false)
 set_config("skyrim_ae", true)
 set_config("skyrim_se", true)

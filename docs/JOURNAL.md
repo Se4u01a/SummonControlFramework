@@ -738,7 +738,7 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
   * Движковый адаптер `src/Engine/CommandSpells.{h,cpp}`: `Load()` на `kDataLoaded`, подписки `TESSpellCastEvent` (Hold/Follow) и `TESMagicEffectApplyEvent` (AttackTarget), идемпотентные `GrantSpellsToPlayer` / `RemoveSpellsFromPlayer` + потокобезопасные обёртки через `SKSE::GetTaskInterface()->AddTask` для кнопок из FLICK.
   * `Settings` (`[Spells] bAutoGrantCommandSpells = true`; из `[Hotkeys]` убраны 7 старых ключей, устаревшие ключи в старых INI тихо игнорируются), `InputHandler`, `Messaging` (`kDataLoaded` / `kPostLoadGame` / `kNewGame`), `FlickMenu` (секция «Command Spells & HUD» со статусом `.esp`, чекбоксом и кнопками), `ConsoleHandler` (`scf status`).
 * **Проверки:** `python tools/make_command_spells_esp.py` (7 записей, ESL, валидация чтением обратно), `xmake` (0 ошибок, 0 предупреждений, DLL + PDB + ESP разложены в обе MO2-сборки), `xmake run scf_tests` — **237/237** (+4 новых теста в `tests/test_command_spells.cpp`, обновлён `tests/test_settings.cpp`). **В игре не проверено** — требуется включить `SummonControlFramework.esp` в MO2 и протестировать все 3 заклинания.
-* **Краш на загрузке ESP (2026-11-23, `Crash_2026_11_23_15-41-32.txt`):** `BGSProjectile::ReadFromFileStream` → `TESModel::unk_199390` падал при чтении `PROJ FE050800` (`SummonControlFramework.esp`). Причина: шаблонный `TurnUndeadProjectile` (`0x0004BE35`) в `Skyrim.esm` имеет `form_version = 39`, где субзапись `MODT` (36 байт) хранит сырые 12-байтные хэши без v40+ заголовка; при записи в `form_version = 44` движок читал `"dds "` (`0x00736464`) как счётчик из 7,5 млн текстур. **Фикс:** убрано копирование `MODT` из `tools/make_command_spells_esp.py` (в v44 достаточно `MODL`, как в xEdit), `data/SummonControlFramework.esp` пересобран (`2383` байт) и разложен в оба MO2.
+* **Краш на загрузке ESP (2026-11-23, `Crash_2026_11_23_15-41-32.txt`):** `BGSProjectile::ReadFromFileStream` → `TESModel::unk_199390` падал при чтении `PROJ FE050800` (`SummonControlFramework.esp`). Причина: шаблонный `TurnUndeadProjectile` (`0x0004BE35`) в `Skyrim.esm` имеет `form_version = 39`, где субзапись `MODT` (36 байт) хранит сырые 12-байтные хэши без v40+ заголовка; при записи в `form_version = 44` движок читал `"dds"` (`0x00736464`) как счётчик из 7,5 млн текстур. **Фикс:** убрано копирование `MODT` из `tools/make_command_spells_esp.py` (в v44 достаточно `MODL`, как в xEdit), `data/SummonControlFramework.esp` пересобран (`2383` байт) и разложен в оба MO2.
 
 ## 2026-11-23 — Сближение волков при явной атаке
 
@@ -859,3 +859,48 @@ The first field run of the `CombatGate` ended in an access violation ~75 seconds
 
 ### Проверки
 * `xmake run scf_tests`: **254 test cases, 0 failed cases, 0 failed checks**.
+
+## 2026-11-24 — Сопоставление SummonCombatRadius v7.2 и SCF
+
+Изучен предоставленный каталог исходников SCR. Главный переносимый контракт — радиус по кейвордам вокруг игрока, сохранение текущей цели с гистерезисом, ретаргет и парковка. Текущий SCF проверяет глобальный радиус при входе в бой, а Assist через `SetFocusTarget` переводит модель в `Attack` и обходит проверку. В SCR v7.2 правка `detectLevel` затрагивает боевые группы противников, что расходится с требованием о получении урона припаркованным призывом. В PLAN.md записано предложение переиспользовать `CombatGate`, `UpdateHook`, `Follow` и `PassThrough`, с самостоятельной политикой для автоматического боя. Игровой код на этапе исследования не менялся.
+
+## 2026-11-24 — Реализация зоны Summon Combat Radius
+
+Автоматический бой призывов с кейвордом интегрирован в планировщик SCF, с отдельным пином в CombatGate и парковкой через штатный запрет боя. В ESP добавлены три совместимых кейворда. Прежние настройки INI читаются, статус и настройки доступны через опциональный SKSE Menu Framework. Коллизии используют PassThrough; штатный бой по приказу Attack сохраняет отдельную политику. Сборка ReleaseDbg, 259 автотестов и проверка ESP выполнены. DLL/ESP установлены в обе сборки MO2. Игровая проверка сценариев из TESTING.md ожидается.
+
+## 2026-11-24 — Реализация Keyword API v2 и документации `docs/KEYWORDS.md`
+
+### Что сделано
+* Спроектирован и реализован **Zero-Master Keyword API v2** со 100% обратной совместимостью с API v1 (`SCF_PassThroughFriends`, `SCF_PassThroughAll`, `SCF_Untargetable`) и `SummonCombatRadius`:
+  * **Core (`src/Core/KeywordApi.{h,cpp}`, `Formation`, `MovementIntent`, `WolfManeuver`, `SummonRegistry`):** 64-битная маска `KeywordFlags` (36 флагов + 10 алиасов) и 4 параметрических префикса (`SCF_CombatRadius_<N>`, `SCF_Leash_<N>`, `SCF_FollowDist_<N>`, `SCF_SpeedMult_<N>`). Чистые правила `ChooseEnemyTargetByThreat`, `ChooseSummonTargetBySpecialty`, `ShouldAcceptCommand`, `DefaultAggressionFromKeywords`, `ApplyKeywordCombatPolicy`, `ApplyKeywordSettingsOverride`, `FormationSectorFromKeywords`, `ResolveFriendlyFireProtection`, `ResolvePersistencePolicy`, `ResolveCommandActionOverride`, `EffectiveCombatRadius`, секторные слоты `FormationSlotOffsetLocalForSector`, стационарные турели в `BuildMovementIntent`/`ReleasesFollowLeash`, безусловная блокировка кружения в `BlocksWolfManeuver` и поле `SummonRecord::freeSlot`.
+  * **Engine, FriendlyFire, Integrations:** разделены `WorldActive()` и `SummonActive()` в `Engine/KeywordApi`, добавлена потокобезопасная публикация `FriendlyFireFlags` во все 5 точек защиты (`ProtectionQuery`, `HitHook`, `MagicHook`, `ProjectileHook`, `PrecisionBackend`), подключены `CombatGate` (угроза врагов + специализации суммонов + `alwaysNoCircling` + `ignoreAggressionRadius`), `CombatRadius`, `SummonMovement` (сектора строя и `stationary`), `SummonLimit` (`SpellHasFreeSlot` + `PublishFreeSlots`), `Persistence` (индивидуальные `SCF_Persistent` / `SCF_NoPersistence`), `CommandActions` (`SCF_CmdDetonate` / `SCF_CmdRush`), `EventAdapter` и `UpdateHook` (`SCF_AutoRegister`, `SCF_Unmanaged`, `DefaultAggressionFromKeywords`, фильтрация команд, `SCF_HoldFireInStealth`).
+  * **Инструменты и документация:** обновлён `tools/make_keyword_test_esp.py` (40 кейвордов), создан подробный справочник `docs/KEYWORDS.md`, актуализированы `README.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md`, `docs/PLAN.md`, `docs/STATUS.md`.
+
+### Замеченные и исправленные дефекты при верификации
+* При сборке `CombatGate.cpp` исправлено получение максимального здоровья актёра (`GetActorValueMax(RE::ActorValue::kHealth)` вместо несуществующего `GetActorValueModifier`) и захват счётчика `totalThreat` до `std::move` и освобождения мьютекса.
+* При прогоне новых юнит-тестов `TestKeywordV2CommandFilteringAndDefaults` был пойман пропущенный в `ShouldAcceptCommand` обработчик `kKwNoAssist` (отклонение `Tactical`-ассиста при разрешённом `PlayerDirect`). Исправлено в `src/Core/KeywordApi.cpp`.
+
+### Проверки
+* `xmake build -y`: чистая сборка без ошибок и предупреждений, DLL развёрнута в `[STB]` и `[RE2CE TEST]`.
+* `xmake run scf_tests`: **266 test cases, 0 failed cases, 0 failed checks** (включая 14 тестов в `tests/test_keyword_api.cpp`).
+* Игровая проверка (`TEST-KW-6..12`) в Skyrim SE 1.5.97 ещё не проводилась.
+
+---
+
+## 2026-11-24 — Предрелизный аудит кода, `docs/PROJECT_MAP.md`, очистка документации и подготовка релиза `v0.2.0`
+
+* **Карта проекта и чистка репозитория:**
+  * Создан `docs/PROJECT_MAP.md` с описанием слоёв (`Core`, `AI`, `Collision`, `FriendlyFire`, `Engine`, `Integrations`, `Plugin`), диаграммой главного тика и таблицей ответственности каждого файла репозитория.
+  * Удалены через `git rm` три устаревших исследовательских/плановых документа, полностью замещённых актуальной архитектурой: `docs/Combat_Override_Package_List_Research.md`, `docs/PoE2_Minion_Parity_Plan.md`, `docs/Friendly_Fire_Protection_Addendum.md`. Все ссылки в `docs/ARCHITECTURE.md`, `docs/PLAN.md`, `docs/STATUS.md`, `docs/TESTING.md` и `src/Core/Assist.h` актуализированы.
+  * Удалены два побайтовых дубликата заголовков (245 КБ) в `src/third_party/FUCK_API.h` и `src/third_party/IconsFontAwesome6.h` (сборка использует `src/third_party/fuck/`).
+  * Очищен stray NUL-байт (`0x00`) в `docs/JOURNAL.md`; в `.gitignore` добавлены `SummonCombatRadius_src_v7.2/` и `.cache/`.
+  * Актуализирован `README.md` (исправлено указание основного тестового рантайма на Skyrim SE 1.5.97 + AE 1.6.x, добавлены ссылки на `docs/PROJECT_MAP.md` и раздел «Установка из релиза»).
+* **Находки ревью кода и исправления:**
+  1. `src/Engine/UpdateHook.cpp`: при активном `SCF_HoldFireInStealth` без world-кейвордов и SCR массив `world` оставался пустым (`worldScanned == false`), из-за чего враги, бьющие суммона при скрытности игрока, не обнаруживались. Добавлен ленивый fallback-скан `ProcessLists::highActorHandles` (выполняется только если игрок в стелсе, не в бою, и есть хотя бы один призыв с `kKwHoldFireInStealth`).
+  2. `src/Engine/UpdateHook.cpp`: `s_defaultsApplied` очищался по `!drivenSummons.contains(a_id)`, что при временной выгрузке ячейки сбрасывало флаг и перезаписывало ручную агрессию призыва. Заменено на `!registry.IsRegistered(a_id)`.
+  3. `src/Engine/CombatGate.cpp`: в `ShouldDenyStartCombat` проверка `fAggressionRadius` стояла до `kKwBodyguard`, блокируя телохранителя против дальних стрелков/магов (>1500 ед.), атакующих владельца. Теперь `kKwBodyguard` вычисляется первым: если враг целится во владельца/призыва, `fAggressionRadius` обходится.
+  4. `src/Engine/CombatRadius.cpp`: `radius::Resolve` проверял `NPC_`, активный `MGEF` и исходный `MGEF`, но пропускал `RACE` (`a_summon.GetRace()->HasKeyword`). Проверка `RACE` добавлена для паритета с `KeywordApi::ProfileOf`.
+  5. `src/Engine/CombatGate.cpp`: переведены атомики счётчиков (`s_pinCount`, `s_specialtyCount`, `s_untargetableCount`, `s_threatCount`, `s_hasFocusedWolf`) с `relaxed` на `release`/`acquire`.
+* **Релиз `v0.2.0`:**
+  * Версия в `xmake.lua` поднята `0.1.0` -> `0.2.0`.
+  * Прогнаны `xmake build -y` и `xmake run scf_tests` (**266/266** тестов пройдено, 0 ошибок). Полевые сценарии в Skyrim SE 1.5.97 не запускались в рамках этой сессии и остаются отмеченными как ожидающие ручной проверки.

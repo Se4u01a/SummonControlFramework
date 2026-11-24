@@ -7,3 +7,5 @@ build/
 dist/
 compile_commands.json
 APMF
+SummonCombatRadius_src_v7.2/
+.cache/
